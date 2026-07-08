@@ -4,8 +4,8 @@ import { AuthModule } from './auth/auth.module';
 import { CommandsModule } from './commands/commands.module';
 import { HealthModule } from './health/health.module';
 import { PlantsModule } from './plants/plants.module';
-import { PlcModule } from './plc/plc.module';
 import { ReportsModule } from './reports/reports.module';
+import { SnapshotsModule } from './snapshots/snapshots.module';
 import { TelemetryModule } from './telemetry/telemetry.module';
 import { UsersModule } from './users/users.module';
 
@@ -16,7 +16,7 @@ import { UsersModule } from './users/users.module';
     UsersModule,
     PlantsModule,
     TelemetryModule,
-    PlcModule,
+    SnapshotsModule,
     AlarmsModule,
     CommandsModule,
     ReportsModule,

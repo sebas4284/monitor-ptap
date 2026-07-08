@@ -1,0 +1,3 @@
+export const INDUSTRIAL_READER = Symbol('INDUSTRIAL_READER');
+export const INDUSTRIAL_WRITER = Symbol('INDUSTRIAL_WRITER');
+export const PROTOCOL_ADAPTER = Symbol('PROTOCOL_ADAPTER');

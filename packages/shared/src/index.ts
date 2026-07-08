@@ -20,6 +20,50 @@ export interface AuthUser {
   plant: string;
 }
 
+export type ConnectionStatus = 'connected' | 'disconnected' | 'mock';
+
+export interface Sensor {
+  id: string;
+  name: string;
+  value: number;
+  unit: string;
+  min: number;
+  max: number;
+  status: 'ok' | 'warning' | 'error';
+  icon: string;
+}
+
+export interface Valve {
+  id: string;
+  name: string;
+  description: string;
+  isOpen: boolean;
+}
+
+export interface Tank {
+  id: string;
+  name: string;
+  percentage: number;
+  levelM: number;
+  maxLevelM: number;
+  volumeM3: number;
+  maxVolumeM3: number;
+}
+
+export interface OpcSnapshot {
+  plantId: string;
+  timestamp: string;
+  connectionStatus: ConnectionStatus;
+  sensors: Sensor[];
+  tanks: Tank[];
+  valves?: Valve[];
+}
+
+export interface PlantDefinition {
+  id: string;
+  name: string;
+}
+
 export const ROLES: Role[] = ['civil', 'operador', 'jefe', 'admin'];
 
 const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
