@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Optional } from '@nestjs/common';
 import type { ConnectionStatus, OpcSnapshot, PlantDefinition, Sensor, Tank } from '@ptap/shared';
 import type { IndustrialReaderPort } from '../../ports/industrial-reader.port';
 import type { IndustrialWriterPort } from '../../ports/industrial-writer.port';
@@ -24,8 +24,11 @@ export class SimulatorConnectivityAdapter
   implements IndustrialReaderPort, IndustrialWriterPort, ProtocolAdapterPort
 {
   private status: ConnectionStatus = 'mock';
+  private readonly resolvedOpcConfig: OpcConfigService;
 
-  constructor(private readonly opcConfig: OpcConfigService) {}
+  constructor(@Optional() opcConfig?: OpcConfigService) {
+    this.resolvedOpcConfig = opcConfig ?? new OpcConfigService();
+  }
 
   async connect(): Promise<void> {
     this.status = 'mock';
@@ -40,11 +43,11 @@ export class SimulatorConnectivityAdapter
   }
 
   listPlants(): PlantDefinition[] {
-    return this.opcConfig.listPlants();
+    return this.resolvedOpcConfig.listPlants();
   }
 
   async readSnapshot(plantId: string): Promise<OpcSnapshot> {
-    const plant = this.opcConfig.getPlant(plantId);
+    const plant = this.resolvedOpcConfig.getPlant(plantId);
     if (!plant) {
       throw new NotFoundException(`PTAP no configurada: ${plantId}`);
     }

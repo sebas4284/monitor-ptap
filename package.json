@@ -7,6 +7,7 @@
     "packages/*"
   ],
   "scripts": {
+    "start": "npm run dev:api",
     "dev:mobile": "npm run start -w @ptap/mobile",
     "dev:api": "npm run start:dev -w @ptap/api",
     "lint": "npm run lint --workspaces --if-present",

@@ -5,7 +5,7 @@ import {
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
-import { OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import type { Server, Socket } from 'socket.io';
 import { Subscription } from 'rxjs';
 import { ConnectivityService } from './connectivity.service';
@@ -19,11 +19,17 @@ export class ConnectivityGateway implements OnModuleInit, OnModuleDestroy {
   @WebSocketServer()
   private server!: Server;
 
+  private readonly logger = new Logger(ConnectivityGateway.name);
   private subscription?: Subscription;
 
-  constructor(private readonly connectivity: ConnectivityService) {}
+  constructor(@Optional() private readonly connectivity?: ConnectivityService) {}
 
   onModuleInit(): void {
+    if (!this.connectivity) {
+      this.logger.warn('ConnectivityService no está disponible; el gateway quedará en modo pasivo.');
+      return;
+    }
+
     this.subscription = this.connectivity.snapshot$.subscribe(snapshot => {
       this.server.to(snapshot.plantId).emit('opc:snapshot', snapshot);
     });
@@ -50,6 +56,12 @@ export class ConnectivityGateway implements OnModuleInit, OnModuleDestroy {
     }
 
     await client.join(plantId);
+
+    if (!this.connectivity) {
+      client.emit('opc:snapshot', null);
+      return;
+    }
+
     const snapshot = await this.connectivity.getSnapshot(plantId);
     client.emit('opc:snapshot', snapshot);
   }

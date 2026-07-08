@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import type { OpcSnapshot, PlantDefinition } from '@ptap/shared';
 import { Subject } from 'rxjs';
 import { INDUSTRIAL_READER, PROTOCOL_ADAPTER } from './connectivity.tokens';
@@ -11,19 +11,22 @@ export class ConnectivityService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(ConnectivityService.name);
   private readonly snapshots = new Map<string, OpcSnapshot>();
   private poller?: NodeJS.Timeout;
+  private readonly resolvedOpcConfig: OpcConfigService;
 
   readonly snapshot$ = new Subject<OpcSnapshot>();
 
   constructor(
     @Inject(INDUSTRIAL_READER) private readonly reader: IndustrialReaderPort,
     @Inject(PROTOCOL_ADAPTER) private readonly adapter: ProtocolAdapterPort,
-    private readonly opcConfig: OpcConfigService,
-  ) {}
+    @Optional() opcConfig?: OpcConfigService,
+  ) {
+    this.resolvedOpcConfig = opcConfig ?? new OpcConfigService();
+  }
 
   async onModuleInit(): Promise<void> {
     await this.adapter.connect();
     await this.pollOnce();
-    this.poller = setInterval(() => void this.pollOnce(), this.opcConfig.getPollingIntervalMs());
+    this.poller = setInterval(() => void this.pollOnce(), this.resolvedOpcConfig.getPollingIntervalMs());
   }
 
   async onModuleDestroy(): Promise<void> {
