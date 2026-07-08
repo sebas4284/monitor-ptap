@@ -1,4 +1,4 @@
-import type { Role, AuthUser } from '@ptap/shared';
+import type { Role, AuthUser } from '../constants/roles';
 
 export type { AuthUser };
 

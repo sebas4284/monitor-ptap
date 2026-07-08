@@ -1,8 +1,8 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
-import type { AuthUser, Permission } from '@ptap/shared';
-import { hasPermission as checkPermission } from '@ptap/shared';
+import type { AuthUser, Permission } from '../constants/roles';
+import { hasPermission as checkPermission } from '../constants/roles';
 
 const TOKEN_KEY = 'ptap_auth_token';
 const USER_KEY = 'ptap_auth_user';

@@ -26,7 +26,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { apiRegister } from '../../services/api';
 import { PLANTS, type Plant } from '../../context/PlantContext';
-import { ROLES, ROLE_LABELS, ROLE_DESCRIPTIONS, type Role } from '@ptap/shared';
+import { ROLES, ROLE_LABELS, ROLE_DESCRIPTIONS, type Role } from '../../constants/roles';
 import Colors from '../../constants/colors';
 
 export default function RegisterScreen() {
