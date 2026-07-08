@@ -11,8 +11,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '../../constants/colors';
 import { useAuth } from '../../context/AuthContext';
-import { ROLE_LABELS, ROLE_COLORS } from '../../constants/roles';
-import type { AuthUser } from '../../constants/roles';
+import { ROLE_LABELS, ROLE_COLORS, type AuthUser } from '@ptap/shared';
 
 function MenuModal({
   visible,
