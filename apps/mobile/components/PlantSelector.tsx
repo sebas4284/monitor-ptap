@@ -1,9 +1,9 @@
 import { ScrollView, TouchableOpacity, Text, View } from 'react-native';
-import { usePlant } from '../context/PlantContext';
+import { usePlant, PLANTS, type Plant } from '../context/PlantContext';
 import Colors from '../constants/colors';
 
 export function PlantSelector() {
-  const { selectedPlant, setSelectedPlant, plants } = usePlant();
+  const { selectedPlant, setSelectedPlant } = usePlant();
 
   return (
     <View style={{ backgroundColor: Colors.bg, borderBottomWidth: 1, borderBottomColor: '#E5E7EB' }}>
@@ -12,7 +12,7 @@ export function PlantSelector() {
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 10, gap: 8 }}
       >
-        {plants.map(plant => {
+        {PLANTS.map((plant: Plant) => {
           const isSelected = plant === selectedPlant;
           return (
             <TouchableOpacity

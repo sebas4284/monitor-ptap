@@ -25,26 +25,21 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { apiRegister } from '../../services/api';
-import { usePlant, type Plant } from '../../context/PlantContext';
+import { PLANTS, type Plant } from '../../context/PlantContext';
 import { ROLES, ROLE_LABELS, ROLE_DESCRIPTIONS, type Role } from '@ptap/shared';
 import Colors from '../../constants/colors';
 
 export default function RegisterScreen() {
-  const { plants } = usePlant();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
-  const [plant, setPlant] = useState<Plant>('');
+  const [plant, setPlant] = useState<Plant>(PLANTS[0]);
   const [role, setRole] = useState<Role>('operador');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showPlantPicker, setShowPlantPicker] = useState(false);
   const [showRolePicker, setShowRolePicker] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-
-  if (!plant && plants.length > 0) {
-    setPlant(plants[0]);
-  }
 
   async function handleRegister() {
     if (!name.trim() || !email.trim() || !phone.trim() || !password.trim()) {
@@ -133,7 +128,7 @@ export default function RegisterScreen() {
           </TouchableOpacity>
           {showPlantPicker && (
             <View style={styles.pickerDropdown}>
-              {plants.map(p => (
+              {PLANTS.map(p => (
                 <TouchableOpacity
                   key={p}
                   style={styles.pickerOption}

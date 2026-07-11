@@ -1,36 +1,20 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import { fetchPlants } from '../services/api';
+import React, { createContext, useContext, useState } from 'react';
 
-export type Plant = string;
+export const PLANTS = ['PTAP Norte', 'PTAP Sur', 'Planta Rio'] as const;
+export type Plant = (typeof PLANTS)[number];
 
 interface PlantContextType {
   selectedPlant: Plant;
   setSelectedPlant: (plant: Plant) => void;
-  plants: Plant[];
 }
 
 const PlantContext = createContext<PlantContextType | null>(null);
 
 export function PlantProvider({ children }: { children: React.ReactNode }) {
-  const [plants, setPlants] = useState<Plant[]>([]);
-  const [selectedPlant, setSelectedPlant] = useState<Plant>('');
-
-  useEffect(() => {
-    fetchPlants()
-      .then(data => {
-        const nextPlants = data.map(plant => plant.id);
-        setPlants(nextPlants);
-        if (!selectedPlant && nextPlants.length > 0) {
-          setSelectedPlant(nextPlants[0]);
-        }
-      })
-      .catch(() => {
-        setPlants([]);
-      });
-  }, []);
+  const [selectedPlant, setSelectedPlant] = useState<Plant>(PLANTS[0]);
 
   return (
-    <PlantContext.Provider value={{ selectedPlant, setSelectedPlant, plants }}>
+    <PlantContext.Provider value={{ selectedPlant, setSelectedPlant }}>
       {children}
     </PlantContext.Provider>
   );
