@@ -5,7 +5,7 @@ import {
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
-import { Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
+import { Inject, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import type { Server, Socket } from 'socket.io';
 import { Subscription } from 'rxjs';
 import { ConnectivityService } from './connectivity.service';
@@ -22,7 +22,9 @@ export class ConnectivityGateway implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(ConnectivityGateway.name);
   private subscription?: Subscription;
 
-  constructor(@Optional() private readonly connectivity?: ConnectivityService) {}
+  constructor(
+    @Optional() @Inject(ConnectivityService) private readonly connectivity?: ConnectivityService,
+  ) {}
 
   onModuleInit(): void {
     if (!this.connectivity) {

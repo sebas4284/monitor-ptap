@@ -1,0 +1,142 @@
+{
+  "info": {
+    "name": "Monitor PTAP API",
+    "description": "Colección de la API real de @ptap/api (NestJS, prefijo /api, puerto 4000). Generada el 2026-07-10 a partir del código en apps/api. Los datos de plantas/snapshots provienen del adapter simulador (connectionStatus: 'mock') hasta que exista OPC UA real.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:4000", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "GET /api/health — liveness",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/health", "host": ["{{baseUrl}}"], "path": ["api", "health"] },
+            "description": "Liveness de la app. Respuesta esperada 200: {\"status\":\"ok\",\"service\":\"ptap-api\",\"sharedRoles\":4}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('payload', () => {",
+                  "  const b = pm.response.json();",
+                  "  pm.expect(b.status).to.eql('ok');",
+                  "  pm.expect(b.service).to.eql('ptap-api');",
+                  "  pm.expect(b.sharedRoles).to.be.a('number');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /api/health/db — readiness MySQL",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/health/db", "host": ["{{baseUrl}}"], "path": ["api", "health", "db"] },
+            "description": "Verifica la conexión al pool MySQL (SELECT 1). 200: {\"status\":\"ok\",\"database\":\"monitor_ptap\",\"latencyMs\":n}. 503 si la BD no responde: {\"status\":\"error\",\"database\":\"monitor_ptap\",\"message\":\"...\"}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('payload', () => {",
+                  "  const b = pm.response.json();",
+                  "  pm.expect(b.status).to.eql('ok');",
+                  "  pm.expect(b.database).to.eql('monitor_ptap');",
+                  "  pm.expect(b.latencyMs).to.be.a('number');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Plantas",
+      "item": [
+        {
+          "name": "GET /api/plants — lista de plantas",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/api/plants", "host": ["{{baseUrl}}"], "path": ["api", "plants"] },
+            "description": "Catálogo de plantas desde apps/api/opc-config.json. 200: [{\"id\":\"ptap-1\",\"name\":\"PTAP 1\"}, ... 8 plantas]. Cada elemento es un PlantDefinition de @ptap/shared."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('array de plantas con id y name', () => {",
+                  "  const b = pm.response.json();",
+                  "  pm.expect(b).to.be.an('array').with.length.above(0);",
+                  "  pm.expect(b[0]).to.have.keys(['id', 'name']);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Snapshots",
+      "item": [
+        {
+          "name": "GET /api/snapshots/:plantId — snapshot OPC",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": {
+              "raw": "{{baseUrl}}/api/snapshots/:plantId",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "snapshots", ":plantId"],
+              "variable": [{ "key": "plantId", "value": "ptap-1", "description": "id de planta de GET /api/plants (ptap-1 … ptap-8). Es el id, NO el nombre." }]
+            },
+            "description": "Último snapshot conocido de la planta (OpcSnapshot de @ptap/shared): {plantId, timestamp ISO-8601, connectionStatus: 'connected'|'disconnected'|'mock', sensors: Sensor[4], tanks: Tank[4], valves?: Valve[]}. Hoy el backend simula (connectionStatus='mock'). 404 si el plantId no existe (NotFoundException del adapter)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('estructura OpcSnapshot', () => {",
+                  "  const b = pm.response.json();",
+                  "  pm.expect(b.plantId).to.be.a('string');",
+                  "  pm.expect(b.timestamp).to.be.a('string');",
+                  "  pm.expect(['connected','disconnected','mock']).to.include(b.connectionStatus);",
+                  "  pm.expect(b.sensors).to.be.an('array');",
+                  "  pm.expect(b.tanks).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Socket.IO (referencia — no ejecutable en colección v2.1)",
+      "description": "Postman v2.1 no modela WebSockets; esta carpeta es documentación.\n\nEndpoint: ws://localhost:4000 (path por defecto /socket.io). CORS: origin '*'.\n\nEventos:\n1. Cliente → servidor: 'opc:subscribe' con payload { \"plantId\": \"ptap-1\" }. El socket abandona cualquier room 'ptap-*' anterior, se une al room del plantId y recibe de inmediato un 'opc:snapshot' con el último snapshot (o null si no hay datos).\n2. Servidor → cliente: 'opc:snapshot' con payload OpcSnapshot. Se emite al room de la planta en cada ciclo de polling (pollingIntervalMs: 5000, definido en apps/api/opc-config.json).\n\nNota: el frontend móvil actual NO usa Socket.IO (hace polling HTTP cada 30 s con React Query); socket.io-client no está instalado en apps/mobile.",
+      "item": []
+    }
+  ]
+}

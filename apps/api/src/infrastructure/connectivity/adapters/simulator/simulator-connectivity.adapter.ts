@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import type { ConnectionStatus, OpcSnapshot, PlantDefinition, Sensor, Tank } from '@ptap/shared';
 import type { IndustrialReaderPort } from '../../ports/industrial-reader.port';
 import type { IndustrialWriterPort } from '../../ports/industrial-writer.port';
@@ -26,7 +26,7 @@ export class SimulatorConnectivityAdapter
   private status: ConnectionStatus = 'mock';
   private readonly resolvedOpcConfig: OpcConfigService;
 
-  constructor(@Optional() opcConfig?: OpcConfigService) {
+  constructor(@Optional() @Inject(OpcConfigService) opcConfig?: OpcConfigService) {
     this.resolvedOpcConfig = opcConfig ?? new OpcConfigService();
   }
 

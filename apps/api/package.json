@@ -18,6 +18,8 @@
     "@nestjs/websockets": "^11.1.28",
     "@ptap/shared": "*",
     "argon2": "^0.44.0",
+    "dotenv": "^17.4.2",
+    "mysql2": "^3.22.6",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
     "socket.io": "^4.8.3"

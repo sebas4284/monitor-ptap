@@ -1,9 +1,10 @@
-import { Controller, Get, Param } from '@nestjs/common';
+import { Controller, Get, Inject, Param } from '@nestjs/common';
 import { ConnectivityService } from '../../infrastructure/connectivity/connectivity.service';
 
 @Controller('snapshots')
 export class SnapshotsController {
-  constructor(private readonly connectivity: ConnectivityService) {}
+  // @Inject explícito: tsx (esbuild) no emite design:paramtypes, la inyección por tipo falla en dev
+  constructor(@Inject(ConnectivityService) private readonly connectivity: ConnectivityService) {}
 
   @Get(':plantId')
   getSnapshot(@Param('plantId') plantId: string) {

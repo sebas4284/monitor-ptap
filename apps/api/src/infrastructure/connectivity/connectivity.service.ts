@@ -18,7 +18,7 @@ export class ConnectivityService implements OnModuleInit, OnModuleDestroy {
   constructor(
     @Inject(INDUSTRIAL_READER) private readonly reader: IndustrialReaderPort,
     @Inject(PROTOCOL_ADAPTER) private readonly adapter: ProtocolAdapterPort,
-    @Optional() opcConfig?: OpcConfigService,
+    @Optional() @Inject(OpcConfigService) opcConfig?: OpcConfigService,
   ) {
     this.resolvedOpcConfig = opcConfig ?? new OpcConfigService();
   }
