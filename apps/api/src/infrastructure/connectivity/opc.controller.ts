@@ -1,5 +1,6 @@
 import { Controller, Get, Inject } from '@nestjs/common';
 import { CONNECTIVITY_ADAPTER } from './connectivity.tokens';
+import { PlantPipelineService } from './pipeline/plant-pipeline.service';
 import type { ConnectivityAdapter } from './ports/connectivity-adapter.port';
 
 /**
@@ -8,7 +9,10 @@ import type { ConnectivityAdapter } from './ports/connectivity-adapter.port';
  */
 @Controller('opc')
 export class OpcController {
-  constructor(@Inject(CONNECTIVITY_ADAPTER) private readonly adapter: ConnectivityAdapter) {}
+  constructor(
+    @Inject(CONNECTIVITY_ADAPTER) private readonly adapter: ConnectivityAdapter,
+    @Inject(PlantPipelineService) private readonly pipeline: PlantPipelineService,
+  ) {}
 
   /** Estado operativo del puente: bridgeStatus, notificaciones, reconexiones, por planta. */
   @Get('status')
@@ -27,4 +31,11 @@ export class OpcController {
   getBuffers() {
     return this.adapter.getBufferHealth();
   }
+
+  /** DeadLetter (regla 12): señales anómalas descartadas del pipeline. Endpoint admin. */
+  @Get('dead-letter')
+  getDeadLetter() {
+    return this.pipeline.getDeadLetter();
+  }
 }
+

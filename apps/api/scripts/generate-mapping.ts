@@ -44,6 +44,50 @@ interface VerifyDoc { verifiedAt: string; connections: VerifyConn[] }
 interface NodeReference { nsUri: string; identifier: string }
 interface BufferDescriptor { browseName: string; node: NodeReference; arrayLength: number | null; dataType: string | null }
 
+interface SignalDef {
+  buffer: string;
+  index: number;
+  domainKey: string;
+  label: string;
+  unit: string;
+  min: number;
+  max: number;
+  mappingStatus: 'mapped' | 'unmapped';
+  confidence: 'confirmed' | 'inferred' | 'estimated';
+  writable: boolean;
+}
+
+/**
+ * Señales de proceso mapeadas. SIN export L5X, la semántica proviene del HMI de Optix
+ * (NodeId exacto por sitio) verificada contra el PLC. `buffer:'realIn'` refiere al buffer
+ * realIn PRIMARIO del sitio (el de arrayLength mayor), no a los de tanque TK1/TK2/TK3.
+ *
+ * - MONTEBELLO: caudales de entrada, verificados en vivo (idx0 ≈ HMI 14.22; idx1 =
+ *   totalizador; idx5 ≈ 23.2). Evidencia: docs/FLOW_VALIDATION.md.
+ * - CAMPOALEGRE: confirmación del operador desde el HMI (2026-07-14): idx0 = caudal de
+ *   salida 1, idx7 = caudal de salida 2 (l/s), idx12 = presión de salida 1 en psi con
+ *   rango de instrumento 0–16 bar → max 232 psi. Identificador verificado contra el
+ *   mapping (REAL_IN_CAMPOALEGRE = g=E1680D60-7BCD-C892-7257-C4D4AAE41E1C).
+ *
+ * confidence: 'inferred' (NO confirmed): inferencias muy fundadas, pero el documento
+ * oficial de la planta aún no vive en el repo. El schema PROHÍBE writable:true sin
+ * confidence:'confirmed' — esa red de seguridad queda intacta (writable:false).
+ * Los máximos son bounds plausibles (caudal 1000 l/s; presión 232 psi = 16 bar), no la
+ * capacidad de diseño real. Upgrade a 'confirmed': añadir el documento a
+ * docs/plant-documentation/ y cambiar confidence + max aquí.
+ */
+const SIGNALS_BY_SITE: Record<string, SignalDef[]> = {
+  MONTEBELLO: [
+    { buffer: 'realIn', index: 0, domainKey: 'inletFlow1', label: 'Caudal de entrada 1', unit: 'l/s', min: 0, max: 1000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', index: 5, domainKey: 'inletFlow2', label: 'Caudal de entrada 2', unit: 'l/s', min: 0, max: 1000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+  ],
+  CAMPOALEGRE: [
+    { buffer: 'realIn', index: 0, domainKey: 'outletFlow1', label: 'Caudal de salida 1', unit: 'l/s', min: 0, max: 1000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', index: 7, domainKey: 'outletFlow2', label: 'Caudal de salida 2', unit: 'l/s', min: 0, max: 1000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', index: 12, domainKey: 'outletPressure1', label: 'Presión de salida 1', unit: 'psi', min: 0, max: 232, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+  ],
+};
+
 const CHANNELS = ['realIn', 'realOut', 'intIn', 'intOut', 'bitIn', 'bitOut', 'msgRead', 'msgWrite'] as const;
 type Channel = (typeof CHANNELS)[number];
 
@@ -161,13 +205,13 @@ function main(): void {
     if (TOPOLOGY_VERIFIED.has(site)) plant.topologyVerified = true;
     plant.opcBuffers = opcBuffers;
     plant.connection = connectionFor(site, chans.msgRead);
-    plant.signals = [];
+    plant.signals = SIGNALS_BY_SITE[site] ?? [];
     return plant;
   });
 
   const doc = {
     $schema: './opc_mapping.schema.json',
-    version: '0.2.0',
+    version: '0.4.0',
     protocolVersion: 'v2',
     dtoVersion: 'v1',
     generatedFrom: {
@@ -184,7 +228,9 @@ function main(): void {
       'Las referencias a nodos usan { nsUri, identifier } SIN índice de namespace. El adaptador de Fase 1 DEBE resolver nsUri → índice vía ReadNamespaceArray en CADA conexión y reconexión (el índice de Optix puede cambiar entre reinicios), usando scripts/resolve-namespaces.ts.',
       'Si un nsUri del mapping NO está en el NamespaceArray del servidor: NamespaceNotFoundError ⇒ BridgeStatus = Faulted (NO Recovering: no se arregla reintentando). Prohibido fallback a ns=0 o a un índice previo.',
       'MANGOS y ALTO_MANGOS fusionados en alto-los-mangos (confirmado). SAN_ANTONO normalizado a san-antonio.',
-      'Sin export L5X: TODA señal de proceso está unmapped (signals: []). Única semántica confirmada: connection (DN/ER/TO de MSG_READ). Ver docs/PHASE0_VERIFICATION.md y docs/MSG_BITS_OBSERVATION.md para la semántica temporal de esos bits.',
+      'Sin export L5X: casi TODA señal de proceso sigue unmapped (signals: []). Única semántica confirmada por lectura: connection (DN/ER/TO de MSG_READ). Ver docs/PHASE0_VERIFICATION.md y docs/MSG_BITS_OBSERVATION.md.',
+      'Excepción: montebello.signals mapea inletFlow1 (realIn[0]) e inletFlow2 (realIn[5]) como caudales de entrada en l/s. confidence: INFERRED — inferidos del HMI de Optix (NodeId g=eba8e3eb-53a2-0ccd-3912-501c0f7e4c8f = REAL_IN_MONTEBELLO) y verificados en vivo, NO del L5X ni de documento oficial de la planta. Evidencia: docs/FLOW_VALIDATION.md. buffer:realIn = el buffer realIn primario del sitio (arrayLength 50), no los de tanque. El máximo (1000 l/s) es un bound físico plausible, no la capacidad de diseño.',
+      'Excepción: campoalegre.signals mapea outletFlow1 (realIn[0]), outletFlow2 (realIn[7]) en l/s y outletPressure1 (realIn[12]) en psi. confidence: INFERRED — confirmación del operador desde el HMI de Optix (2026-07-14; identificador verificado: REAL_IN_CAMPOALEGRE = g=E1680D60-7BCD-C892-7257-C4D4AAE41E1C), NO del L5X ni de documento oficial. Rango de presión: instrumento 0–16 bar → max 232 psi.',
       'Topología de san-antonio y quijote verificada por browse: son sitios mínimos reales (solo un buffer de tanque + MSG_READ). topologyVerified: true.',
       'displayName es provisional (displayNameProvisional: true) hasta confirmación escrita de la planta.',
       'generatedFrom.namespaces es referencia histórica de la captura, NO fuente de verdad para el runtime.',

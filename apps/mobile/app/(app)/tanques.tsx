@@ -27,7 +27,7 @@ export default function TanquesScreen() {
         }
       >
         <View style={styles.sectionHeader}>
-          <Text style={styles.plantName}>{selectedPlant}</Text>
+          <Text style={styles.plantName}>{selectedPlant.name}</Text>
           <Text style={styles.sectionSubtitle}>Niveles de tanques</Text>
         </View>
 
@@ -47,7 +47,7 @@ export default function TanquesScreen() {
         )}
       </ScrollView>
 
-      <LiveBadge />
+      <LiveBadge state="unknown" />
     </SafeAreaView>
   );
 }

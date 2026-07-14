@@ -17,6 +17,8 @@ import { OpcUaConnectivityAdapter } from './adapters/opcua/opcua-connectivity.ad
 import { RawFrameCache } from './raw-frame-cache';
 import { BridgeOrchestratorService } from './bridge-orchestrator.service';
 import { OpcController } from './opc.controller';
+import { PlantCache } from './pipeline/plant-cache';
+import { PlantPipelineService } from './pipeline/plant-pipeline.service';
 import type { ConnectivityAdapter } from './ports/connectivity-adapter.port';
 
 @Module({
@@ -49,6 +51,10 @@ import type { ConnectivityAdapter } from './ports/connectivity-adapter.port';
       },
     },
     BridgeOrchestratorService,
+
+    // ── Pipeline de dominio en RAM (Fase 2 acotada: caudal → DTO → cache) ──────
+    PlantCache,
+    PlantPipelineService,
   ],
   exports: [
     ConnectivityService,
@@ -58,6 +64,8 @@ import type { ConnectivityAdapter } from './ports/connectivity-adapter.port';
     CONNECTIVITY_ADAPTER,
     CONNECTIVITY_CONFIG,
     RawFrameCache,
+    PlantCache,
+    PlantPipelineService,
   ],
 })
 export class ConnectivityModule {}

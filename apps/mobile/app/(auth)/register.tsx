@@ -24,8 +24,8 @@ function alertWeb(title: string, message: string, onDismiss?: () => void) {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { apiRegister } from '../../services/api';
-import { PLANTS, type Plant } from '../../context/PlantContext';
+import { apiRegister } from '../../services/auth';
+import { PLANTS } from '../../context/PlantContext';
 import { ROLES, ROLE_LABELS, ROLE_DESCRIPTIONS, type Role } from '@ptap/shared';
 import Colors from '../../constants/colors';
 
@@ -33,7 +33,7 @@ export default function RegisterScreen() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
-  const [plant, setPlant] = useState<Plant>(PLANTS[0]);
+  const [plant, setPlant] = useState<string>(PLANTS[0].name);
   const [role, setRole] = useState<Role>('operador');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -130,16 +130,16 @@ export default function RegisterScreen() {
             <View style={styles.pickerDropdown}>
               {PLANTS.map(p => (
                 <TouchableOpacity
-                  key={p}
+                  key={p.id}
                   style={styles.pickerOption}
-                  onPress={() => { setPlant(p); setShowPlantPicker(false); }}
+                  onPress={() => { setPlant(p.name); setShowPlantPicker(false); }}
                 >
                   <Ionicons
-                    name={p === plant ? 'radio-button-on' : 'radio-button-off'}
+                    name={p.name === plant ? 'radio-button-on' : 'radio-button-off'}
                     size={18}
                     color={Colors.primary}
                   />
-                  <Text style={styles.pickerOptionText}>{p}</Text>
+                  <Text style={styles.pickerOptionText}>{p.name}</Text>
                 </TouchableOpacity>
               ))}
             </View>

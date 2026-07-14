@@ -1,5 +1,5 @@
 import { ScrollView, TouchableOpacity, Text, View } from 'react-native';
-import { usePlant, PLANTS, type Plant } from '../context/PlantContext';
+import { usePlant, PLANTS } from '../context/PlantContext';
 import Colors from '../constants/colors';
 
 export function PlantSelector() {
@@ -12,11 +12,11 @@ export function PlantSelector() {
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 10, gap: 8 }}
       >
-        {PLANTS.map((plant: Plant) => {
-          const isSelected = plant === selectedPlant;
+        {PLANTS.map((plant) => {
+          const isSelected = plant.id === selectedPlant.id;
           return (
             <TouchableOpacity
-              key={plant}
+              key={plant.id}
               onPress={() => setSelectedPlant(plant)}
               style={{
                 paddingHorizontal: 18,
@@ -34,7 +34,7 @@ export function PlantSelector() {
                   color: isSelected ? '#fff' : Colors.textSecondary,
                 }}
               >
-                {plant}
+                {plant.name}
               </Text>
             </TouchableOpacity>
           );

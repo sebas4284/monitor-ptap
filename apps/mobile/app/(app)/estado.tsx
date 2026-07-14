@@ -2,13 +2,13 @@ import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useQuery } from '@tanstack/react-query';
-import { fetchTanks } from '../../services/api';
+import { fetchTanks } from '../../services/mock-data';
 import { useAuth } from '../../context/AuthContext';
 import Colors from '../../constants/colors';
 
 export default function EstadoScreen() {
   const { user } = useAuth();
-  const plant = user?.plant ?? 'PTAP Norte';
+  const plant = user?.plant ?? 'Montebello';
 
   const { data: tanks } = useQuery({
     queryKey: ['tanks', plant],

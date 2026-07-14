@@ -2,7 +2,7 @@ import { View, Text, ScrollView, RefreshControl, StyleSheet, TouchableOpacity, A
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
-import { fetchReports, type Report } from '../../services/api';
+import { fetchReports, type Report } from '../../services/mock-data';
 import { usePlant } from '../../context/PlantContext';
 import { useAuth } from '../../context/AuthContext';
 import { PlantSelector } from '../../components/PlantSelector';
@@ -14,8 +14,8 @@ export default function ReportesScreen() {
   const canExport = hasPermission('export_data');
 
   const { data: reports, isLoading, refetch, isRefetching } = useQuery({
-    queryKey: ['reports', selectedPlant],
-    queryFn: () => fetchReports(selectedPlant),
+    queryKey: ['reports', selectedPlant.id],
+    queryFn: () => fetchReports(selectedPlant.id),
     refetchInterval: 30_000,
   });
 
@@ -44,7 +44,7 @@ export default function ReportesScreen() {
       >
         <View style={styles.sectionHeader}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.plantName}>{selectedPlant}</Text>
+            <Text style={styles.plantName}>{selectedPlant.name}</Text>
             <Text style={styles.sectionSubtitle}>Últimos reportes generados</Text>
           </View>
           {canExport && (

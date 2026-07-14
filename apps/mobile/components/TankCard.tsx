@@ -1,6 +1,6 @@
 import { View, Text, StyleSheet, Animated } from 'react-native';
 import { useEffect, useRef } from 'react';
-import type { Tank } from '../services/api';
+import type { Tank } from '../services/mock-data';
 import Colors from '../constants/colors';
 
 interface Props {

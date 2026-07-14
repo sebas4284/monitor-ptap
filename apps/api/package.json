@@ -5,14 +5,16 @@
   "scripts": {
     "start": "node dist/main.js",
     "start:dev": "tsx watch src/main.ts",
+    "start:telemetry": "tsx src/main.telemetry.ts",
     "build": "tsc -p tsconfig.json",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "generate:mapping": "tsx scripts/generate-mapping.ts",
     "validate:mapping": "tsx scripts/validate-mapping.ts",
     "test:mapping": "node --import tsx --test test/opc-mapping.test.ts test/resolve-namespaces.test.ts",
-    "test:bridge": "node --import tsx --test test/bridge.test.ts",
-    "test": "echo \"No tests configured for @ptap/api\""
+    "test:bridge": "node --import tsx --test test/bridge.test.ts test/frame-coalescer.test.ts test/heartbeat-monitor.test.ts test/connectivity-config.test.ts",
+    "test:pipeline": "node --import tsx --test test/pipeline.test.ts",
+    "test": "node --import tsx --test test/bridge.test.ts test/frame-coalescer.test.ts test/heartbeat-monitor.test.ts test/connectivity-config.test.ts test/pipeline.test.ts test/opc-mapping.test.ts test/resolve-namespaces.test.ts test/read-opcua-node.test.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.6",

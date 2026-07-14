@@ -40,9 +40,19 @@ export interface OpcUaConfig {
   writesEnabled: boolean; // OPCUA_WRITES_ENABLED (Fase 5); aquí solo se lee, nunca habilita write en Fase 1
 }
 
+export interface LivenessConfig {
+  /** Un cambio dentro de esta ventana (s) → estado `live`. */
+  liveSec: number;
+  /** Sin cambios más allá de esta ventana (s) → estado `stale`. Default por planta en el mapping. */
+  windowSec: number;
+  /** Cada cuánto se re-evalúa el liveness (para pasar idle→stale sin frames nuevos). */
+  sweepMs: number;
+}
+
 export interface ConnectivityConfig {
   provider: ConnectivityProvider;
   opcua: OpcUaConfig;
+  liveness: LivenessConfig;
 }
 
 function num(name: string, fallback: number): number {
@@ -122,6 +132,11 @@ export function loadConnectivityConfig(): ConnectivityConfig {
       subscriptionRecycleMaxAttempts: num('OPCUA_SUBSCRIPTION_RECYCLE_MAX_ATTEMPTS', 3),
       staleThresholdMs: num('OPCUA_STALE_THRESHOLD_MS', 300000), // 5 min (FASE 0.3: frescura de datos)
       writesEnabled: bool('OPCUA_WRITES_ENABLED', false),
+    },
+    liveness: {
+      liveSec: num('LIVENESS_LIVE_SEC', 10),
+      windowSec: num('LIVENESS_WINDOW_SEC', 300),
+      sweepMs: num('LIVENESS_SWEEP_MS', 2000),
     },
   };
 }
