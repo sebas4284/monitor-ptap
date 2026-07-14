@@ -1,0 +1,91 @@
+{
+  "documento": "Matriz de correspondencia Frontend ↔ PLC (Fase 10)",
+  "generadoEl": "2026-07-12T03:48:55.911Z",
+  "servidor": {
+    "endpoint": "opc.tcp://181.204.165.66:59100",
+    "endpointAnunciadoPorElServidor": [
+      "10.10.51.225:59100"
+    ],
+    "producto": "FactoryTalkOptix HMI FTOptixApplication",
+    "estado": "Running",
+    "plc": "CompactLogix 1769-L27ERM-QBFC1B (fw 33.16) vía RAEtherNet_IPDriver1"
+  },
+  "advertencia": "Documento generado por ingeniería inversa de SOLO LECTURA (Browse/Read) sobre el servidor OPC UA de FactoryTalk Optix. No se escribió ninguna variable, no se invocó ningún método y no se creó ninguna subscription. Todo ítem marcado \"REQUIERE VALIDACIÓN EN PLANTA\" es una hipótesis técnica, NO un hecho confirmado: no debe usarse para control sin validación previa.",
+  "contratoActual": "packages/shared/src/index.ts — Sensor, Tank, Valve, OpcSnapshot, PlantDefinition",
+  "veredicto": "NINGÚN campo del contrato del frontend puede mapearse hoy a una fuente real del PLC con certeza, salvo connectionStatus. El frontend seguirá con datos simulados hasta obtener el mapa de índices del PLC.",
+  "configObsoleta": {
+    "archivo": "apps/api/opc-config.json",
+    "problema": "Declara 8 plantas ficticias (ptap-1…ptap-8) con endpoints opc.tcp://plc-ptap-N:4840 y NodeIds \"ns=2;s=PTAPN.Sensors\" que NO EXISTEN. El servidor real es uno solo (opc.tcp://181.204.165.66:59100) y los sitios reales son otros.",
+    "accion": "Reemplazar por una configuración de un único endpoint + catálogo de sitios reales + mapa de índices (cuando exista).",
+    "sitiosReales": [
+      "ALTO_MANGOS",
+      "CAMPOALEGRE",
+      "CARBONERO",
+      "CASCAJAL",
+      "KM18",
+      "MANGOS",
+      "MONTEBELLO",
+      "PICHINDE",
+      "QUIJOTE",
+      "SAN_ANTONIO",
+      "SIRENA",
+      "SOLEDAD",
+      "VORAGINE"
+    ]
+  },
+  "matriz": [
+    {
+      "elementoFrontend": "PlantDefinition.id / .name (selector de planta)",
+      "propiedadBackend": "Site.id / Site.name",
+      "fuentePlc": "nombre del buffer (sufijo de sitio)",
+      "nodeId": "derivado — no es un NodeId único",
+      "transformacion": "normalización de nombre (VORAGINE → \"voragine\" / \"La Vorágine\")",
+      "estadoValidacion": "PARCIAL — los nombres de sitio son ciertos; su correspondencia con las PTAP del negocio debe confirmarse"
+    },
+    {
+      "elementoFrontend": "OpcSnapshot.connectionStatus",
+      "propiedadBackend": "Site.connectionStatus",
+      "fuentePlc": "MSG_READ_<SITIO>.DN / .ER / .TO",
+      "nodeId": "ver 02_devices.json → sitios[].comunicacion.msgNodeIds",
+      "transformacion": "DN=true y ER=false y TO=false → \"connected\"; ER o TO → \"disconnected\"",
+      "estadoValidacion": "CONFIRMADO — semántica estándar de la instrucción MSG de Rockwell"
+    },
+    {
+      "elementoFrontend": "Tank.levelM / .percentage / .volumeM3 / .maxLevelM / .maxVolumeM3",
+      "propiedadBackend": "Tank.*",
+      "fuentePlc": "algún índice de REAL_TK*_<SITIO> / REAL_IN_<SITIO>",
+      "nodeId": "INDETERMINADO",
+      "transformacion": "DESCONOCIDA (no hay EURange en ningún tag)",
+      "estadoValidacion": "REQUIERE VALIDACIÓN EN PLANTA — se sabe qué buffer pertenece a qué tanque, pero no qué índice es nivel, volumen o porcentaje. maxLevelM y maxVolumeM3 son datos de ingeniería civil que probablemente NO estén en el PLC: deben configurarse en el backend."
+    },
+    {
+      "elementoFrontend": "Sensor.value / .unit / .min / .max (presión, caudal, pH, turbidez)",
+      "propiedadBackend": "Sensor.*",
+      "fuentePlc": "algún índice de REAL_IN_<SITIO>",
+      "nodeId": "INDETERMINADO",
+      "transformacion": "DESCONOCIDA — ningún tag declara EngineeringUnits ni EURange",
+      "estadoValidacion": "REQUIERE VALIDACIÓN EN PLANTA — unit/min/max NO existen en el PLC y deberán definirse como configuración del backend por instrumento."
+    },
+    {
+      "elementoFrontend": "Valve.isOpen (electroválvulas)",
+      "propiedadBackend": "Valve.isOpen",
+      "fuentePlc": "un bit de algún INT_IN_<SITIO> o BIT_<SITIO> (palabra empaquetada)",
+      "nodeId": "INDETERMINADO",
+      "transformacion": "extracción de bit: (word >> bitIndex) & 1",
+      "estadoValidacion": "REQUIERE VALIDACIÓN EN PLANTA — confirma la nota \"packed-INT bit map\" ya presente en apps/api/opc-config.json. El mapa de bits sigue sin determinarse."
+    },
+    {
+      "elementoFrontend": "Acción \"abrir/cerrar válvula\" (botón de control)",
+      "propiedadBackend": "ControlCommand → IndustrialWriterPort.writeCommand",
+      "fuentePlc": "un bit/índice de INT_OUT_<SITIO>",
+      "nodeId": "ver 04_commands.json",
+      "transformacion": "DESCONOCIDA",
+      "estadoValidacion": "REQUIERE VALIDACIÓN EN PLANTA — BLOQUEADO. Escribir a ciegas puede accionar un equipo real."
+    }
+  ],
+  "camposSinFuenteEnElPlc": [
+    "Sensor.unit, Sensor.min, Sensor.max, Sensor.icon, Sensor.name — metadatos de presentación: deben vivir en configuración del backend, no en el PLC",
+    "Tank.maxLevelM, Tank.maxVolumeM3 — capacidad de diseño del tanque: dato de ingeniería, no de PLC",
+    "Valve.name, Valve.description — nomenclatura de planta: configuración del backend"
+  ]
+}

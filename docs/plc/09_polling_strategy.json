@@ -1,0 +1,60 @@
+{
+  "documento": "Estrategia de comunicación (Fase 11)",
+  "generadoEl": "2026-07-12T03:48:55.919Z",
+  "servidor": {
+    "endpoint": "opc.tcp://181.204.165.66:59100",
+    "endpointAnunciadoPorElServidor": [
+      "10.10.51.225:59100"
+    ],
+    "producto": "FactoryTalkOptix HMI FTOptixApplication",
+    "estado": "Running",
+    "plc": "CompactLogix 1769-L27ERM-QBFC1B (fw 33.16) vía RAEtherNet_IPDriver1"
+  },
+  "advertencia": "Documento generado por ingeniería inversa de SOLO LECTURA (Browse/Read) sobre el servidor OPC UA de FactoryTalk Optix. No se escribió ninguna variable, no se invocó ningún método y no se creó ninguna subscription. Todo ítem marcado \"REQUIERE VALIDACIÓN EN PLANTA\" es una hipótesis técnica, NO un hecho confirmado: no debe usarse para control sin validación previa.",
+  "principioClave": "CRÍTICO: suscribirse al ARRAY COMPLETO (un MonitoredItem por buffer), NUNCA a cada índice por separado. Hay 2676 señales pero solo 1744 buffers: un item por buffer reduce la carga sobre el HMI Optix en dos órdenes de magnitud. El backend descompone el array en memoria.",
+  "subscriptionUnica": "Una sola Subscription OPC UA para todo el sistema, con publishingInterval igual al menor intervalo requerido (500 ms) y samplingInterval por MonitoredItem según la tabla. Evita múltiples subscriptions compitiendo por el mismo servidor.",
+  "reglas": [
+    {
+      "patron": "Buffers de proceso de entrada (REAL_IN_*, DATOS_IN_*, REAL_TK*)",
+      "estrategia": "subscription",
+      "intervaloMs": 1000,
+      "justificacion": "Son los valores que el operador observa. Una sola subscription con MonitoredItems sobre el ARRAY COMPLETO (no por elemento) minimiza la carga sobre el HMI Optix: un item por buffer, no uno por índice. Se observó movimiento en 1 señales durante el muestreo, lo que confirma refresco activo."
+    },
+    {
+      "patron": "Buffers de estado discreto (INT_IN_*, BIT_*)",
+      "estrategia": "subscription",
+      "intervaloMs": 500,
+      "justificacion": "Estados de equipos y alarmas: la latencia importa y el cambio es esporádico, por lo que la subscription es más barata que el polling."
+    },
+    {
+      "patron": "Diagnóstico de mensajería (MSG_*: DN/ER/TO/ERR)",
+      "estrategia": "subscription",
+      "intervaloMs": 2000,
+      "justificacion": "Determinan si los datos de un sitio son vigentes. Alimentan directamente ConnectionStatus por sitio en el backend: si MSG.ER o MSG.TO están activos, los datos de ese sitio deben marcarse como NO CONFIABLES en el frontend."
+    },
+    {
+      "patron": "Buffers de salida (INT_OUT_*, REAL_OUT_*)",
+      "estrategia": "polling",
+      "intervaloMs": 5000,
+      "justificacion": "Se releen tras un comando para confirmar el eco de escritura. No requieren refresco rápido."
+    },
+    {
+      "patron": "Módulos de E/S del chasis (Local:N:C — configuración)",
+      "estrategia": "on_demand",
+      "intervaloMs": 0,
+      "justificacion": "Configuración estática del hardware: se lee una sola vez al conectar."
+    },
+    {
+      "patron": "Totalizadores (índices con crecimiento monótono confirmado)",
+      "estrategia": "polling",
+      "intervaloMs": 30000,
+      "justificacion": "Acumuladores de volumen: cambian lentamente y no requieren resolución fina. Se separan del resto para no inflar la subscription."
+    }
+  ],
+  "consideracionesDeCarga": [
+    "El servidor es un HMI de producción (FactoryTalk Optix): no debe saturarse.",
+    "El PLC maestro refresca los buffers al ritmo de sus instrucciones MSG (típicamente cientos de ms a segundos). Suscribirse más rápido que ese ciclo no aporta datos nuevos y sí consume recursos.",
+    "Recomendación: arrancar con publishingInterval=1000 ms y ajustar tras medir, en lugar de exigir 500 ms de entrada.",
+    "El servidor no reportó OperationLimits (valores nulos): el backend debe asumir límites conservadores y batchear las lecturas."
+  ]
+}

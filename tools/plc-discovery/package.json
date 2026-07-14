@@ -1,0 +1,24 @@
+{
+  "name": "@ptap/plc-discovery",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Ingeniería inversa de SOLO LECTURA del PLC CompactLogix vía FactoryTalk Optix (OPC UA). No escribe, no llama métodos, no crea subscriptions.",
+  "scripts": {
+    "endpoints": "tsx src/steps/00-endpoints.ts",
+    "browse": "tsx src/steps/01-browse.ts",
+    "read": "tsx src/steps/02-read.ts",
+    "analyze": "tsx src/steps/03-analyze.ts",
+    "generate": "tsx src/steps/04-generate.ts",
+    "discover": "tsx src/run-all.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "dotenv": "17.4.2",
+    "node-opcua": "2.175.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.2.1",
+    "tsx": "^4.20.3",
+    "typescript": "~6.0.3"
+  }
+}

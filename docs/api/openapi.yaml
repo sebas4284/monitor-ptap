@@ -1,0 +1,163 @@
+# Contrato OpenAPI de la API real de @ptap/api — generado 2026-07-10 desde el código (apps/api/src).
+# El proyecto NO usa @nestjs/swagger; este archivo es el contrato estático de referencia.
+# Mantenerlo sincronizado a mano cuando se agreguen endpoints (o introducir @nestjs/swagger en una fase futura).
+openapi: 3.0.3
+info:
+  title: Monitor PTAP API
+  version: 0.1.0
+  description: >
+    Backend NestJS del monorepo monitor-ptap. Prefijo global /api, puerto 4000
+    (variable de entorno PORT). Los datos de plantas y snapshots provienen hoy
+    del adapter simulador (connectionStatus 'mock'); la estructura del contrato
+    no cambiará cuando entre OPC UA real. Tiempo real adicional por Socket.IO
+    (evento cliente 'opc:subscribe' { plantId }, evento servidor 'opc:snapshot').
+servers:
+  - url: http://localhost:4000
+    description: Backend directo (dev)
+  - url: http://localhost:8080
+    description: Proxy combinado (scripts/combined-proxy.js) que sirve frontend + /api + /socket.io
+
+paths:
+  /api/health:
+    get:
+      summary: Liveness de la aplicación
+      operationId: getHealth
+      tags: [health]
+      responses:
+        '200':
+          description: Aplicación viva
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, service, sharedRoles]
+                properties:
+                  status: { type: string, example: ok }
+                  service: { type: string, example: ptap-api }
+                  sharedRoles: { type: integer, example: 4, description: Cantidad de roles definidos en @ptap/shared }
+
+  /api/health/db:
+    get:
+      summary: Readiness de MySQL (SELECT 1 sobre el pool)
+      operationId: getDatabaseHealth
+      tags: [health]
+      responses:
+        '200':
+          description: MySQL responde
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, database, latencyMs]
+                properties:
+                  status: { type: string, example: ok }
+                  database: { type: string, example: monitor_ptap }
+                  latencyMs: { type: integer, example: 3 }
+        '503':
+          description: MySQL no disponible
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: error }
+                  database: { type: string, example: monitor_ptap }
+                  message: { type: string }
+
+  /api/plants:
+    get:
+      summary: Catálogo de plantas (desde apps/api/opc-config.json)
+      operationId: getPlants
+      tags: [plants]
+      responses:
+        '200':
+          description: Lista de plantas
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/PlantDefinition' }
+
+  /api/snapshots/{plantId}:
+    get:
+      summary: Último snapshot conocido de la planta
+      operationId: getSnapshot
+      tags: [snapshots]
+      parameters:
+        - name: plantId
+          in: path
+          required: true
+          schema: { type: string, example: ptap-1 }
+          description: id de planta devuelto por GET /api/plants (NO el nombre)
+      responses:
+        '200':
+          description: Snapshot (cacheado del polling de 5 s, o lectura directa si no hay caché)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OpcSnapshot' }
+        '404':
+          description: plantId desconocido
+
+components:
+  schemas:
+    PlantDefinition:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string, example: ptap-1 }
+        name: { type: string, example: PTAP 1 }
+
+    Sensor:
+      type: object
+      required: [id, name, value, unit, min, max, status, icon]
+      properties:
+        id: { type: string, example: pressure }
+        name: { type: string, example: Presion }
+        value: { type: number, example: 42.5 }
+        unit: { type: string, example: psi }
+        min: { type: number, example: 30 }
+        max: { type: number, example: 60 }
+        status: { type: string, enum: [ok, warning, error] }
+        icon: { type: string, example: speedometer-outline, description: Nombre de Ionicon que renderiza el frontend }
+
+    Tank:
+      type: object
+      required: [id, name, percentage, levelM, maxLevelM, volumeM3, maxVolumeM3]
+      properties:
+        id: { type: string, example: tank-1 }
+        name: { type: string, example: Tanque 1 }
+        percentage: { type: number, example: 70 }
+        levelM: { type: number, example: 3.5 }
+        maxLevelM: { type: number, example: 5 }
+        volumeM3: { type: number, example: 350 }
+        maxVolumeM3: { type: number, example: 500 }
+
+    Valve:
+      type: object
+      required: [id, name, description, isOpen]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        isOpen: { type: boolean }
+
+    OpcSnapshot:
+      type: object
+      required: [plantId, timestamp, connectionStatus, sensors, tanks]
+      properties:
+        plantId: { type: string, example: ptap-1 }
+        timestamp: { type: string, format: date-time }
+        connectionStatus:
+          type: string
+          enum: [connected, disconnected, mock]
+          description: "'mock' mientras el backend simule; el frontend debe mostrar este estado (hoy lo ignora)"
+        sensors:
+          type: array
+          items: { $ref: '#/components/schemas/Sensor' }
+        tanks:
+          type: array
+          items: { $ref: '#/components/schemas/Tank' }
+        valves:
+          type: array
+          items: { $ref: '#/components/schemas/Valve' }
+          description: Opcional; el simulador actual no emite válvulas

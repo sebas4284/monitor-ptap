@@ -1,0 +1,1171 @@
+{
+  "$schema": "./opc_mapping.schema.json",
+  "version": "0.2.0",
+  "protocolVersion": "v2",
+  "dtoVersion": "v1",
+  "generatedFrom": {
+    "source": "apps/api/fixtures/plc-discovery/ (nodes.json, readings.json, connection-verification.json)",
+    "recaptureTool": "tools/plc-discovery (etapas 00-02 + verify-phase0 + build-fixtures)",
+    "capturedAt": "2026-07-12T03:31:08.236Z",
+    "verifiedAt": "2026-07-14T10:52:32.242Z",
+    "server": "opc.tcp://181.204.165.66:59100",
+    "namespaces": [
+      "http://opcfoundation.org/UA/",
+      "urn:IOT_RURAL:FactoryTalkOptixHMI:FTOptixApplication",
+      "urn:FTOptix:Core",
+      "Temporary",
+      "urn:FTOptix:OPCUAServer",
+      "urn:FTOptix:RAEtherNetIP",
+      "urn:FTOptix:CommunicationDriver",
+      "urn:FTOptix:CoreBase",
+      "urn:FTOptix:UI",
+      "AQUATECH",
+      "urn:FTOptix:HMIProject",
+      "urn:FTOptix:Retentivity",
+      "urn:FTOptix:WebUI",
+      "urn:FTOptix:Alarm",
+      "urn:FTOptix:OPCUACommon",
+      "urn:FTOptix:OPCUAClient"
+    ],
+    "connectionEvidence": "connection.confidence proviene de leer DN/ER/TO con StatusCode Good el 2026-07-14T10:52:32.242Z (sesión Anonymous/None de solo lectura). Ver docs/PHASE0_VERIFICATION.md."
+  },
+  "notes": [
+    "Identidad canónica = plantId (slug). No usar nombres del frontend ni ptap-N.",
+    "Las referencias a nodos usan { nsUri, identifier } SIN índice de namespace. El adaptador de Fase 1 DEBE resolver nsUri → índice vía ReadNamespaceArray en CADA conexión y reconexión (el índice de Optix puede cambiar entre reinicios), usando scripts/resolve-namespaces.ts.",
+    "Si un nsUri del mapping NO está en el NamespaceArray del servidor: NamespaceNotFoundError ⇒ BridgeStatus = Faulted (NO Recovering: no se arregla reintentando). Prohibido fallback a ns=0 o a un índice previo.",
+    "MANGOS y ALTO_MANGOS fusionados en alto-los-mangos (confirmado). SAN_ANTONO normalizado a san-antonio.",
+    "Sin export L5X: TODA señal de proceso está unmapped (signals: []). Única semántica confirmada: connection (DN/ER/TO de MSG_READ). Ver docs/PHASE0_VERIFICATION.md y docs/MSG_BITS_OBSERVATION.md para la semántica temporal de esos bits.",
+    "Topología de san-antonio y quijote verificada por browse: son sitios mínimos reales (solo un buffer de tanque + MSG_READ). topologyVerified: true.",
+    "displayName es provisional (displayNameProvisional: true) hasta confirmación escrita de la planta.",
+    "generatedFrom.namespaces es referencia histórica de la captura, NO fuente de verdad para el runtime."
+  ],
+  "plants": [
+    {
+      "plantId": "voragine",
+      "displayName": "La Vorágine",
+      "displayNameProvisional": true,
+      "opcBuffers": {
+        "realIn": [
+          {
+            "browseName": "REAL_IN_VORAGINE",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=93BAFF92-FF57-4877-74E4-B7CC1EFAE6B3"
+            },
+            "arrayLength": 50,
+            "dataType": "Float"
+          }
+        ],
+        "intIn": [
+          {
+            "browseName": "INT_IN_VORAGINE",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=002A5DBD-381A-F691-1071-4BFF23ED007C"
+            },
+            "arrayLength": 20,
+            "dataType": "Int16"
+          }
+        ],
+        "intOut": [
+          {
+            "browseName": "INT_OUT_VORAGINE",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=1505CBA4-0BCF-A4FC-7602-DB5BF940BBC6"
+            },
+            "arrayLength": 20,
+            "dataType": "Int16"
+          }
+        ],
+        "msgRead": [
+          {
+            "browseName": "MSG_READ_VORAGINE",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=9C374447-388C-C374-0D8E-31F960FC2642"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          },
+          {
+            "browseName": "MSG_READ_INT_VORAGINE",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=53675566-59BC-0C47-EFE3-86BE04DF3C3B"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          }
+        ],
+        "msgWrite": [
+          {
+            "browseName": "MSG_WRITE_INT_VORAGINE",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=6E45CF3A-E3C9-651D-1340-5E1F2E6E0CF1"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          }
+        ]
+      },
+      "connection": {
+        "sourceBuffer": "MSG_READ_VORAGINE",
+        "done": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=5EF09AF1-6737-1D65-D9A0-E907AB896A53"
+        },
+        "error": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=D8A1D8C0-95FE-2BA5-C99D-1B4701FA560B"
+        },
+        "timeout": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=762CD35C-C857-13B3-A6EB-CE5300466964"
+        },
+        "mappingStatus": "mapped",
+        "confidence": "confirmed"
+      },
+      "signals": []
+    },
+    {
+      "plantId": "soledad",
+      "displayName": "Soledad",
+      "displayNameProvisional": true,
+      "opcBuffers": {
+        "realIn": [
+          {
+            "browseName": "DATOS_IN_PTAP_SOLEDAD",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=0FA6E728-14AA-DC1B-C1D0-6B451D8606CD"
+            },
+            "arrayLength": 50,
+            "dataType": "Int16"
+          },
+          {
+            "browseName": "REAL_IN_SOLEDAD",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=19181A21-F548-3D76-D6D9-EDAA324C20F7"
+            },
+            "arrayLength": 50,
+            "dataType": "Float"
+          }
+        ],
+        "realOut": [
+          {
+            "browseName": "DATOS_OUT_PTAP_SOLEDAD",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=89D195BF-B0FA-12FF-4293-9ADC080F2CE6"
+            },
+            "arrayLength": 50,
+            "dataType": "Int16"
+          }
+        ],
+        "intIn": [
+          {
+            "browseName": "INT_IN_SOLEDAD",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=0BAC7E37-225A-52E8-3FCA-81FF80E9D6E4"
+            },
+            "arrayLength": 10,
+            "dataType": "Int16"
+          }
+        ],
+        "intOut": [
+          {
+            "browseName": "INT_OUT_SOLEDAD",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=427B2651-37E3-F583-C156-8620EAD41E7A"
+            },
+            "arrayLength": 20,
+            "dataType": "Int16"
+          }
+        ],
+        "msgRead": [
+          {
+            "browseName": "MSG_READ_REAL_SOLEDAD",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=1045CDE3-91B3-4C37-FDA8-AD9B09EDF31D"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          },
+          {
+            "browseName": "MSG_READ_INT_SOLEDAD",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=04821BCD-1C54-17D8-25C2-9A2A92CB67C7"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          }
+        ],
+        "msgWrite": [
+          {
+            "browseName": "MSG_WRITE_INT_SOLEDAD",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=571DA325-75C9-73F7-91AD-C35BA7EA318A"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          }
+        ]
+      },
+      "connection": {
+        "sourceBuffer": "MSG_READ_REAL_SOLEDAD",
+        "done": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=9EF655D1-53EB-9147-D24F-2A094D8E3C24"
+        },
+        "error": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=B2EBD0C2-4F59-8D5F-50EE-906857109D29"
+        },
+        "timeout": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=1C4E05AE-8D4B-9AA3-D80B-8F910951B6D1"
+        },
+        "mappingStatus": "mapped",
+        "confidence": "confirmed"
+      },
+      "signals": []
+    },
+    {
+      "plantId": "montebello",
+      "displayName": "Montebello",
+      "displayNameProvisional": true,
+      "opcBuffers": {
+        "realIn": [
+          {
+            "browseName": "REAL_IN_MONTEBELLO",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=EBA8E3EB-53A2-0CCD-3912-501C0F7E4C8F"
+            },
+            "arrayLength": 50,
+            "dataType": "Float"
+          },
+          {
+            "browseName": "REAL_IN_TK3_MONTEBELLO",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=738EA962-E6AB-8D17-E4F5-149640735B0A"
+            },
+            "arrayLength": 10,
+            "dataType": "Float"
+          },
+          {
+            "browseName": "REAL_IN_TK2_MONTEBELLO",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=B3BF701D-BB03-2B2C-E949-36E4B34C2A49"
+            },
+            "arrayLength": 10,
+            "dataType": "Float"
+          },
+          {
+            "browseName": "REAL_IN_TK1_MONTEBELLO",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=420087D7-6625-0877-0808-1EDD0883E995"
+            },
+            "arrayLength": 10,
+            "dataType": "Float"
+          }
+        ],
+        "realOut": [
+          {
+            "browseName": "REAL_OUT_MONTEBELLO",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=1B6C0773-77A7-3EC7-F9A5-4A5BC70E344E"
+            },
+            "arrayLength": 50,
+            "dataType": "Float"
+          }
+        ],
+        "intIn": [
+          {
+            "browseName": "INT_IN_MONTEBELLO",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=2253E4D5-E19E-EC21-8558-5F0438A63BA9"
+            },
+            "arrayLength": 10,
+            "dataType": "Int16"
+          }
+        ],
+        "intOut": [
+          {
+            "browseName": "INT_OUT_MONTEBELLO",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=11446A3B-37F5-376F-AB42-70AC9D2FC36B"
+            },
+            "arrayLength": 20,
+            "dataType": "Int16"
+          }
+        ],
+        "msgRead": [
+          {
+            "browseName": "MSG_READ_REAL_MONTEBELLO",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=7769A749-A417-3729-514E-ED5065BCFBED"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          },
+          {
+            "browseName": "MSG_READ_INT_MONTEBELLO",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=E87A6F5D-2FA2-1235-19E2-401D83C8901E"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          },
+          {
+            "browseName": "MSG_READ_REAL_TK1_MONTEBELLO",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=FDAB27F2-EDCB-5ED9-A817-52AA9BE755EE"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          },
+          {
+            "browseName": "MSG_READ_REAL_TK2_MONTEBELLO",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=6B715A74-767F-6C64-62E6-48318B68C5ED"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          },
+          {
+            "browseName": "MSG_READ_REAL_TK3_MONTEBELLO",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=C2133BED-AE45-A02A-3E5E-A9987F9CFC45"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          }
+        ],
+        "msgWrite": [
+          {
+            "browseName": "MSG_WRITE_INT_MONTEBELLO",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=DF1BED8F-D423-E351-31C1-66FEFE278CD9"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          },
+          {
+            "browseName": "MSG_WRITE_REAL_MONTEBELLO",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=DD6203CE-269D-ADDA-2470-E3B900EF8744"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          }
+        ]
+      },
+      "connection": {
+        "sourceBuffer": "MSG_READ_REAL_MONTEBELLO",
+        "done": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=B304347B-8D58-4030-9A2E-01C4B2E7025C"
+        },
+        "error": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=0169348E-8370-213B-E8BA-A9EC4CC2436B"
+        },
+        "timeout": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=D1631616-118C-C3F7-33EE-BD5353D3E92B"
+        },
+        "mappingStatus": "mapped",
+        "confidence": "confirmed"
+      },
+      "signals": []
+    },
+    {
+      "plantId": "cascajal",
+      "displayName": "Cascajal",
+      "displayNameProvisional": true,
+      "opcBuffers": {
+        "realIn": [
+          {
+            "browseName": "REAL_IN_CASCAJAL",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=F0C27430-68DC-74D7-BDAB-B9EDCC19F8A7"
+            },
+            "arrayLength": 50,
+            "dataType": "Float"
+          }
+        ],
+        "intIn": [
+          {
+            "browseName": "INT_IN_CASCAJAL",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=987A872E-DA0B-8C66-51F7-11E6B473591E"
+            },
+            "arrayLength": 20,
+            "dataType": "Int16"
+          }
+        ],
+        "intOut": [
+          {
+            "browseName": "INT_OUT_CASCAJAL",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=37DF3BEA-3F5A-323A-F63B-1BE2930508C7"
+            },
+            "arrayLength": 20,
+            "dataType": "Int16"
+          }
+        ],
+        "msgRead": [
+          {
+            "browseName": "MSG_READ_CASCAJAL",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=DDD35FEE-5B7F-1B9C-F822-46DA656990B6"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          },
+          {
+            "browseName": "MSG_READ_INT_CASCAJAL",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=94B82B1B-A8FC-5A04-9768-576D33C753FA"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          }
+        ],
+        "msgWrite": [
+          {
+            "browseName": "MSG_WRITE_INT_CASCAJAL",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=B56E10E9-B2CD-91F1-BBF4-E2B255981509"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          }
+        ]
+      },
+      "connection": {
+        "sourceBuffer": "MSG_READ_CASCAJAL",
+        "done": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=67DCC7D6-45A5-9757-5B41-3B495BDD6390"
+        },
+        "error": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=C0A48BC9-5FD1-D2C4-729C-2D0663EC6666"
+        },
+        "timeout": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=09D3D8FE-67A8-9FAD-9846-B5E94F95CAEC"
+        },
+        "mappingStatus": "mapped",
+        "confidence": "confirmed"
+      },
+      "signals": []
+    },
+    {
+      "plantId": "km18",
+      "displayName": "Km 18",
+      "displayNameProvisional": true,
+      "opcBuffers": {
+        "realIn": [
+          {
+            "browseName": "REAL_IN_KM18",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=1C72A21A-8F36-327C-C0AC-CA7A9AA60D96"
+            },
+            "arrayLength": 50,
+            "dataType": "Float"
+          }
+        ],
+        "intIn": [
+          {
+            "browseName": "INT_IN_KM18",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=1186F5C8-9E45-2A41-4A39-684FE76536D5"
+            },
+            "arrayLength": 20,
+            "dataType": "Int16"
+          }
+        ],
+        "intOut": [
+          {
+            "browseName": "INT_OUT_KM18",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=77117D1F-7CFD-82DF-66B8-0C1787E6EF62"
+            },
+            "arrayLength": 20,
+            "dataType": "Int16"
+          }
+        ],
+        "msgRead": [
+          {
+            "browseName": "MSG_READ_KM18",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=97351D56-BCBC-50B3-5806-9872D8FABE12"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          },
+          {
+            "browseName": "MSG_READ_INT_KM18",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=8430FB66-A9BC-603C-EB34-8254767F207D"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          }
+        ],
+        "msgWrite": [
+          {
+            "browseName": "MSG_WRITE_INT_KM18",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=757F6489-5587-0437-8601-B49A3B2FBEBE"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          }
+        ]
+      },
+      "connection": {
+        "sourceBuffer": "MSG_READ_KM18",
+        "done": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=3049E533-5E70-38DA-2494-DB6FCC2B2299"
+        },
+        "error": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=F1EF75BA-2B91-2F87-0AAE-F452986ACC1E"
+        },
+        "timeout": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=ACD6971F-CC79-3E1A-C83D-2DFF498997CA"
+        },
+        "mappingStatus": "mapped",
+        "confidence": "confirmed"
+      },
+      "signals": []
+    },
+    {
+      "plantId": "alto-los-mangos",
+      "displayName": "Alto de los Mangos",
+      "displayNameProvisional": true,
+      "opcBuffers": {
+        "realIn": [
+          {
+            "browseName": "DATOS_REAL_IN_MANGOS",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=ECA4ABBE-2E70-B864-5B3D-B2E9D1FB7830"
+            },
+            "arrayLength": 50,
+            "dataType": "Float"
+          }
+        ],
+        "intIn": [
+          {
+            "browseName": "INT_IN_ALTO_MANGOS",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=737674FB-88C1-CBA3-4BFC-429A56FD2E65"
+            },
+            "arrayLength": 20,
+            "dataType": "Int16"
+          }
+        ],
+        "intOut": [
+          {
+            "browseName": "INT_OUT_ALTO_MANGOS",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=51716405-AB9C-568A-24F8-7284365397B8"
+            },
+            "arrayLength": 20,
+            "dataType": "Int16"
+          }
+        ],
+        "msgRead": [
+          {
+            "browseName": "MSG_READ_REAL_ALTO_MANGOS",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=965E28EA-3958-EA22-DC52-F79F0A29E7B2"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          },
+          {
+            "browseName": "MSG_READ_INT_ALTO_MANGOS",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=07D02EC5-2503-09B8-EC6E-202153D6974F"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          }
+        ],
+        "msgWrite": [
+          {
+            "browseName": "MSG_WRITE_INT_ALTO_MANGOS",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=E946D4D6-0E1E-45A3-C536-DB12B908A21F"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          }
+        ]
+      },
+      "connection": {
+        "sourceBuffer": "MSG_READ_REAL_ALTO_MANGOS",
+        "done": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=93136ACB-00BF-311A-FD1E-734DD823D080"
+        },
+        "error": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=411EFD38-3ADF-AE28-9B3A-3A24452C8AD7"
+        },
+        "timeout": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=ED9AB041-D17C-6BDA-B42E-23901E3CD4BD"
+        },
+        "mappingStatus": "mapped",
+        "confidence": "confirmed"
+      },
+      "signals": []
+    },
+    {
+      "plantId": "campoalegre",
+      "displayName": "Campoalegre",
+      "displayNameProvisional": true,
+      "opcBuffers": {
+        "realIn": [
+          {
+            "browseName": "REAL_IN_CAMPOALEGRE",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=E1680D60-7BCD-C892-7257-C4D4AAE41E1C"
+            },
+            "arrayLength": 50,
+            "dataType": "Float"
+          }
+        ],
+        "intIn": [
+          {
+            "browseName": "INT_IN_CAMPOALEGRE",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=E6E18504-1705-2D53-7768-EBB5FA046DB3"
+            },
+            "arrayLength": 20,
+            "dataType": "Int16"
+          }
+        ],
+        "intOut": [
+          {
+            "browseName": "INT_OUT_CAMPOALEGRE",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=6D54E645-DCEA-C9C8-C768-24252F4E4B08"
+            },
+            "arrayLength": 20,
+            "dataType": "Int16"
+          }
+        ],
+        "msgRead": [
+          {
+            "browseName": "MSG_READ_REAL_CAMPOALEGRE",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=6027C71A-B47A-4186-0C2D-84D2F8E9124C"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          },
+          {
+            "browseName": "MSG_READ_INT_CAMPOALEGRE",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=F909CD36-EC6E-4DE9-411A-081C511A57CB"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          }
+        ],
+        "msgWrite": [
+          {
+            "browseName": "MSG_WRITE_INT_CAMPOALEGRE",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=2F39783A-AF01-FCBB-AC2B-67DCB94A5AD7"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          }
+        ]
+      },
+      "connection": {
+        "sourceBuffer": "MSG_READ_REAL_CAMPOALEGRE",
+        "done": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=34733BD9-B186-E507-9DC0-BC0D58950FA9"
+        },
+        "error": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=854640CA-5562-81D4-62DF-BE11D97B41AB"
+        },
+        "timeout": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=3EF20F34-5CB6-CE9B-9119-3E3B67368F27"
+        },
+        "mappingStatus": "mapped",
+        "confidence": "confirmed"
+      },
+      "signals": []
+    },
+    {
+      "plantId": "pichinde",
+      "displayName": "Pichindé",
+      "displayNameProvisional": true,
+      "opcBuffers": {
+        "realIn": [
+          {
+            "browseName": "REAL_IN_PICHINDE",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=C9C97734-E939-9008-A41E-9CA37BB7A2D0"
+            },
+            "arrayLength": 50,
+            "dataType": "Float"
+          }
+        ],
+        "intIn": [
+          {
+            "browseName": "INT_IN_PICHINDE",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=97CC648D-4D4C-D716-735D-2BE8EF6D8191"
+            },
+            "arrayLength": 20,
+            "dataType": "Int16"
+          }
+        ],
+        "intOut": [
+          {
+            "browseName": "INT_OUT_PICHINDE",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=9FC0167E-8E1C-6CC2-CF08-14AF586F6C15"
+            },
+            "arrayLength": 20,
+            "dataType": "Int16"
+          }
+        ],
+        "msgRead": [
+          {
+            "browseName": "MSG_READ_REAL_PICHINDE",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=424C43B5-8E6E-8E74-2B6B-1A8C62CFE645"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          },
+          {
+            "browseName": "MSG_READ_INT_PICHINDE",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=1AC2EA64-2A2D-E414-869C-B45B9DA918AA"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          }
+        ],
+        "msgWrite": [
+          {
+            "browseName": "MSG_WRITE_INT_PICHINDE",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=6AA8A2F9-BD3E-C1E2-4E6F-D09D205123F9"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          }
+        ]
+      },
+      "connection": {
+        "sourceBuffer": "MSG_READ_REAL_PICHINDE",
+        "done": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=86B9684F-02E6-676E-FD82-282406E6F326"
+        },
+        "error": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=96F3231A-C3F0-A295-3BA7-0E5E35EEB2D1"
+        },
+        "timeout": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=849CCCA4-52C8-241B-534D-E4D77161BBE6"
+        },
+        "mappingStatus": "mapped",
+        "confidence": "confirmed"
+      },
+      "signals": []
+    },
+    {
+      "plantId": "carbonero",
+      "displayName": "Carbonero",
+      "displayNameProvisional": true,
+      "opcBuffers": {
+        "realIn": [
+          {
+            "browseName": "REAL_IN_CARBONERO",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=A1323D1F-4114-A49D-746E-D6DDBB3C7DE3"
+            },
+            "arrayLength": 50,
+            "dataType": "Float"
+          }
+        ],
+        "intIn": [
+          {
+            "browseName": "INT_IN_CARBONERO",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=1BAC5BFF-828D-FDD0-EEFB-6A1FB5E245E6"
+            },
+            "arrayLength": 10,
+            "dataType": "Int16"
+          }
+        ],
+        "intOut": [
+          {
+            "browseName": "INT_OUT_CARBONERO",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=BFC8CF7B-FC4C-21FB-16A4-8EF12A2D9F4B"
+            },
+            "arrayLength": 20,
+            "dataType": "Int16"
+          }
+        ],
+        "msgRead": [
+          {
+            "browseName": "MSG_READ_REAL_CARBONERO",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=808DE427-F0DB-9B50-C4CE-A492D0DD9017"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          },
+          {
+            "browseName": "MSG_READ_INT_CARBONERO",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=AAD134CA-D341-8F63-F348-2E3D3BC857F6"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          }
+        ],
+        "msgWrite": [
+          {
+            "browseName": "MSG_WRITE_INT_CARBONERO",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=1E7A14BF-0244-1A54-E600-BF2C0E251DB1"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          }
+        ]
+      },
+      "connection": {
+        "sourceBuffer": "MSG_READ_REAL_CARBONERO",
+        "done": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=121EF096-333A-A759-0D01-774CAFD12421"
+        },
+        "error": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=DABE3574-CD4E-A16F-BAB0-87082C2FC28C"
+        },
+        "timeout": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=0D446FE4-5561-E70E-C347-5FE961A0957C"
+        },
+        "mappingStatus": "mapped",
+        "confidence": "confirmed"
+      },
+      "signals": []
+    },
+    {
+      "plantId": "sirena",
+      "displayName": "La Sirena",
+      "displayNameProvisional": true,
+      "opcBuffers": {
+        "realIn": [
+          {
+            "browseName": "REAL_IN_SIRENA",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=A7B368C5-2F51-723A-8108-500CFEB52374"
+            },
+            "arrayLength": 50,
+            "dataType": "Float"
+          },
+          {
+            "browseName": "REAL_TK2_SIRENA",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=D80440E5-C933-6A80-8661-1F1D7F785EF1"
+            },
+            "arrayLength": 10,
+            "dataType": "Float"
+          },
+          {
+            "browseName": "REAL_TK3_SIRENA",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=A646F4CB-4F34-283B-F1DB-42B6237BF292"
+            },
+            "arrayLength": 10,
+            "dataType": "Float"
+          }
+        ],
+        "intIn": [
+          {
+            "browseName": "INT_IN_SIRENA",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=184E4071-DC15-213A-3DE8-442A4E0A354B"
+            },
+            "arrayLength": 10,
+            "dataType": "Int16"
+          }
+        ],
+        "intOut": [
+          {
+            "browseName": "INT_OUT_SIRENA",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=4AB6ECB4-D019-D4F1-A8A8-6177C3FE3278"
+            },
+            "arrayLength": 20,
+            "dataType": "Int16"
+          }
+        ],
+        "bitIn": [
+          {
+            "browseName": "BIT_SIRENA",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=57F08F39-07AA-5C7C-6B7E-4ABE531EC93D"
+            },
+            "arrayLength": null,
+            "dataType": "Boolean"
+          }
+        ],
+        "msgRead": [
+          {
+            "browseName": "MSG_READ_REAL_SIRENA",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=ED9110B7-3C6D-AC6C-40A9-65D950F36CF5"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          },
+          {
+            "browseName": "MSG_READ_INT_SIRENA",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=44F9A9C6-5FE8-FF87-FDD2-F7DA8EB94BA1"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          },
+          {
+            "browseName": "MSG_READ_REAL_TK2_SIRENA",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=A117C5F1-03C5-B25F-4B14-2B13FCB964C2"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          },
+          {
+            "browseName": "MSG_READ_REAL_TK3_4_SIRENA",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=7BD2B617-AFCA-0127-FA01-77DD81CA67A8"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          }
+        ],
+        "msgWrite": [
+          {
+            "browseName": "MSG_WRITE_INT_SIRENA",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=AEC8BB93-ED3D-BEC5-6EC5-782EA513CFA2"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          }
+        ]
+      },
+      "connection": {
+        "sourceBuffer": "MSG_READ_REAL_SIRENA",
+        "done": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=4392FD48-CC4F-29DA-1F85-F074A8592433"
+        },
+        "error": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=19D1600F-8DDA-1121-FBD0-D4A65E7F68F8"
+        },
+        "timeout": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=70790198-C675-5ACC-EB6B-8884CF913B3E"
+        },
+        "mappingStatus": "mapped",
+        "confidence": "confirmed"
+      },
+      "signals": []
+    },
+    {
+      "plantId": "san-antonio",
+      "displayName": "San Antonio",
+      "displayNameProvisional": true,
+      "topologyVerified": true,
+      "opcBuffers": {
+        "realIn": [
+          {
+            "browseName": "REAL_TK_SAN_ANTONO",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=59ABB8FE-509C-8687-5285-1FD9F429B27C"
+            },
+            "arrayLength": 10,
+            "dataType": "Float"
+          }
+        ],
+        "msgRead": [
+          {
+            "browseName": "MSG_READ_REAL_SAN_ANTONIO",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=52AC6448-C7A7-0A85-E496-140956DECC9C"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          }
+        ]
+      },
+      "connection": {
+        "sourceBuffer": "MSG_READ_REAL_SAN_ANTONIO",
+        "done": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=AB78EFE7-4126-A573-A0AB-B86241084B55"
+        },
+        "error": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=43157F19-728A-09C1-29B8-48B63380C38C"
+        },
+        "timeout": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=CE705BB2-0197-9BB3-9B66-BF97F1733EBA"
+        },
+        "mappingStatus": "mapped",
+        "confidence": "confirmed"
+      },
+      "signals": []
+    },
+    {
+      "plantId": "quijote",
+      "displayName": "El Quijote",
+      "displayNameProvisional": true,
+      "topologyVerified": true,
+      "opcBuffers": {
+        "realIn": [
+          {
+            "browseName": "REAL_TK_QUIJOTE",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=CFD990C3-BF0D-F121-8E4F-7B7543438F6D"
+            },
+            "arrayLength": 10,
+            "dataType": "Float"
+          }
+        ],
+        "msgRead": [
+          {
+            "browseName": "MSG_READ_REAL_QUIJOTE",
+            "node": {
+              "nsUri": "AQUATECH",
+              "identifier": "g=72ED6746-B4B5-93B4-A087-84B5B108F2B9"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          }
+        ]
+      },
+      "connection": {
+        "sourceBuffer": "MSG_READ_REAL_QUIJOTE",
+        "done": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=AB58A220-7A5C-4F96-1BE2-CB95758AC4D2"
+        },
+        "error": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=DB91C50D-4C35-8CD7-2377-1F99FF077955"
+        },
+        "timeout": {
+          "nsUri": "AQUATECH",
+          "identifier": "g=43FAB6DF-E30E-938D-4979-C428F9462734"
+        },
+        "mappingStatus": "mapped",
+        "confidence": "confirmed"
+      },
+      "signals": []
+    }
+  ]
+}

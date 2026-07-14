@@ -2,6 +2,7 @@
 
 # dependencies
 node_modules/
+.npm-cache/
 
 # Expo
 .expo/
@@ -31,10 +32,15 @@ yarn-error.*
 *.pem
 
 # local env files
+.env
 .env*.local
 
 # typescript
 *.tsbuildinfo
+
+# OPC UA client PKI (auto-generated certificates)
+apps/api/pki/
+pki/
 
 # generated native folders
 /ios
