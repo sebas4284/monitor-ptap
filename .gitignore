@@ -38,6 +38,10 @@ yarn-error.*
 # typescript
 *.tsbuildinfo
 
+# OPC UA client PKI (auto-generated certificates)
+apps/api/pki/
+pki/
+
 # generated native folders
 /ios
 /android

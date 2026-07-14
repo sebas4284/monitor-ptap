@@ -1,0 +1,53 @@
+{
+  "endpointUrl": "opc.tcp://181.204.165.66:59100",
+  "rootPath": [
+    "AQUATECH",
+    "CommDrivers",
+    "RAEtherNet_IPDriver1",
+    "RAEtherNet_IPStation1",
+    "Tags",
+    "Controller Tags"
+  ],
+  "additionalRoots": [
+    {
+      "label": "StationStatus",
+      "path": [
+        "AQUATECH",
+        "CommDrivers",
+        "RAEtherNet_IPDriver1",
+        "RAEtherNet_IPStation1",
+        "StationStatusVariables"
+      ],
+      "comment": "Salud de la comunicación EtherNet/IP con el PLC maestro"
+    },
+    {
+      "label": "OptixModel",
+      "path": ["AQUATECH", "Model"],
+      "comment": "Modelo de datos del HMI Optix (evidencia de si existe semántica de proceso)"
+    },
+    {
+      "label": "OptixAlarms",
+      "path": ["AQUATECH", "Alarms"],
+      "comment": "Definiciones de alarma del HMI Optix"
+    },
+    {
+      "label": "OptixConverters",
+      "path": ["AQUATECH", "Converters"],
+      "comment": "Conversores/escalamientos declarados en el HMI"
+    },
+    {
+      "label": "OptixLoggers",
+      "path": ["AQUATECH", "Loggers"],
+      "comment": "Loggers/históricos declarados en el HMI"
+    }
+  ],
+  "throttleMs": 100,
+  "browseBatch": 20,
+  "readBatch": 100,
+  "sampleCount": 3,
+  "sampleIntervalMs": 45000,
+  "maxNodes": 20000,
+  "maxDepth": 25,
+  "outputDir": "output",
+  "docsDir": "../../docs/plc"
+}

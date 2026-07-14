@@ -1,0 +1,47 @@
+{
+  "documento": "Transformaciones RAW ↔ unidades de ingeniería (Fase 7)",
+  "generadoEl": "2026-07-12T03:48:55.913Z",
+  "servidor": {
+    "endpoint": "opc.tcp://181.204.165.66:59100",
+    "endpointAnunciadoPorElServidor": [
+      "10.10.51.225:59100"
+    ],
+    "producto": "FactoryTalkOptix HMI FTOptixApplication",
+    "estado": "Running",
+    "plc": "CompactLogix 1769-L27ERM-QBFC1B (fw 33.16) vía RAEtherNet_IPDriver1"
+  },
+  "advertencia": "Documento generado por ingeniería inversa de SOLO LECTURA (Browse/Read) sobre el servidor OPC UA de FactoryTalk Optix. No se escribió ninguna variable, no se invocó ningún método y no se creó ninguna subscription. Todo ítem marcado \"REQUIERE VALIDACIÓN EN PLANTA\" es una hipótesis técnica, NO un hecho confirmado: no debe usarse para control sin validación previa.",
+  "hallazgoPrincipal": "El PLC entrega valores REAL ya escalados por el programa del PLC local (no hay tags \"_RAW\" emparejados con tags de ingeniería, y los buffers REAL contienen magnitudes con parte decimal). Sin embargo, NINGÚN tag declara EngineeringUnits ni EURange, de modo que la unidad de cada valor es DESCONOCIDA. No es posible documentar una cadena RAW → escala → offset → unidad.",
+  "excepcion": "Los módulos de E/S del chasis (Local:N:I/Data) SÍ entregan cuentas RAW del conversor A/D del propio CompactLogix. Si el maestro tiene instrumentación local, ahí sí aplicaría un escalamiento RAW→EU, que deberá leerse del programa del PLC.",
+  "transformacionesConfirmadas": [
+    {
+      "tipo": "extracción de bit",
+      "formula": "estado = (palabraINT >> indiceBit) & 1",
+      "aplicaA": "buffers INT_IN_* y BIT_* (estados discretos empaquetados)",
+      "confianza": "alta (mecanismo), baja (qué bit es qué equipo)",
+      "estado": "MECANISMO CONFIRMADO — ASIGNACIÓN DE BITS REQUIERE VALIDACIÓN EN PLANTA"
+    },
+    {
+      "tipo": "salud de comunicación",
+      "formula": "connected = MSG.DN && !MSG.ER && !MSG.TO",
+      "aplicaA": "estructuras MSG_READ_* / MSG_WRITE_*",
+      "confianza": "alta",
+      "estado": "CONFIRMADO"
+    }
+  ],
+  "totalizadoresDetectados": [
+    {
+      "id": "ActivityCounter",
+      "nodeId": "ns=9;g=2C9F9221-4BCC-D2E6-CFF7-3E34D5B36063",
+      "indiceArray": null,
+      "sitio": null,
+      "rangoObservado": {
+        "min": 363331998,
+        "max": 363343156
+      },
+      "hipotesis": "acumulador (volumen tratado / bombeado)",
+      "estado": "REQUIERE VALIDACIÓN EN PLANTA",
+      "nota": "El crecimiento monótono en 3 muestras es indicio, no prueba: una rampa de proceso se ve igual en una ventana corta."
+    }
+  ]
+}

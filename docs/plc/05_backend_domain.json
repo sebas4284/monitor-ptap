@@ -1,0 +1,120 @@
+{
+  "documento": "Modelo de dominio del backend (Fase 9)",
+  "generadoEl": "2026-07-12T03:48:55.909Z",
+  "servidor": {
+    "endpoint": "opc.tcp://181.204.165.66:59100",
+    "endpointAnunciadoPorElServidor": [
+      "10.10.51.225:59100"
+    ],
+    "producto": "FactoryTalkOptix HMI FTOptixApplication",
+    "estado": "Running",
+    "plc": "CompactLogix 1769-L27ERM-QBFC1B (fw 33.16) vía RAEtherNet_IPDriver1"
+  },
+  "advertencia": "Documento generado por ingeniería inversa de SOLO LECTURA (Browse/Read) sobre el servidor OPC UA de FactoryTalk Optix. No se escribió ninguna variable, no se invocó ningún método y no se creó ninguna subscription. Todo ítem marcado \"REQUIERE VALIDACIÓN EN PLANTA\" es una hipótesis técnica, NO un hecho confirmado: no debe usarse para control sin validación previa.",
+  "principio": "El dominio del backend NO refleja la estructura del PLC. El PLC habla de buffers y de índices; el dominio habla de Sitios, Tanques, Sensores y Actuadores. La traducción entre ambos vive exclusivamente en el adaptador OPC UA (capa de infraestructura), de modo que el frontend nunca ve un NodeId ni un índice de array.",
+  "entidades": [
+    {
+      "nombre": "Site (Estación remota)",
+      "descripcion": "Cada sitio remoto atendido por el PLC maestro. Es el equivalente real de \"Plant\" en @ptap/shared.",
+      "campos": [
+        {
+          "nombre": "id",
+          "tipo": "string",
+          "origen": "derivado del nombre del buffer (p. ej. \"voragine\")"
+        },
+        {
+          "nombre": "name",
+          "tipo": "string",
+          "origen": "derivado del nombre del buffer"
+        },
+        {
+          "nombre": "connectionStatus",
+          "tipo": "'connected' | 'disconnected'",
+          "origen": "bits DN/ER/TO de la estructura MSG del sitio — ÚNICA señal con semántica confirmada",
+          "confianza": "alta"
+        }
+      ],
+      "sitiosDetectados": [
+        "ALTO_MANGOS",
+        "CAMPOALEGRE",
+        "CARBONERO",
+        "CASCAJAL",
+        "KM18",
+        "MANGOS",
+        "MONTEBELLO",
+        "PICHINDE",
+        "QUIJOTE",
+        "SAN_ANTONIO",
+        "SIRENA",
+        "SOLEDAD",
+        "VORAGINE"
+      ]
+    },
+    {
+      "nombre": "Signal (Señal cruda)",
+      "descripcion": "Representación honesta de lo que hoy ofrece el PLC: un elemento de un buffer, con valor y calidad, SIN significado confirmado. Es la entidad puente mientras no exista el mapa de índices.",
+      "campos": [
+        {
+          "nombre": "bufferNodeId",
+          "tipo": "string"
+        },
+        {
+          "nombre": "arrayIndex",
+          "tipo": "number"
+        },
+        {
+          "nombre": "value",
+          "tipo": "number | boolean"
+        },
+        {
+          "nombre": "quality",
+          "tipo": "StatusCode"
+        },
+        {
+          "nombre": "sourceTimestamp",
+          "tipo": "string"
+        }
+      ]
+    },
+    {
+      "nombre": "Tank / Sensor / Valve / Pump",
+      "descripcion": "Entidades objetivo del frontend. NO SE PUEDEN POBLAR HOY con datos reales: requieren el mapa índice→equipo. Su definición ya existe en packages/shared y NO debe cambiarse; lo que falta es la tabla de mapeo.",
+      "estado": "BLOQUEADO — requiere export L5X del PLC o tabla del integrador"
+    },
+    {
+      "nombre": "ControlCommand",
+      "descripcion": "Comando operativo con trazabilidad completa (WRITE DOMAIN).",
+      "campos": [
+        {
+          "nombre": "userId / role",
+          "tipo": "string / Role"
+        },
+        {
+          "nombre": "deviceId",
+          "tipo": "string"
+        },
+        {
+          "nombre": "command",
+          "tipo": "'open' | 'close' | 'start' | 'stop' | 'reset' | 'setpoint'"
+        },
+        {
+          "nombre": "targetNodeId + arrayIndex",
+          "tipo": "string + number"
+        },
+        {
+          "nombre": "previousValue / requestedValue",
+          "tipo": "number"
+        },
+        {
+          "nombre": "confirmedByFeedback",
+          "tipo": "boolean"
+        },
+        {
+          "nombre": "auditLogged",
+          "tipo": "boolean (siempre true)"
+        }
+      ],
+      "estado": "BLOQUEADO — requiere validación en planta del mapa de comandos"
+    }
+  ]
+}

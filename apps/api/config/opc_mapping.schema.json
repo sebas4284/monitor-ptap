@@ -1,0 +1,164 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://monitor-ptap/opc_mapping.schema.json",
+  "title": "OPC UA Mapping — Monitor PTAP",
+  "description": "Contrato entre los buffers crudos del PLC maestro (FactoryTalk Optix) y el dominio del backend. Fuente única de verdad del Gateway OPC UA. Las referencias a nodos NO almacenan el índice de namespace (ns=N): guardan el URI del namespace + el identificador; el adaptador de runtime resuelve el índice contra ReadNamespaceArray en cada conexión. Reglas semánticas adicionales (índice/domainKey duplicados, min>=max, coherencia de connection) se verifican en scripts/validate-mapping.ts porque JSON Schema no compara campos hermanos ni unicidad por propiedad.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "protocolVersion", "plants"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "SemVer del archivo de mapeo."
+    },
+    "protocolVersion": {
+      "type": "string",
+      "pattern": "^v[0-9]+$",
+      "description": "Versión del protocolo de mapeo. v2 introduce la referencia a nodos por {nsUri, identifier} en lugar de un NodeId string con ns= embebido."
+    },
+    "dtoVersion": {
+      "type": "string",
+      "pattern": "^v[0-9]+$",
+      "description": "Versión del contrato del DTO expuesto al frontend. Independiente de protocolVersion."
+    },
+    "generatedFrom": { "type": "object" },
+    "notes": { "type": "array", "items": { "type": "string" } },
+    "plants": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/plant" }
+    }
+  },
+  "$defs": {
+    "nodeRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nsUri", "identifier"],
+      "description": "Referencia a un nodo OPC UA independiente del índice de namespace. El adaptador resuelve nsUri → índice en runtime.",
+      "properties": {
+        "nsUri": {
+          "type": "string",
+          "minLength": 1,
+          "description": "URI del namespace tal como lo reporta el servidor (p. ej. \"AQUATECH\")."
+        },
+        "identifier": {
+          "type": "string",
+          "pattern": "^(i=[0-9]+|s=.+|g=[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}|b=.+)$",
+          "description": "Identificador con su prefijo de tipo (i= | s= | g= | b=). PROHIBIDO el prefijo ns=: el patrón obliga a empezar por un prefijo de identificador, nunca por ns=."
+        }
+      }
+    },
+    "channel": {
+      "type": "string",
+      "enum": ["realIn", "realOut", "intIn", "intOut", "bitIn", "bitOut", "msgRead", "msgWrite"]
+    },
+    "confidence": {
+      "type": "string",
+      "enum": ["confirmed", "inferred", "estimated"],
+      "description": "confirmed = respaldado por documentación oficial/L5X o por lectura verificada; inferred = deducido por observación; estimated = derivado/calculado."
+    },
+    "mappingStatus": {
+      "type": "string",
+      "enum": ["mapped", "unmapped"]
+    },
+    "bufferDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["browseName", "node"],
+      "properties": {
+        "browseName": { "type": "string", "minLength": 1 },
+        "node": { "$ref": "#/$defs/nodeRef" },
+        "arrayLength": { "type": ["integer", "null"], "minimum": 0 },
+        "dataType": { "type": ["string", "null"] }
+      }
+    },
+    "bufferArray": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Si el canal está presente debe tener al menos un buffer. La AUSENCIA de la clave significa que el sitio no tiene ese canal; un array vacío está prohibido.",
+      "items": { "$ref": "#/$defs/bufferDescriptor" }
+    },
+    "opcBuffers": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Solo se declaran los canales que el sitio realmente tiene. Sin 'required': la ausencia de una clave es información (ese canal no existe en ese sitio).",
+      "properties": {
+        "realIn": { "$ref": "#/$defs/bufferArray" },
+        "realOut": { "$ref": "#/$defs/bufferArray" },
+        "intIn": { "$ref": "#/$defs/bufferArray" },
+        "intOut": { "$ref": "#/$defs/bufferArray" },
+        "bitIn": { "$ref": "#/$defs/bufferArray" },
+        "bitOut": { "$ref": "#/$defs/bufferArray" },
+        "msgRead": { "$ref": "#/$defs/bufferArray" },
+        "msgWrite": { "$ref": "#/$defs/bufferArray" }
+      }
+    },
+    "connection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["done", "error", "timeout", "mappingStatus", "confidence"],
+      "description": "Estado de comunicación del sitio, derivado de los bits DN/ER/TO de la instrucción MSG_READ primaria.",
+      "properties": {
+        "sourceBuffer": { "type": "string" },
+        "done": { "anyOf": [{ "$ref": "#/$defs/nodeRef" }, { "type": "null" }] },
+        "error": { "anyOf": [{ "$ref": "#/$defs/nodeRef" }, { "type": "null" }] },
+        "timeout": { "anyOf": [{ "$ref": "#/$defs/nodeRef" }, { "type": "null" }] },
+        "mappingStatus": { "$ref": "#/$defs/mappingStatus" },
+        "confidence": { "$ref": "#/$defs/confidence" }
+      }
+    },
+    "signal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["buffer", "index", "domainKey", "mappingStatus", "confidence", "writable"],
+      "properties": {
+        "buffer": { "$ref": "#/$defs/channel" },
+        "index": { "type": "integer", "minimum": 0 },
+        "domainKey": { "type": "string", "minLength": 1, "pattern": "^[a-zA-Z][a-zA-Z0-9_.]*$" },
+        "label": { "type": "string" },
+        "unit": { "type": "string" },
+        "min": { "type": "number" },
+        "max": { "type": "number" },
+        "mappingStatus": { "$ref": "#/$defs/mappingStatus" },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "writable": { "type": "boolean" }
+      },
+      "allOf": [
+        {
+          "description": "Una señal escribible solo puede existir con semántica confirmada.",
+          "if": { "properties": { "writable": { "const": true } }, "required": ["writable"] },
+          "then": { "properties": { "confidence": { "const": "confirmed" } } }
+        }
+      ]
+    },
+    "plant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["plantId", "displayName", "displayNameProvisional", "opcBuffers", "connection", "signals"],
+      "properties": {
+        "plantId": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$",
+          "description": "Slug canónico. Única identidad de planta en todo el sistema."
+        },
+        "displayName": { "type": "string", "minLength": 1 },
+        "displayNameProvisional": {
+          "type": "boolean",
+          "description": "true mientras la planta no confirme por escrito la nomenclatura oficial. Requerido: un nombre sin este flag no puede presentarse como oficial."
+        },
+        "topologyVerified": {
+          "type": "boolean",
+          "description": "Marca opcional: la topología de buffers de este sitio fue verificada por browse de solo lectura contra el PLC (ver docs/PHASE0_VERIFICATION.md)."
+        },
+        "opcBuffers": { "$ref": "#/$defs/opcBuffers" },
+        "connection": { "$ref": "#/$defs/connection" },
+        "signals": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/signal" }
+        }
+      }
+    }
+  }
+}

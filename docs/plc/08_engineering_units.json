@@ -1,0 +1,35 @@
+{
+  "documento": "Unidades de ingeniería (Fase 7 bis)",
+  "generadoEl": "2026-07-12T03:48:55.915Z",
+  "servidor": {
+    "endpoint": "opc.tcp://181.204.165.66:59100",
+    "endpointAnunciadoPorElServidor": [
+      "10.10.51.225:59100"
+    ],
+    "producto": "FactoryTalkOptix HMI FTOptixApplication",
+    "estado": "Running",
+    "plc": "CompactLogix 1769-L27ERM-QBFC1B (fw 33.16) vía RAEtherNet_IPDriver1"
+  },
+  "advertencia": "Documento generado por ingeniería inversa de SOLO LECTURA (Browse/Read) sobre el servidor OPC UA de FactoryTalk Optix. No se escribió ninguna variable, no se invocó ningún método y no se creó ninguna subscription. Todo ítem marcado \"REQUIERE VALIDACIÓN EN PLANTA\" es una hipótesis técnica, NO un hecho confirmado: no debe usarse para control sin validación previa.",
+  "resultado": {
+    "tagsConEngineeringUnits": 0,
+    "tagsConEURange": 0,
+    "tagsConInstrumentRange": 0,
+    "tagsConDescription": 0
+  },
+  "conclusion": "CERO tags declaran unidades de ingeniería. Esto es esperable: el driver RAEtherNet_IP de Optix expone los tags del controlador Rockwell como variables OPC UA planas (BaseDataVariableType), sin envolverlas en AnalogItemType, que es el tipo que porta EngineeringUnits/EURange/InstrumentRange.",
+  "implicacion": "El catálogo de unidades es responsabilidad del BACKEND. Debe existir una tabla de configuración (por sitio e índice) que declare: magnitud, unidad, rango de ingeniería y límites de alarma. Esa tabla se construye a partir del export L5X del PLC y de la hoja de instrumentación de la planta — no puede derivarse del servidor OPC UA.",
+  "unidadesEsperadasPorElFrontend": {
+    "nota": "Unidades que el contrato @ptap/shared y las pantallas actuales ya asumen; sirven de plantilla para esa tabla.",
+    "presion": "psi",
+    "caudal": "m³/h (el enunciado también menciona L/s y m³/día)",
+    "ph": "pH",
+    "turbidez": "NTU",
+    "nivel": "m y %",
+    "volumen": "m³",
+    "cloroResidual": "mg/L",
+    "conductividad": "µS/cm",
+    "oxigenoDisuelto": "mg/L",
+    "temperatura": "°C"
+  }
+}

@@ -1,0 +1,362 @@
+{
+  "verifiedAt": "2026-07-14T10:52:32.242Z",
+  "connections": [
+    {
+      "site": "VORAGINE",
+      "msgRead": "MSG_READ_VORAGINE",
+      "confidence": "confirmed",
+      "memberStatus": {
+        "DN": "Good",
+        "ER": "Good",
+        "TO": "Good"
+      }
+    },
+    {
+      "site": "SOLEDAD",
+      "msgRead": "MSG_READ_REAL_SOLEDAD",
+      "confidence": "confirmed",
+      "memberStatus": {
+        "DN": "Good",
+        "ER": "Good",
+        "TO": "Good"
+      }
+    },
+    {
+      "site": "MONTEBELLO",
+      "msgRead": "MSG_READ_REAL_MONTEBELLO",
+      "confidence": "confirmed",
+      "memberStatus": {
+        "DN": "Good",
+        "ER": "Good",
+        "TO": "Good"
+      }
+    },
+    {
+      "site": "CASCAJAL",
+      "msgRead": "MSG_READ_CASCAJAL",
+      "confidence": "confirmed",
+      "memberStatus": {
+        "DN": "Good",
+        "ER": "Good",
+        "TO": "Good"
+      }
+    },
+    {
+      "site": "KM18",
+      "msgRead": "MSG_READ_KM18",
+      "confidence": "confirmed",
+      "memberStatus": {
+        "DN": "Good",
+        "ER": "Good",
+        "TO": "Good"
+      }
+    },
+    {
+      "site": "ALTO_MANGOS",
+      "msgRead": "MSG_READ_REAL_ALTO_MANGOS",
+      "confidence": "confirmed",
+      "memberStatus": {
+        "DN": "Good",
+        "ER": "Good",
+        "TO": "Good"
+      }
+    },
+    {
+      "site": "CAMPOALEGRE",
+      "msgRead": "MSG_READ_REAL_CAMPOALEGRE",
+      "confidence": "confirmed",
+      "memberStatus": {
+        "DN": "Good",
+        "ER": "Good",
+        "TO": "Good"
+      }
+    },
+    {
+      "site": "PICHINDE",
+      "msgRead": "MSG_READ_REAL_PICHINDE",
+      "confidence": "confirmed",
+      "memberStatus": {
+        "DN": "Good",
+        "ER": "Good",
+        "TO": "Good"
+      }
+    },
+    {
+      "site": "CARBONERO",
+      "msgRead": "MSG_READ_REAL_CARBONERO",
+      "confidence": "confirmed",
+      "memberStatus": {
+        "DN": "Good",
+        "ER": "Good",
+        "TO": "Good"
+      }
+    },
+    {
+      "site": "SIRENA",
+      "msgRead": "MSG_READ_REAL_SIRENA",
+      "confidence": "confirmed",
+      "memberStatus": {
+        "DN": "Good",
+        "ER": "Good",
+        "TO": "Good"
+      }
+    },
+    {
+      "site": "SAN_ANTONIO",
+      "msgRead": "MSG_READ_REAL_SAN_ANTONIO",
+      "confidence": "confirmed",
+      "memberStatus": {
+        "DN": "Good",
+        "ER": "Good",
+        "TO": "Good"
+      }
+    },
+    {
+      "site": "QUIJOTE",
+      "msgRead": "MSG_READ_REAL_QUIJOTE",
+      "confidence": "confirmed",
+      "memberStatus": {
+        "DN": "Good",
+        "ER": "Good",
+        "TO": "Good"
+      }
+    }
+  ],
+  "topology": {
+    "SAN_ANTONIO": {
+      "realIn": [
+        "REAL_TK_SAN_ANTONO"
+      ],
+      "msgRead": [
+        "MSG_READ_REAL_SAN_ANTONIO"
+      ]
+    },
+    "QUIJOTE": {
+      "realIn": [
+        "REAL_TK_QUIJOTE"
+      ],
+      "msgRead": [
+        "MSG_READ_REAL_QUIJOTE"
+      ]
+    },
+    "_todos": {
+      "SOLEDAD": {
+        "realIn": [
+          "DATOS_IN_PTAP_SOLEDAD",
+          "REAL_IN_SOLEDAD"
+        ],
+        "realOut": [
+          "DATOS_OUT_PTAP_SOLEDAD"
+        ],
+        "intIn": [
+          "INT_IN_SOLEDAD"
+        ],
+        "msgRead": [
+          "MSG_READ_REAL_SOLEDAD",
+          "MSG_READ_INT_SOLEDAD"
+        ],
+        "intOut": [
+          "INT_OUT_SOLEDAD"
+        ],
+        "msgWrite": [
+          "MSG_WRITE_INT_SOLEDAD"
+        ]
+      },
+      "VORAGINE": {
+        "msgRead": [
+          "MSG_READ_VORAGINE",
+          "MSG_READ_INT_VORAGINE"
+        ],
+        "realIn": [
+          "REAL_IN_VORAGINE"
+        ],
+        "intIn": [
+          "INT_IN_VORAGINE"
+        ],
+        "intOut": [
+          "INT_OUT_VORAGINE"
+        ],
+        "msgWrite": [
+          "MSG_WRITE_INT_VORAGINE"
+        ]
+      },
+      "CASCAJAL": {
+        "msgRead": [
+          "MSG_READ_CASCAJAL",
+          "MSG_READ_INT_CASCAJAL"
+        ],
+        "realIn": [
+          "REAL_IN_CASCAJAL"
+        ],
+        "intIn": [
+          "INT_IN_CASCAJAL"
+        ],
+        "intOut": [
+          "INT_OUT_CASCAJAL"
+        ],
+        "msgWrite": [
+          "MSG_WRITE_INT_CASCAJAL"
+        ]
+      },
+      "KM18": {
+        "msgRead": [
+          "MSG_READ_KM18",
+          "MSG_READ_INT_KM18"
+        ],
+        "realIn": [
+          "REAL_IN_KM18"
+        ],
+        "intIn": [
+          "INT_IN_KM18"
+        ],
+        "intOut": [
+          "INT_OUT_KM18"
+        ],
+        "msgWrite": [
+          "MSG_WRITE_INT_KM18"
+        ]
+      },
+      "ALTO_MANGOS": {
+        "msgRead": [
+          "MSG_READ_REAL_ALTO_MANGOS",
+          "MSG_READ_INT_ALTO_MANGOS"
+        ],
+        "realIn": [
+          "DATOS_REAL_IN_MANGOS"
+        ],
+        "intIn": [
+          "INT_IN_ALTO_MANGOS"
+        ],
+        "intOut": [
+          "INT_OUT_ALTO_MANGOS"
+        ],
+        "msgWrite": [
+          "MSG_WRITE_INT_ALTO_MANGOS"
+        ]
+      },
+      "CAMPOALEGRE": {
+        "msgRead": [
+          "MSG_READ_REAL_CAMPOALEGRE",
+          "MSG_READ_INT_CAMPOALEGRE"
+        ],
+        "realIn": [
+          "REAL_IN_CAMPOALEGRE"
+        ],
+        "intIn": [
+          "INT_IN_CAMPOALEGRE"
+        ],
+        "intOut": [
+          "INT_OUT_CAMPOALEGRE"
+        ],
+        "msgWrite": [
+          "MSG_WRITE_INT_CAMPOALEGRE"
+        ]
+      },
+      "PICHINDE": {
+        "realIn": [
+          "REAL_IN_PICHINDE"
+        ],
+        "intIn": [
+          "INT_IN_PICHINDE"
+        ],
+        "msgRead": [
+          "MSG_READ_REAL_PICHINDE",
+          "MSG_READ_INT_PICHINDE"
+        ],
+        "intOut": [
+          "INT_OUT_PICHINDE"
+        ],
+        "msgWrite": [
+          "MSG_WRITE_INT_PICHINDE"
+        ]
+      },
+      "CARBONERO": {
+        "realIn": [
+          "REAL_IN_CARBONERO"
+        ],
+        "intIn": [
+          "INT_IN_CARBONERO"
+        ],
+        "msgRead": [
+          "MSG_READ_REAL_CARBONERO",
+          "MSG_READ_INT_CARBONERO"
+        ],
+        "intOut": [
+          "INT_OUT_CARBONERO"
+        ],
+        "msgWrite": [
+          "MSG_WRITE_INT_CARBONERO"
+        ]
+      },
+      "SIRENA": {
+        "realIn": [
+          "REAL_IN_SIRENA",
+          "REAL_TK2_SIRENA",
+          "REAL_TK3_SIRENA"
+        ],
+        "intIn": [
+          "INT_IN_SIRENA"
+        ],
+        "msgRead": [
+          "MSG_READ_REAL_SIRENA",
+          "MSG_READ_INT_SIRENA",
+          "MSG_READ_REAL_TK2_SIRENA",
+          "MSG_READ_REAL_TK3_4_SIRENA"
+        ],
+        "intOut": [
+          "INT_OUT_SIRENA"
+        ],
+        "bitIn": [
+          "BIT_SIRENA"
+        ],
+        "msgWrite": [
+          "MSG_WRITE_INT_SIRENA"
+        ]
+      },
+      "MONTEBELLO": {
+        "realIn": [
+          "REAL_IN_MONTEBELLO",
+          "REAL_IN_TK3_MONTEBELLO",
+          "REAL_IN_TK2_MONTEBELLO",
+          "REAL_IN_TK1_MONTEBELLO"
+        ],
+        "intIn": [
+          "INT_IN_MONTEBELLO"
+        ],
+        "msgRead": [
+          "MSG_READ_REAL_MONTEBELLO",
+          "MSG_READ_INT_MONTEBELLO",
+          "MSG_READ_REAL_TK1_MONTEBELLO",
+          "MSG_READ_REAL_TK2_MONTEBELLO",
+          "MSG_READ_REAL_TK3_MONTEBELLO"
+        ],
+        "intOut": [
+          "INT_OUT_MONTEBELLO"
+        ],
+        "msgWrite": [
+          "MSG_WRITE_INT_MONTEBELLO",
+          "MSG_WRITE_REAL_MONTEBELLO"
+        ],
+        "realOut": [
+          "REAL_OUT_MONTEBELLO"
+        ]
+      },
+      "SAN_ANTONIO": {
+        "realIn": [
+          "REAL_TK_SAN_ANTONO"
+        ],
+        "msgRead": [
+          "MSG_READ_REAL_SAN_ANTONIO"
+        ]
+      },
+      "QUIJOTE": {
+        "realIn": [
+          "REAL_TK_QUIJOTE"
+        ],
+        "msgRead": [
+          "MSG_READ_REAL_QUIJOTE"
+        ]
+      }
+    }
+  }
+}
