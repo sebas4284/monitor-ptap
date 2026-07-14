@@ -30,11 +30,15 @@ export interface RawBufferSample {
   serverTimestamp: string | null;
 }
 
-/** Notificación cruda por planta. En Fase 1 se emite un buffer por frame. */
+/**
+ * Notificación cruda por planta: UN frame por planta por ventana de coalescing,
+ * con TODOS los buffers que cambiaron en esa ventana (nunca un frame por buffer).
+ * Sin `sequence` hasta Fase 2 (lo añade el parser, no el adaptador).
+ */
 export interface RawPlantFrame {
   plantId: string;
   buffers: RawBufferSample[];
-  receivedAt: string; // instante de recepción en el backend (metadato de transporte, no de proceso)
+  receivedAt: string; // instante de emisión del frame en el backend (metadato de transporte, no de proceso)
 }
 
 export interface BufferHealth {
@@ -63,6 +67,13 @@ export interface AdapterDiagnostics {
   reconnectCount: number;
   subscriptionRecycleCount: number;
   notificationsTotal: number;
+  /** Último probe de heartbeat (exitoso o no). null si nunca corrió. */
+  lastHeartbeatAt: string | null;
+  lastSuccessfulHeartbeatAt: string | null;
+  /** Fallos de heartbeat CONSECUTIVOS actuales (se resetea con un probe OK). */
+  heartbeatFailures: number;
+  /** Fallos de heartbeat acumulados desde start(). */
+  heartbeatFailuresTotal: number;
   buffersActive: number;
   buffersFaulted: number;
   perPlant: PerPlantStatus[];

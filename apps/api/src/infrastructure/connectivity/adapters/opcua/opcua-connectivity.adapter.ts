@@ -1,3 +1,4 @@
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Logger } from '@nestjs/common';
 import {
@@ -16,6 +17,8 @@ import {
 } from 'node-opcua';
 import type { UserIdentityInfo } from 'node-opcua';
 import { BridgeStateMachine } from '../../bridge/bridge-state-machine';
+import { FrameCoalescer } from '../../bridge/frame-coalescer';
+import { HeartbeatMonitor } from '../../bridge/heartbeat-monitor';
 import { Watchdog } from '../../bridge/watchdog';
 import type { OpcUaConfig } from '../../connectivity.config';
 import type { LoadedMapping, MonitorTarget } from '../../mapping/opc-mapping.loader';
@@ -72,13 +75,14 @@ export class OpcUaConnectivityAdapter implements ConnectivityAdapter {
   private readonly logger = new Logger('OpcUaBridge');
   private readonly bridge = new BridgeStateMachine(this.logger, 'opcua');
   private readonly watchdog: Watchdog;
+  private readonly heartbeat: HeartbeatMonitor;
+  private readonly coalescer: FrameCoalescer;
   private readonly frameListeners = new Set<(f: RawPlantFrame) => void>();
 
   private client: OPCUAClient | null = null;
   private session: ClientSession | null = null;
   private subscription: ClientSubscription | null = null;
   private monitoredItems: ClientMonitoredItem[] = [];
-  private heartbeatTimer: NodeJS.Timeout | null = null;
 
   private targets: ResolvedTarget[] = [];
   private nsMap = new Map<string, number>();
@@ -90,12 +94,20 @@ export class OpcUaConnectivityAdapter implements ConnectivityAdapter {
   private lastNotificationLatencyMs: number | null = null;
   private readonly lastFrameByPlant = new Map<string, string>();
   private starting = false;
+  private recycling = false; // guard: evita reciclajes concurrentes (watchdog vs heartbeat)
 
   constructor(
     private readonly config: OpcUaConfig,
     private readonly mapping: LoadedMapping,
   ) {
     this.watchdog = new Watchdog(config.watchdogTimeoutMs, () => void this.onWatchdogTimeout());
+    this.coalescer = new FrameCoalescer(config.coalesceWindowMs, (f) => this.emitFrame(f));
+    this.heartbeat = new HeartbeatMonitor({
+      intervalMs: config.heartbeatIntervalMs,
+      maxFailures: config.heartbeatMaxFailures,
+      probe: () => this.heartbeatProbe(),
+      onFailureThreshold: (reason) => void this.onHeartbeatThreshold(reason),
+    });
   }
 
   // ── ciclo de vida ──────────────────────────────────────────────────────────
@@ -114,7 +126,7 @@ export class OpcUaConnectivityAdapter implements ConnectivityAdapter {
       this.logger.log('sesión abierta; resolviendo NodeIds');
       await this.resolveTargets();
       await this.setupSubscription();
-      this.startHeartbeat();
+      this.heartbeat.start();
       this.watchdog.start();
       this.bridge.transition('Connected', 'sesión + subscription listas');
     } catch (err) {
@@ -134,7 +146,8 @@ export class OpcUaConnectivityAdapter implements ConnectivityAdapter {
 
   async stop(): Promise<void> {
     this.watchdog.stop();
-    this.stopHeartbeat();
+    this.heartbeat.stop();
+    this.coalescer.stop(); // flushea pendientes con el bridge aún "vivo" (regla 12)
     await this.teardownSession().catch(() => undefined);
     if (this.client) await this.client.disconnect().catch(() => undefined);
     this.client = null;
@@ -154,6 +167,11 @@ export class OpcUaConnectivityAdapter implements ConnectivityAdapter {
   // ── conexión ───────────────────────────────────────────────────────────────
 
   private createClient(): OPCUAClient {
+    // El árbol PKI del cliente debe existir antes de instanciar el CertificateManager:
+    // node-opcua no garantiza crearlo en un clon limpio y fallaría con un error críptico.
+    // mkdir recursive es idempotente (no falla si ya existe).
+    const pkiRoot = join(process.cwd(), 'pki');
+    mkdirSync(pkiRoot, { recursive: true });
     return OPCUAClient.create({
       applicationName: 'monitor-ptap-gateway',
       endpointMustExist: this.config.endpointMustExist,
@@ -167,7 +185,7 @@ export class OpcUaConnectivityAdapter implements ConnectivityAdapter {
       keepSessionAlive: true,
       clientCertificateManager: new OPCUACertificateManager({
         // cwd del backend es apps/api (npm -w @ptap/api). PKI del cliente OPC UA (gitignored).
-        rootFolder: join(process.cwd(), 'pki'),
+        rootFolder: pkiRoot,
         automaticallyAcceptUnknownCertificate: true,
       }),
     });
@@ -249,8 +267,8 @@ export class OpcUaConnectivityAdapter implements ConnectivityAdapter {
 
     this.subscription = await this.session.createSubscription2({
       requestedPublishingInterval: this.config.publishingIntervalMs,
-      requestedLifetimeCount: 100,
-      requestedMaxKeepAliveCount: 10,
+      requestedLifetimeCount: this.config.subscriptionLifetimeCount,
+      requestedMaxKeepAliveCount: this.config.subscriptionMaxKeepAliveCount,
       maxNotificationsPerPublish: 0,
       publishingEnabled: true,
       priority: 1,
@@ -262,6 +280,10 @@ export class OpcUaConnectivityAdapter implements ConnectivityAdapter {
     this.monitoredItems = [];
     for (const target of this.targets) {
       if (!target.resolved) continue; // los faulted no se suscriben; el bridge sigue
+      // queueSize:1 + discardOldest:true — esto es MONITOREO, no historización: solo
+      // importa el ÚLTIMO valor del array. Si un publish se atrasa, el servidor descarta
+      // las muestras viejas y entrega la más reciente (dato fresco manda, regla 7). NO
+      // subir queueSize en Fase 2 sin entender que el diff de elementos ya lo hace el parser.
       const item = await this.subscription.monitor(
         { nodeId: resolveNodeId(target.nodeId), attributeId: AttributeIds.Value },
         { samplingInterval: this.config.samplingIntervalMs, discardOldest: true, queueSize: 1 },
@@ -277,17 +299,24 @@ export class OpcUaConnectivityAdapter implements ConnectivityAdapter {
   private onBufferChanged(target: ResolvedTarget, dv: DataValue): void {
     const now = Date.now();
     const sample = this.toSample(target, dv);
-    const frame: RawPlantFrame = { plantId: target.plantId, buffers: [sample], receivedAt: new Date(now).toISOString() };
 
+    // Vitalidad del upstream: contadores y kick del watchdog van en la RECEPCIÓN de la
+    // notificación, no en el flush del coalescer (kickear en el flush añadiría holgura).
     this.notificationsTotal++;
-    this.lastNotificationAt = frame.receivedAt;
+    this.lastNotificationAt = new Date(now).toISOString();
     if (sample.sourceTimestamp) {
       this.lastNotificationLatencyMs = Math.max(0, now - new Date(sample.sourceTimestamp).getTime());
     }
-    this.lastFrameByPlant.set(target.plantId, frame.receivedAt);
     this.watchdog.kick();
     if (this.bridge.is('Stale', 'Recovering')) this.bridge.transition('Connected', 'notificaciones reanudadas');
 
+    // Coalescing por planta (A2): un RawPlantFrame por planta por ventana, no por buffer.
+    this.coalescer.add(target.plantId, sample);
+  }
+
+  /** Callback del coalescer: un frame por planta con todos los buffers de la ventana. */
+  private emitFrame(frame: RawPlantFrame): void {
+    this.lastFrameByPlant.set(frame.plantId, frame.receivedAt);
     for (const l of this.frameListeners) {
       try {
         l(frame);
@@ -324,51 +353,81 @@ export class OpcUaConnectivityAdapter implements ConnectivityAdapter {
   // ── watchdog + heartbeat ───────────────────────────────────────────────────
 
   private async onWatchdogTimeout(): Promise<void> {
+    if (this.recycling) return; // ya hay un reciclaje en curso (p.ej. disparado por heartbeat)
     if (this.bridge.is('Connected')) {
       this.bridge.transition('Stale', `watchdog: sin notificaciones en ${this.config.watchdogTimeoutMs}ms`);
     }
     this.recycleCount++;
+
+    // Nivel 1: reciclar solo la subscription (barato). El guard evita que el heartbeat escale en paralelo.
     if (this.recycleCount <= this.config.subscriptionRecycleMaxAttempts) {
-      this.logger.warn(`reciclando subscription (intento ${this.recycleCount})`);
+      this.recycling = true;
       try {
+        this.logger.warn(`reciclando subscription (intento ${this.recycleCount})`);
         await this.setupSubscription();
         this.watchdog.start();
         return;
       } catch (err) {
         this.logger.warn(`reciclaje de subscription falló: ${err instanceof Error ? err.message : err}`);
+      } finally {
+        this.recycling = false;
       }
     }
-    // Escalar: reciclar la sesión completa.
+
+    // Nivel 2: escalar a reciclaje de la sesión completa.
     this.logger.warn('reciclaje de subscription agotado; reciclando la sesión');
+    await this.recycleSession('watchdog');
+  }
+
+  /**
+   * Reciclaje de sesión completa: único punto que recrea la sesión. Serializado con el
+   * flag `recycling` para que watchdog y heartbeat no lo disparen a la vez (dos
+   * createSession concurrentes dejarían una sesión huérfana en el servidor).
+   */
+  private async recycleSession(trigger: string): Promise<void> {
+    if (this.recycling) {
+      this.logger.warn(`reciclaje ya en curso; se ignora disparo de ${trigger}`);
+      return;
+    }
+    this.recycling = true;
+    this.watchdog.stop();
+    this.heartbeat.stop(); // sin probes contra una sesión que se está cerrando
     try {
       await this.teardownSession();
-      this.session = await this.client!.createSession(this.buildIdentity());
+      if (!this.client) {
+        // Guard explícito (reemplaza el non-null assertion): sin cliente no se recicla.
+        // Nunca un TypeError enmascarado como Faulted sin sentido.
+        this.bridge.transition('Faulted', 'sin cliente OPC UA para reciclar sesión');
+        return;
+      }
+      this.session = await this.client.createSession(this.buildIdentity());
       await this.resolveTargets();
       await this.setupSubscription();
       this.recycleCount = 0;
+      this.heartbeat.reset();
       this.watchdog.start();
-      this.bridge.transition('Connected', 'sesión reciclada');
+      this.heartbeat.start();
+      this.bridge.transition('Connected', `sesión reciclada (${trigger})`);
     } catch (err) {
-      this.bridge.transition('Faulted', `reciclaje de sesión falló: ${err instanceof Error ? err.message : err}`);
+      // Faulted es terminal hasta stop()/start(): watchdog y heartbeat quedan parados.
+      this.bridge.transition('Faulted', `reciclaje de sesión falló (${trigger}): ${err instanceof Error ? err.message : err}`);
+    } finally {
+      this.recycling = false;
     }
   }
 
-  private startHeartbeat(): void {
-    this.stopHeartbeat();
-    this.heartbeatTimer = setInterval(() => {
-      if (!this.session) return;
-      this.session
-        .read({ nodeId: 'i=2258', attributeId: AttributeIds.Value }) // Server_ServerStatus_CurrentTime
-        .then((dv) => {
-          if (!isGoodStatus(dv.statusCode)) this.logger.warn(`heartbeat con status ${dv.statusCode.toString()}`);
-        })
-        .catch((err) => this.logger.warn(`heartbeat falló: ${err instanceof Error ? err.message : err}`));
-    }, this.config.heartbeatIntervalMs);
-    if (typeof this.heartbeatTimer.unref === 'function') this.heartbeatTimer.unref();
+  /** Un probe de heartbeat: resuelve si el servidor responde Good; lanza en caso contrario. */
+  private async heartbeatProbe(): Promise<void> {
+    if (!this.session) throw new Error('sin sesión');
+    const dv = await this.session.read({ nodeId: 'i=2258', attributeId: AttributeIds.Value }); // Server CurrentTime
+    if (!isGoodStatus(dv.statusCode)) throw new Error(`status ${dv.statusCode.toString()}`);
   }
-  private stopHeartbeat(): void {
-    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
-    this.heartbeatTimer = null;
+
+  private async onHeartbeatThreshold(reason: string): Promise<void> {
+    // No resucitar un bridge terminal ni pisar un reciclaje/arranque en curso.
+    if (this.recycling || this.bridge.is('Faulted', 'Disconnected', 'Connecting')) return;
+    this.bridge.transition('Recovering', reason);
+    await this.recycleSession('heartbeat');
   }
 
   private async teardownSubscription(): Promise<void> {
@@ -400,6 +459,7 @@ export class OpcUaConnectivityAdapter implements ConnectivityAdapter {
         buffersFaulted: bufs.filter((t) => !t.resolved).length,
       };
     });
+    const hb = this.heartbeat.getStats();
     return {
       provider: this.provider,
       bridgeStatus: this.bridge.get(),
@@ -410,6 +470,10 @@ export class OpcUaConnectivityAdapter implements ConnectivityAdapter {
       reconnectCount: this.reconnectCount,
       subscriptionRecycleCount: this.recycleCount,
       notificationsTotal: this.notificationsTotal,
+      lastHeartbeatAt: hb.lastHeartbeatAt,
+      lastSuccessfulHeartbeatAt: hb.lastSuccessfulHeartbeatAt,
+      heartbeatFailures: hb.heartbeatFailures,
+      heartbeatFailuresTotal: hb.heartbeatFailuresTotal,
       buffersActive: this.targets.filter((t) => t.resolved).length,
       buffersFaulted,
       perPlant,

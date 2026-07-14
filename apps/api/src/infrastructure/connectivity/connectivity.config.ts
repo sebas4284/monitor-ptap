@@ -23,8 +23,15 @@ export interface OpcUaConfig {
   identity: OpcIdentity;
   publishingIntervalMs: number;
   samplingIntervalMs: number;
+  /** Vida de la Subscription en múltiplos de publishingInterval (OPC UA Part 4 exige >= 3× keepAlive). */
+  subscriptionLifetimeCount: number;
+  subscriptionMaxKeepAliveCount: number;
+  /** Ventana de coalescing por planta: un RawPlantFrame por planta por ventana. Default = publishingInterval (nota: con jitter puede fusionar dos ciclos; bajarla si se necesita 1 frame/ciclo estricto). */
+  coalesceWindowMs: number;
   watchdogTimeoutMs: number;
   heartbeatIntervalMs: number;
+  /** Fallos de heartbeat CONSECUTIVOS que fuerzan Connected → Recovering. */
+  heartbeatMaxFailures: number;
   reconnectInitialDelayMs: number;
   reconnectMaxDelayMs: number;
   reconnectMaxRetry: number;
@@ -76,6 +83,22 @@ export function loadConnectivityConfig(): ConnectivityConfig {
     throw new Error(`CONNECTIVITY_PROVIDER inválido: "${provider}" (simulator | opcua)`);
   }
 
+  const publishingIntervalMs = num('OPCUA_PUBLISHING_INTERVAL_MS', 2000);
+  const subscriptionLifetimeCount = num('OPCUA_REQUESTED_LIFETIME_COUNT', 100);
+  const subscriptionMaxKeepAliveCount = num('OPCUA_REQUESTED_MAX_KEEPALIVE_COUNT', 10);
+
+  // Validación de arranque (regla 8 + spec OPC UA Part 4): si la relación no se
+  // cumple, el backend NO debe iniciar. El throw mata el useFactory del módulo.
+  if (subscriptionMaxKeepAliveCount < 1) {
+    throw new Error(`OPCUA_REQUESTED_MAX_KEEPALIVE_COUNT (${subscriptionMaxKeepAliveCount}) debe ser >= 1`);
+  }
+  if (subscriptionLifetimeCount < 3 * subscriptionMaxKeepAliveCount) {
+    throw new Error(
+      `OPCUA_REQUESTED_LIFETIME_COUNT (${subscriptionLifetimeCount}) debe ser >= 3 × ` +
+        `OPCUA_REQUESTED_MAX_KEEPALIVE_COUNT (${subscriptionMaxKeepAliveCount}) — spec OPC UA Part 4`,
+    );
+  }
+
   return {
     provider,
     opcua: {
@@ -85,10 +108,14 @@ export function loadConnectivityConfig(): ConnectivityConfig {
       securityMode: str('OPC_SECURITY_MODE', 'None'),
       securityPolicy: str('OPC_SECURITY_POLICY', 'None'),
       identity: resolveIdentity(),
-      publishingIntervalMs: num('OPCUA_PUBLISHING_INTERVAL_MS', 2000),
+      publishingIntervalMs,
       samplingIntervalMs: num('OPCUA_SAMPLING_INTERVAL_MS', 1000),
+      subscriptionLifetimeCount,
+      subscriptionMaxKeepAliveCount,
+      coalesceWindowMs: num('OPCUA_COALESCE_WINDOW_MS', publishingIntervalMs),
       watchdogTimeoutMs: num('OPCUA_WATCHDOG_TIMEOUT_MS', 30000),
       heartbeatIntervalMs: num('OPCUA_HEARTBEAT_INTERVAL_MS', 10000),
+      heartbeatMaxFailures: num('OPCUA_HEARTBEAT_MAX_FAILURES', 2),
       reconnectInitialDelayMs: num('OPCUA_RECONNECT_INITIAL_DELAY_MS', 1000),
       reconnectMaxDelayMs: num('OPCUA_RECONNECT_MAX_DELAY_MS', 30000),
       reconnectMaxRetry: num('OPCUA_RECONNECT_MAX_RETRY', 1_000_000), // efectivamente indefinido; el operador restaura la red sin reiniciar

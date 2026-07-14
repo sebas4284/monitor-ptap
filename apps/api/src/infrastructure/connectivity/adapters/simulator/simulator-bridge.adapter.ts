@@ -1,5 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { BridgeStateMachine } from '../../bridge/bridge-state-machine';
+import { FrameCoalescer } from '../../bridge/frame-coalescer';
+import { HeartbeatMonitor } from '../../bridge/heartbeat-monitor';
 import { Watchdog } from '../../bridge/watchdog';
 import type { OpcUaConfig } from '../../connectivity.config';
 import type { LoadedMapping, MonitorTarget } from '../../mapping/opc-mapping.loader';
@@ -13,12 +15,16 @@ import type {
   ServerInfo,
 } from '../../ports/connectivity-adapter.port';
 
+type Outcome = 'success' | 'fail';
+
 /**
  * Adaptador de puente SIMULADO. Implementa ConnectivityAdapter emitiendo frames
- * crudos falsos con la MISMA topología del mapping. Puede emular todos los estados
- * del bridge (Connected/Stale/Faulted) para probar el pipeline sin PLC (regla 5).
+ * crudos falsos con la MISMA topología del mapping. Puede emular TODOS los estados
+ * del bridge (Connected/Stale/Recovering/Faulted) para probar el pipeline sin PLC
+ * (regla 5), incluidos el reciclaje automático del watchdog y el heartbeat.
  *
- * Métodos freeze()/unfreeze()/faultBuffer() son para tests; no pertenecen al puerto.
+ * Métodos de emulación para tests (no pertenecen al puerto): freeze(), faultBuffer(),
+ * setRecycleOutcome(), setHeartbeatOutcome().
  */
 export class SimulatorBridgeAdapter implements ConnectivityAdapter {
   readonly provider = 'simulator' as const;
@@ -26,6 +32,8 @@ export class SimulatorBridgeAdapter implements ConnectivityAdapter {
   private readonly logger = new Logger('SimulatorBridge');
   private readonly bridge = new BridgeStateMachine(this.logger, 'simulator');
   private readonly watchdog: Watchdog;
+  private readonly heartbeat: HeartbeatMonitor;
+  private readonly coalescer: FrameCoalescer;
   private readonly frameListeners = new Set<(f: RawPlantFrame) => void>();
   private readonly targets: MonitorTarget[];
   private readonly faultedBuffers = new Set<string>(); // key: plantId/browseName
@@ -39,12 +47,23 @@ export class SimulatorBridgeAdapter implements ConnectivityAdapter {
   private lastNotificationAt: string | null = null;
   private readonly lastFrameByPlant = new Map<string, string>();
 
+  // Perillas de emulación: el resultado que darán los reciclajes y los probes de heartbeat.
+  private recycleOutcome: Outcome = 'success';
+  private heartbeatOutcome: Outcome = 'success';
+
   constructor(
     private readonly config: OpcUaConfig,
     private readonly mapping: LoadedMapping,
   ) {
     this.targets = mapping.targets;
     this.watchdog = new Watchdog(config.watchdogTimeoutMs, () => this.onWatchdogTimeout());
+    this.coalescer = new FrameCoalescer(config.coalesceWindowMs, (f) => this.emitFrame(f));
+    this.heartbeat = new HeartbeatMonitor({
+      intervalMs: config.heartbeatIntervalMs,
+      maxFailures: config.heartbeatMaxFailures,
+      probe: () => this.heartbeatProbe(),
+      onFailureThreshold: (reason) => this.onHeartbeatThreshold(reason),
+    });
   }
 
   async start(): Promise<void> {
@@ -53,15 +72,16 @@ export class SimulatorBridgeAdapter implements ConnectivityAdapter {
     this.bridge.transition('Connecting', 'inicio del simulador');
     this.bridge.transition('Connected', 'simulador listo');
     this.watchdog.start();
-    this.emitTimer = setInterval(() => this.tick(), this.config.publishingIntervalMs);
-    if (typeof this.emitTimer.unref === 'function') this.emitTimer.unref();
+    this.heartbeat.start();
+    this.startEmitTimer();
   }
 
   async stop(): Promise<void> {
     this.started = false;
-    if (this.emitTimer) clearInterval(this.emitTimer);
-    this.emitTimer = null;
+    this.stopEmitTimer();
     this.watchdog.stop();
+    this.heartbeat.stop();
+    this.coalescer.stop(); // flushea pendientes con el bridge aún "vivo" (regla 12)
     this.bridge.transition('Disconnected', 'stop() del simulador');
   }
 
@@ -77,18 +97,12 @@ export class SimulatorBridgeAdapter implements ConnectivityAdapter {
     this.bridge.onChange(listener);
   }
 
-  // ── emulación ────────────────────────────────────────────────────────────────
+  // ── emulación (solo tests) ─────────────────────────────────────────────────────
 
-  /** Congela la emisión (para probar el watchdog → Stale). */
+  /** Congela la emisión: emula una Subscription muerta (sin notificaciones → watchdog). */
   freeze(): void {
     this.frozen = true;
     this.logger.warn('[sim] emisión CONGELADA');
-  }
-
-  /** Reanuda la emisión (recuperación desde Stale). */
-  unfreeze(): void {
-    this.frozen = false;
-    this.logger.warn('[sim] emisión REANUDADA');
   }
 
   /** Marca un buffer como faulted (para probar la degradación por buffer). */
@@ -96,32 +110,48 @@ export class SimulatorBridgeAdapter implements ConnectivityAdapter {
     this.faultedBuffers.add(`${plantId}/${browseName}`);
   }
 
-  // ── interno ──────────────────────────────────────────────────────────────────
+  /** Define si los reciclajes (subscription/sesión) tendrán éxito o fallarán. */
+  setRecycleOutcome(outcome: Outcome): void {
+    this.recycleOutcome = outcome;
+  }
+
+  /** Define si el probe de heartbeat resolverá (success) o lanzará (fail). */
+  setHeartbeatOutcome(outcome: Outcome): void {
+    this.heartbeatOutcome = outcome;
+  }
+
+  // ── emisión interna ─────────────────────────────────────────────────────────────
+
+  private startEmitTimer(): void {
+    this.stopEmitTimer();
+    this.emitTimer = setInterval(() => this.tick(), this.config.publishingIntervalMs);
+    if (typeof this.emitTimer.unref === 'function') this.emitTimer.unref();
+  }
+
+  private stopEmitTimer(): void {
+    if (this.emitTimer) clearInterval(this.emitTimer);
+    this.emitTimer = null;
+  }
 
   private tick(): void {
     if (this.frozen) return; // sin notificaciones → el watchdog terminará disparando
 
-    const now = new Date().toISOString();
     for (const target of this.targets) {
       if (this.faultedBuffers.has(`${target.plantId}/${target.browseName}`)) continue;
-      const frame: RawPlantFrame = {
-        plantId: target.plantId,
-        buffers: [this.fakeBuffer(target)],
-        receivedAt: now,
-      };
-      this.emit(frame);
+      this.notificationsTotal++;
+      this.lastNotificationAt = new Date().toISOString();
+      this.coalescer.add(target.plantId, this.fakeBuffer(target)); // coalescing por planta (A2)
     }
 
     this.watchdog.kick();
-    if (!this.bridge.is('Connected')) {
+    if (this.bridge.is('Stale', 'Recovering')) {
       this.recycleCount = 0;
       this.bridge.transition('Connected', 'frames reanudados');
     }
   }
 
-  private emit(frame: RawPlantFrame): void {
-    this.notificationsTotal++;
-    this.lastNotificationAt = frame.receivedAt;
+  /** Callback del coalescer: un frame por planta con todos los buffers de la ventana. */
+  private emitFrame(frame: RawPlantFrame): void {
     this.lastFrameByPlant.set(frame.plantId, frame.receivedAt);
     for (const l of this.frameListeners) {
       try {
@@ -150,19 +180,78 @@ export class SimulatorBridgeAdapter implements ConnectivityAdapter {
     };
   }
 
+  // ── watchdog: reciclaje EMULADO de verdad ───────────────────────────────────────
+
   private onWatchdogTimeout(): void {
     if (this.bridge.is('Connected')) {
       this.bridge.transition('Stale', `watchdog: sin notificaciones en ${this.config.watchdogTimeoutMs}ms`);
     }
     this.recycleCount++;
-    if (this.recycleCount > this.config.subscriptionRecycleMaxAttempts) {
-      this.bridge.transition('Faulted', `reciclaje falló ${this.recycleCount - 1} veces`);
-      return; // permanece Faulted hasta stop()/start()
+
+    if (this.recycleCount <= this.config.subscriptionRecycleMaxAttempts) {
+      if (this.recycleOutcome === 'success') {
+        this.recycleSubscriptionEmulated();
+        return;
+      }
+      this.logger.warn(`[sim] reciclaje de subscription falló (emulado, intento ${this.recycleCount})`);
+      this.watchdog.kick(); // re-arma para reintentar al próximo timeout
+      return;
     }
-    this.reconnectCount++;
-    this.logger.warn(`[sim] reciclando subscription (intento ${this.recycleCount})`);
-    this.watchdog.kick(); // re-arma para volver a chequear
+
+    // Escalar: reciclar la sesión completa (emulada).
+    if (this.recycleOutcome === 'success') {
+      this.recycleSessionEmulated('watchdog');
+    } else {
+      this.heartbeat.stop();
+      this.stopEmitTimer();
+      this.bridge.transition(
+        'Faulted',
+        `reciclaje de sesión falló (emulado) tras ${this.recycleCount - 1} intentos de subscription`,
+      );
+    }
   }
+
+  /** Recrea la emisión interna: el equivalente simulado de recrear la Subscription. */
+  private recycleSubscriptionEmulated(): void {
+    this.frozen = false;
+    this.startEmitTimer();
+    this.recycleCount = 0;
+    this.watchdog.start();
+    this.bridge.transition('Connected', 'subscription reciclada (emulada)');
+  }
+
+  /** Recrea la sesión completa (emulada). */
+  private recycleSessionEmulated(trigger: string): void {
+    this.reconnectCount++;
+    this.frozen = false;
+    this.startEmitTimer();
+    this.recycleCount = 0;
+    this.watchdog.start();
+    this.heartbeat.reset();
+    this.bridge.transition('Connected', `sesión reciclada (emulada, ${trigger})`);
+  }
+
+  // ── heartbeat emulado ───────────────────────────────────────────────────────────
+
+  private async heartbeatProbe(): Promise<void> {
+    if (this.heartbeatOutcome === 'fail') throw new Error('heartbeat emulado en fallo');
+  }
+
+  private onHeartbeatThreshold(reason: string): void {
+    // No resucitar un bridge terminal ni pisar un arranque en curso (la state machine
+    // ejecuta transiciones no estándar, solo advierte: hay que guardarlas aquí).
+    if (this.bridge.is('Faulted', 'Disconnected', 'Connecting')) return;
+    this.bridge.transition('Recovering', reason);
+    if (this.recycleOutcome === 'success') {
+      this.recycleSessionEmulated('heartbeat');
+    } else {
+      this.heartbeat.stop();
+      this.stopEmitTimer();
+      this.bridge.transition('Faulted', 'reciclaje de sesión falló (emulado) tras heartbeat');
+    }
+  }
+
+  // ── diagnósticos / info ─────────────────────────────────────────────────────────
 
   getDiagnostics(): AdapterDiagnostics {
     const perPlant = this.mapping.plants.map((p) => {
@@ -175,6 +264,7 @@ export class SimulatorBridgeAdapter implements ConnectivityAdapter {
         buffersFaulted: faulted,
       };
     });
+    const hb = this.heartbeat.getStats();
     return {
       provider: this.provider,
       bridgeStatus: this.bridge.get(),
@@ -185,6 +275,10 @@ export class SimulatorBridgeAdapter implements ConnectivityAdapter {
       reconnectCount: this.reconnectCount,
       subscriptionRecycleCount: this.recycleCount,
       notificationsTotal: this.notificationsTotal,
+      lastHeartbeatAt: hb.lastHeartbeatAt,
+      lastSuccessfulHeartbeatAt: hb.lastSuccessfulHeartbeatAt,
+      heartbeatFailures: hb.heartbeatFailures,
+      heartbeatFailuresTotal: hb.heartbeatFailuresTotal,
       buffersActive: this.targets.length - this.faultedBuffers.size,
       buffersFaulted: this.faultedBuffers.size,
       perPlant,
