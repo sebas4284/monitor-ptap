@@ -23,6 +23,7 @@ interface PendingPlant {
 export class FrameCoalescer {
   private readonly pending = new Map<string, PendingPlant>();
   private stopped = false;
+  private droppedCount = 0;
 
   constructor(
     private readonly windowMs: number,
@@ -38,7 +39,15 @@ export class FrameCoalescer {
       entry = { buffers: new Map(), timer };
       this.pending.set(plantId, entry);
     }
+    // Un sample que pisa a otro pendiente dentro de la misma ventana es un raw sample
+    // superseded (last-wins, coherente con queueSize:1) — se cuenta como "dropped".
+    if (entry.buffers.has(sample.browseName)) this.droppedCount++;
     entry.buffers.set(sample.browseName, sample);
+  }
+
+  /** Total de raw samples superseded por otro dentro de la misma ventana de coalescing. */
+  getDroppedCount(): number {
+    return this.droppedCount;
   }
 
   /** Emite ya todo lo pendiente (sin esperar las ventanas). */

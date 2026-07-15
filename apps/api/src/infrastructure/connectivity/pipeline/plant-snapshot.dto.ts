@@ -10,7 +10,7 @@ import type { BridgeStatus, OpcQuality } from '../ports/connectivity-adapter.por
 export type LivenessState = 'live' | 'idle' | 'stale' | 'unknown';
 
 /** Razón por la que una señal no es usable (QualityService). */
-export type UnusableReason = 'BAD_QUALITY' | 'INVALID_NUMBER' | 'OUT_OF_RANGE' | 'BRIDGE_STALE';
+export type UnusableReason = 'BAD_QUALITY' | 'INVALID_NUMBER' | 'BRIDGE_STALE';
 
 export interface SignalDto {
   value: number | boolean | null;
@@ -18,6 +18,9 @@ export interface SignalDto {
   quality: OpcQuality;
   usable: boolean;
   reason?: UnusableReason;
+  /** true si el valor cae fuera de [min, max] del mapping. Informativo/alerta — el valor
+   * SIGUE mostrándose (nunca se oculta por esto solo). */
+  outOfRange?: boolean;
   mappingStatus: 'mapped' | 'unmapped';
   confidence: 'confirmed' | 'inferred' | 'estimated';
   label: string | null;

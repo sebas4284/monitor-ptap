@@ -20,7 +20,7 @@ export const API_BASE_URL: string =
 export type LivenessState = 'live' | 'idle' | 'stale' | 'unknown';
 export type Confidence = 'confirmed' | 'inferred' | 'estimated';
 export type OpcQuality = 'Good' | 'Bad' | 'Uncertain';
-export type UnusableReason = 'BAD_QUALITY' | 'INVALID_NUMBER' | 'OUT_OF_RANGE' | 'BRIDGE_STALE';
+export type UnusableReason = 'BAD_QUALITY' | 'INVALID_NUMBER' | 'BRIDGE_STALE';
 
 export interface SignalDto {
   value: number | boolean | null;
@@ -28,6 +28,9 @@ export interface SignalDto {
   quality: OpcQuality;
   usable: boolean;
   reason?: UnusableReason;
+  /** true si el valor cae fuera de [min, max] del mapping. Es un aviso (futura alerta):
+   * el valor SIGUE mostrándose, nunca se oculta solo por esto. */
+  outOfRange?: boolean;
   mappingStatus: 'mapped' | 'unmapped';
   confidence: Confidence;
   label: string | null;

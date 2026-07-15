@@ -18,7 +18,7 @@ export interface TankView {
   /** Rango operativo del nivel entregado por el operador — se muestra en la tarjeta. */
   levelOpMin: number | null;
   levelOpMax: number | null;
-  ts: string | null;
+ ts: string | null;
   /** true = tanque de OTRA planta retransmitido en el buffer de esta (pendiente de rectificar). */
   external: boolean;
 }
@@ -101,7 +101,7 @@ export function tanksFromSnapshot(snapshot: PlantSnapshotDto | undefined): TankV
         percentage: levelM !== null && fullLevelM !== null ? (levelM / fullLevelM) * 100 : null,
         levelOpMin: level.opMin ?? null,
         levelOpMax: level.opMax ?? null,
-        ts: level.ts,
+      ts: level.ts,
         external: false,
       },
     });

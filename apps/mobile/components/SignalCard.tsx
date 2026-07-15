@@ -6,12 +6,12 @@ import type { SignalDto, UnusableReason } from '../services/api';
 const REASON_TEXT: Record<UnusableReason, string> = {
   BAD_QUALITY: 'calidad OPC no buena',
   INVALID_NUMBER: 'valor inválido',
-  OUT_OF_RANGE: 'fuera de rango físico',
   BRIDGE_STALE: 'sin datos frescos',
 };
 
 /**
  * Tarjeta de una señal de dominio. Distingue lo confirmado de lo inferido (regla 10):
+
  * un caudal inferido NO se ve igual que uno confirmado.
  *
  * Política de datos (usuario, 2026-07-15): si hay valor numérico SE MUESTRA tal cual,
@@ -101,6 +101,7 @@ const styles = StyleSheet.create({
   },
   inferredText: { fontSize: 9, fontWeight: '700', color: Colors.warning, letterSpacing: 0.5 },
   value: { fontSize: 28, fontWeight: '800', color: Colors.primary, marginBottom: 6 },
+  valueWarning: { color: Colors.warning },
   unit: { fontSize: 14, fontWeight: '400', color: Colors.textSecondary },
   rangeRow: { flexDirection: 'row', gap: 16, marginBottom: 4 },
   rangeText: { fontSize: 12, fontWeight: '600', color: Colors.textSecondary },

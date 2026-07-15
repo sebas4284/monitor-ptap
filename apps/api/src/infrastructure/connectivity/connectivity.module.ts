@@ -16,13 +16,19 @@ import { SimulatorBridgeAdapter } from './adapters/simulator/simulator-bridge.ad
 import { OpcUaConnectivityAdapter } from './adapters/opcua/opcua-connectivity.adapter';
 import { RawFrameCache } from './raw-frame-cache';
 import { BridgeOrchestratorService } from './bridge-orchestrator.service';
-import { OpcController } from './opc.controller';
 import { PlantCache } from './pipeline/plant-cache';
 import { PlantPipelineService } from './pipeline/plant-pipeline.service';
 import type { ConnectivityAdapter } from './ports/connectivity-adapter.port';
 
+/**
+ * Puente crudo + pipeline de dominio (Fases 1-3). DELIBERADAMENTE sin dependencia de
+ * MySQL/Auth: lo importa tanto main.ts (app completa) como main.telemetry.ts (arranque
+ * de demo sin BD). Observabilidad Fase 4 (OpcController, guards, audit, métricas,
+ * logging) vive en OpcObservabilityModule — que SÍ requiere BD (auth) — para que
+ * importar este módulo nunca obligue a tener MySQL arriba.
+ */
 @Module({
-  controllers: [OpcController],
+  controllers: [],
   providers: [
     // ── Dominio legado (Fase 1: intacto para /api/plants y /api/snapshots en simulador) ──
     OpcConfigService,

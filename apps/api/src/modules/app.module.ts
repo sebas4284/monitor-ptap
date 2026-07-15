@@ -1,5 +1,8 @@
 import { Module } from '@nestjs/common';
 import { DatabaseModule } from '../infrastructure/database/database.module';
+import { LoggingModule } from '../infrastructure/logging/logging.module';
+import { MetricsModule } from '../infrastructure/metrics/metrics.module';
+import { OpcObservabilityModule } from '../infrastructure/connectivity/opc-observability.module';
 import { AlarmsModule } from './alarms/alarms.module';
 import { AuthModule } from './auth/auth.module';
 import { CommandsModule } from './commands/commands.module';
@@ -13,6 +16,9 @@ import { UsersModule } from './users/users.module';
 @Module({
   imports: [
     DatabaseModule,
+    LoggingModule,
+    MetricsModule,
+    OpcObservabilityModule,
     HealthModule,
     AuthModule,
     UsersModule,
