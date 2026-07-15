@@ -36,7 +36,14 @@ export function TankCard({ tank }: Props) {
 
   return (
     <View style={styles.card}>
-      <Text style={styles.name}>{tank.name}</Text>
+      <View style={styles.nameRow}>
+        <Text style={styles.name}>{tank.name}</Text>
+        {tank.outOfRange && (
+          <View style={styles.rangeTag}>
+            <Text style={styles.rangeTagText}>fuera de rango</Text>
+          </View>
+        )}
+      </View>
 
       <View style={styles.tankWrap}>
         <View style={styles.tankOuter}>
@@ -60,7 +67,12 @@ export function TankCard({ tank }: Props) {
                 {Math.round(pct)}%
               </Text>
             ) : (
-              <Text style={[styles.levelText, { color: hasLevel ? Colors.primary : Colors.textSecondary }]}>
+              <Text
+                style={[
+                  styles.levelText,
+                  { color: !hasLevel ? Colors.textSecondary : tank.outOfRange ? Colors.warning : Colors.primary },
+                ]}
+              >
                 {hasLevel ? `${tank.levelM!.toFixed(1)} m` : '—'}
               </Text>
             )}
@@ -102,13 +114,27 @@ const styles = StyleSheet.create({
     elevation: 2,
     alignItems: 'center',
   },
+  nameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 10,
+    alignSelf: 'flex-start',
+  },
   name: {
     fontSize: 13,
     fontWeight: '700',
     color: Colors.textPrimary,
-    marginBottom: 10,
-    alignSelf: 'flex-start',
   },
+  rangeTag: {
+    backgroundColor: '#FFF7ED',
+    borderColor: Colors.warning,
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  rangeTagText: { fontSize: 9, fontWeight: '700', color: Colors.warning, letterSpacing: 0.5 },
   tankWrap: {
     width: 64,
     height: 88,

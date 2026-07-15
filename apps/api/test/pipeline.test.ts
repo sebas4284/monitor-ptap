@@ -21,18 +21,24 @@ function frame(plantId: string, buffers: RawBufferSample[]): RawPlantFrame {
 
 // ── QualityService (PASO 3.5) ────────────────────────────────────────────────
 
-test('quality: Good + en rango + live → usable', () => {
-  assert.deepEqual(evaluateQuality({ value: 14.2, quality: 'Good', min: 0, max: 1000, livenessState: 'live' }), { usable: true });
+test('quality: Good + en rango + live → usable, sin aviso de rango', () => {
+  assert.deepEqual(evaluateQuality({ value: 14.2, quality: 'Good', min: 0, max: 1000, livenessState: 'live' }), {
+    usable: true,
+    outOfRange: false,
+  });
 });
 
-test('quality: caudal negativo llega Good pero NO es usable (OUT_OF_RANGE)', () => {
+test('quality: caudal negativo llega Good y SIGUE siendo usable — solo se marca outOfRange (regla de producto: los límites son para alertar, no para ocultar)', () => {
   const v = evaluateQuality({ value: -5, quality: 'Good', min: 0, max: 1000, livenessState: 'live' });
-  assert.equal(v.usable, false);
-  assert.equal(v.reason, 'OUT_OF_RANGE');
+  assert.equal(v.usable, true);
+  assert.equal(v.outOfRange, true);
+  assert.equal(v.reason, undefined);
 });
 
-test('quality: fuera del máximo → OUT_OF_RANGE', () => {
-  assert.equal(evaluateQuality({ value: 262144, quality: 'Good', min: 0, max: 1000, livenessState: 'live' }).reason, 'OUT_OF_RANGE');
+test('quality: fuera del máximo → sigue usable, outOfRange=true', () => {
+  const v = evaluateQuality({ value: 262144, quality: 'Good', min: 0, max: 1000, livenessState: 'live' });
+  assert.equal(v.usable, true);
+  assert.equal(v.outOfRange, true);
 });
 
 test('quality: NaN/Infinity → INVALID_NUMBER', () => {

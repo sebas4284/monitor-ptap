@@ -15,6 +15,9 @@ export interface TankView {
   levelM: number | null; // null = sin dato usable
   volumeM3: number | null;
   percentage: number | null; // null hasta tener capacidad confirmada
+  /** true si el nivel o el volumen cayeron fuera de [min, max] del mapping — aviso de
+   * futura alerta; el valor real igual se muestra (levelM/volumeM3 no se anulan por esto). */
+  outOfRange: boolean;
   ts: string | null;
 }
 
@@ -42,6 +45,7 @@ export function tanksFromSnapshot(snapshot: PlantSnapshotDto | undefined): TankV
     const match = LEVEL_KEY.exec(domainKey);
     if (!match) continue;
     const n = Number(match[1]);
+    const volume = snapshot.signals[`tank${n}Volume`];
     const levelM = usableNumber(level);
     const fullLevelM = FULL_LEVEL_M[snapshot.plantId]?.[n] ?? null;
     found.push({
@@ -50,8 +54,9 @@ export function tanksFromSnapshot(snapshot: PlantSnapshotDto | undefined): TankV
         id: `tank-${n}`,
         name: `Tanque ${n}`,
         levelM,
-        volumeM3: usableNumber(snapshot.signals[`tank${n}Volume`]),
+        volumeM3: usableNumber(volume),
         percentage: levelM !== null && fullLevelM !== null ? (levelM / fullLevelM) * 100 : null,
+        outOfRange: Boolean(level.outOfRange || volume?.outOfRange),
         ts: level.ts,
       },
     });

@@ -50,6 +50,7 @@ export function buildSnapshot(input: SnapshotInput): PlantSnapshotDto {
       ts: ex.sourceTimestamp,
     };
     if (verdict.reason) dto.reason = verdict.reason;
+    if (verdict.outOfRange) dto.outOfRange = true;
     signals[ex.domainKey] = dto;
   }
 

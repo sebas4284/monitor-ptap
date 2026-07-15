@@ -6,14 +6,15 @@ import type { SignalDto, UnusableReason } from '../services/api';
 const REASON_TEXT: Record<UnusableReason, string> = {
   BAD_QUALITY: 'calidad OPC no buena',
   INVALID_NUMBER: 'valor inválido',
-  OUT_OF_RANGE: 'fuera de rango físico',
   BRIDGE_STALE: 'sin datos frescos',
 };
 
 /**
  * Tarjeta de una señal de dominio. Distingue lo confirmado de lo inferido (regla 10):
- * un caudal inferido NO se ve igual que uno confirmado. Y una señal usable:false NUNCA
- * se muestra como número: "sin dato" + la razón. Nunca un número del que no nos fiamos.
+ * un caudal inferido NO se ve igual que uno confirmado. Una señal usable:false NUNCA
+ * se muestra como número: "sin dato" + la razón (calidad mala, valor inválido o sin
+ * datos frescos). Un valor fuera de [min, max] (outOfRange) SÍ se muestra siempre — los
+ * límites son un aviso de futura alerta, no un motivo para ocultar la lectura real.
  */
 export function SignalCard({ signal, name, icon }: { signal: SignalDto; name: string; icon: string }) {
   const isInferred = signal.confidence !== 'confirmed';
@@ -34,10 +35,18 @@ export function SignalCard({ signal, name, icon }: { signal: SignalDto; name: st
       </View>
 
       {signal.usable && numeric ? (
-        <Text style={styles.value}>
-          {(signal.value as number).toFixed(2)}
-          <Text style={styles.unit}> {signal.unit ?? ''}</Text>
-        </Text>
+        <>
+          <Text style={[styles.value, signal.outOfRange && styles.valueWarning]}>
+            {(signal.value as number).toFixed(2)}
+            <Text style={styles.unit}> {signal.unit ?? ''}</Text>
+          </Text>
+          {signal.outOfRange && (
+            <View style={styles.rangeWarning}>
+              <Ionicons name="warning-outline" size={11} color={Colors.warning} />
+              <Text style={styles.rangeWarningText}>fuera del rango esperado</Text>
+            </View>
+          )}
+        </>
       ) : (
         <View style={styles.noData}>
           <Text style={styles.noDataValue}>sin dato</Text>
@@ -89,7 +98,10 @@ const styles = StyleSheet.create({
   },
   inferredText: { fontSize: 9, fontWeight: '700', color: Colors.warning, letterSpacing: 0.5 },
   value: { fontSize: 28, fontWeight: '800', color: Colors.primary, marginBottom: 6 },
+  valueWarning: { color: Colors.warning },
   unit: { fontSize: 14, fontWeight: '400', color: Colors.textSecondary },
+  rangeWarning: { flexDirection: 'row', alignItems: 'center', gap: 3, marginBottom: 6, marginTop: -4 },
+  rangeWarningText: { fontSize: 10, fontWeight: '600', color: Colors.warning },
   noData: { marginBottom: 6 },
   noDataValue: { fontSize: 22, fontWeight: '700', color: Colors.neutral },
   noDataReason: { fontSize: 11, color: Colors.textSecondary, marginTop: 2 },

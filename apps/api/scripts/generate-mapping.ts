@@ -86,8 +86,9 @@ interface SignalDef {
  *   idx11 turbiedad (NTU), idx13 pH, idx14 temperatura (°C), idx20 presión (psi).
  *   Los rangos entregados por el operador (pH 5.5–9, turbiedad salida ≤1 NTU, etc.) son
  *   OPERATIVOS/normativos → van en opMin/opMax; min/max quedan como límites físicos
- *   amplios para que una lectura anómala real (pH 5.8, tanque en 0.5 m) NO se descarte
- *   como OUT_OF_RANGE justo cuando más importa verla.
+ *   amplios. Salirse de [min, max] NUNCA oculta el valor (QualityService solo marca
+ *   `outOfRange` como aviso de futura alerta) — así una lectura anómala real
+ *   (pH 5.8, tanque en 0.5 m) sigue viéndose justo cuando más importa verla.
  *
  *   OJO: los índices NO son transferibles entre plantas (realIn[5] aquí es nivel de
  *   tanque; en MONTEBELLO es caudal). Toda señal se direcciona por (plantId, domainKey).
