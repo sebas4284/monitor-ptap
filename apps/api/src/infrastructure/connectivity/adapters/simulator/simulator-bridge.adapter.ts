@@ -275,6 +275,7 @@ export class SimulatorBridgeAdapter implements ConnectivityAdapter {
       reconnectCount: this.reconnectCount,
       subscriptionRecycleCount: this.recycleCount,
       notificationsTotal: this.notificationsTotal,
+      droppedNotificationsTotal: this.coalescer.getDroppedCount(),
       lastHeartbeatAt: hb.lastHeartbeatAt,
       lastSuccessfulHeartbeatAt: hb.lastSuccessfulHeartbeatAt,
       heartbeatFailures: hb.heartbeatFailures,

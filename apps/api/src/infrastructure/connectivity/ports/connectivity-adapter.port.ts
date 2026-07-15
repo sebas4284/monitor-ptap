@@ -67,6 +67,8 @@ export interface AdapterDiagnostics {
   reconnectCount: number;
   subscriptionRecycleCount: number;
   notificationsTotal: number;
+  /** Raw samples superseded por otro dentro de la misma ventana de coalescing (FrameCoalescer). */
+  droppedNotificationsTotal: number;
   /** Último probe de heartbeat (exitoso o no). null si nunca corrió. */
   lastHeartbeatAt: string | null;
   lastSuccessfulHeartbeatAt: string | null;

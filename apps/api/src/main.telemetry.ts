@@ -1,9 +1,50 @@
 import 'reflect-metadata';
 import './config/load-env';
-import { Module } from '@nestjs/common';
+import { Controller, Get, Inject, Module, NotFoundException, Param } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { ConnectivityModule } from './infrastructure/connectivity/connectivity.module';
-import { PlantsController } from './modules/plants/plants.controller';
+import { PlantCache } from './infrastructure/connectivity/pipeline/plant-cache';
+import { PlantPipelineService } from './infrastructure/connectivity/pipeline/plant-pipeline.service';
+import { LoggingModule } from './infrastructure/logging/logging.module';
+import { JsonLogger } from './infrastructure/logging/json-logger.service';
+
+/**
+ * Controlador SIN guards a propósito: main.telemetry.ts es el arranque de demo sin BD
+ * (ver comentario del módulo abajo) y no debe requerir AuthModule/MySQL. Duplica los dos
+ * métodos de PlantsController (que en el arranque completo SÍ lleva @MinTier('viewer'))
+ * en vez de reutilizar esa clase directamente, para no arrastrar su dependencia de
+ * AuthModule aquí.
+ */
+@Controller('plants')
+class TelemetryPlantsController {
+  constructor(
+    @Inject(PlantPipelineService) private readonly pipeline: PlantPipelineService,
+    @Inject(PlantCache) private readonly cache: PlantCache,
+  ) {}
+
+  @Get()
+  list() {
+    return { plants: this.pipeline.listPlants() };
+  }
+
+  @Get(':plantId/snapshot')
+  snapshot(@Param('plantId') plantId: string) {
+    const snapshot = this.cache.get(plantId);
+    if (snapshot) return snapshot;
+
+    const known = this.pipeline.listPlants().find((p) => p.plantId === plantId);
+    if (!known) throw new NotFoundException(`planta desconocida: ${plantId}`);
+    return {
+      plantId: known.plantId,
+      displayName: known.displayName,
+      sequence: 0,
+      bridgeStatus: known.bridgeStatus,
+      liveness: known.liveness,
+      signals: {},
+      pending: true,
+    };
+  }
+}
 
 /**
  * Entrypoint de TELEMETRÍA: levanta solo el puente OPC UA + pipeline de dominio + REST
@@ -13,11 +54,12 @@ import { PlantsController } from './modules/plants/plants.controller';
  *
  * Ejecutar: npm run start:telemetry  (CONNECTIVITY_PROVIDER=opcua para PLC real)
  */
-@Module({ imports: [ConnectivityModule], controllers: [PlantsController] })
+@Module({ imports: [ConnectivityModule, LoggingModule], controllers: [TelemetryPlantsController] })
 class TelemetryModule {}
 
 async function bootstrap() {
   const app = await NestFactory.create(TelemetryModule);
+  app.useLogger(app.get(JsonLogger));
   app.enableCors({ origin: '*' }); // el front (Expo web) vive en otro origen
   app.setGlobalPrefix('api');
   app.enableShutdownHooks();

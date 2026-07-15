@@ -13,7 +13,10 @@ export interface OpcIdentityUserName {
   userName: string;
   password: string;
 }
-export type OpcIdentity = OpcIdentityAnonymous | OpcIdentityUserName;
+export interface OpcIdentityCertificate {
+  type: 'certificate';
+}
+export type OpcIdentity = OpcIdentityAnonymous | OpcIdentityUserName | OpcIdentityCertificate;
 
 export interface OpcUaConfig {
   endpoint: string;
@@ -21,6 +24,8 @@ export interface OpcUaConfig {
   securityMode: string; // None | Sign | SignAndEncrypt
   securityPolicy: string; // None | Basic256Sha256 | Aes128_Sha256_RsaOaep | Aes256_Sha256_RsaPss
   identity: OpcIdentity;
+  /** Fase 4: true SOLO para desarrollo/bootstrap; en producción debe ser false (confiar certs a mano). */
+  autoAcceptUnknownCertificate: boolean;
   publishingIntervalMs: number;
   samplingIntervalMs: number;
   /** Vida de la Subscription en múltiplos de publishingInterval (OPC UA Part 4 exige >= 3× keepAlive). */
@@ -84,6 +89,9 @@ function resolveIdentity(): OpcIdentity {
     if (!userName) throw new Error('OPC_IDENTITY=username requiere OPC_USERNAME');
     return { type: 'username', userName, password };
   }
+  if (kind === 'certificate') {
+    return { type: 'certificate' };
+  }
   return { type: 'anonymous' };
 }
 
@@ -132,6 +140,7 @@ export function loadConnectivityConfig(): ConnectivityConfig {
       subscriptionRecycleMaxAttempts: num('OPCUA_SUBSCRIPTION_RECYCLE_MAX_ATTEMPTS', 3),
       staleThresholdMs: num('OPCUA_STALE_THRESHOLD_MS', 300000), // 5 min (FASE 0.3: frescura de datos)
       writesEnabled: bool('OPCUA_WRITES_ENABLED', false),
+      autoAcceptUnknownCertificate: bool('OPC_AUTO_ACCEPT_UNKNOWN_CERTIFICATE', false),
     },
     liveness: {
       liveSec: num('LIVENESS_LIVE_SEC', 10),

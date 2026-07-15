@@ -1,6 +1,12 @@
-import { Controller, Get, Inject, NotFoundException, Param } from '@nestjs/common';
+import { Controller, Get, Inject, NotFoundException, Param, UseGuards, UseInterceptors } from '@nestjs/common';
+import { MinTier } from '../auth/decorators/min-tier.decorator';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { MinTierGuard } from '../auth/guards/min-tier.guard';
+import { AuditInterceptor } from '../../infrastructure/audit/audit.interceptor';
 import { PlantCache } from '../../infrastructure/connectivity/pipeline/plant-cache';
 import { PlantPipelineService } from '../../infrastructure/connectivity/pipeline/plant-pipeline.service';
+import { ZodValidationPipe } from '../../infrastructure/validation/zod-validation.pipe';
+import { plantIdParamSchema } from '../../infrastructure/validation/plant-id.schema';
 
 /**
  * REST del pipeline de dominio (PASO 3.7). Responde SIEMPRE desde la cache RAM; NUNCA
@@ -8,6 +14,9 @@ import { PlantPipelineService } from '../../infrastructure/connectivity/pipeline
  * ConnectivityService por poll) por la lista con liveness real del puente crudo.
  */
 @Controller('plants')
+@UseGuards(JwtAuthGuard, MinTierGuard)
+@UseInterceptors(AuditInterceptor)
+@MinTier('viewer')
 export class PlantsController {
   // @Inject explícito: tsx (esbuild) no emite design:paramtypes; la inyección por tipo falla en dev.
   constructor(
@@ -23,7 +32,7 @@ export class PlantsController {
 
   /** Snapshot de dominio de una planta, desde cache RAM. */
   @Get(':plantId/snapshot')
-  snapshot(@Param('plantId') plantId: string) {
+  snapshot(@Param('plantId', new ZodValidationPipe(plantIdParamSchema)) plantId: string) {
     const snapshot = this.cache.get(plantId);
     if (snapshot) return snapshot;
 

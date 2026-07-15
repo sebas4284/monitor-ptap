@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Logger } from '@nestjs/common';
 import {
@@ -16,6 +16,7 @@ import {
   UserTokenType,
 } from 'node-opcua';
 import type { UserIdentityInfo } from 'node-opcua';
+import { coerceCertificate } from 'node-opcua-crypto';
 import { BridgeStateMachine } from '../../bridge/bridge-state-machine';
 import { FrameCoalescer } from '../../bridge/frame-coalescer';
 import { HeartbeatMonitor } from '../../bridge/heartbeat-monitor';
@@ -166,12 +167,14 @@ export class OpcUaConnectivityAdapter implements ConnectivityAdapter {
 
   // ── conexión ───────────────────────────────────────────────────────────────
 
+  /** cwd del backend es apps/api (npm -w @ptap/api). PKI del cliente OPC UA (gitignored). */
+  private readonly pkiRoot = join(process.cwd(), 'pki');
+
   private createClient(): OPCUAClient {
     // El árbol PKI del cliente debe existir antes de instanciar el CertificateManager:
     // node-opcua no garantiza crearlo en un clon limpio y fallaría con un error críptico.
     // mkdir recursive es idempotente (no falla si ya existe).
-    const pkiRoot = join(process.cwd(), 'pki');
-    mkdirSync(pkiRoot, { recursive: true });
+    mkdirSync(this.pkiRoot, { recursive: true });
     return OPCUAClient.create({
       applicationName: 'monitor-ptap-gateway',
       endpointMustExist: this.config.endpointMustExist,
@@ -184,19 +187,42 @@ export class OpcUaConnectivityAdapter implements ConnectivityAdapter {
       },
       keepSessionAlive: true,
       clientCertificateManager: new OPCUACertificateManager({
-        // cwd del backend es apps/api (npm -w @ptap/api). PKI del cliente OPC UA (gitignored).
-        rootFolder: pkiRoot,
-        automaticallyAcceptUnknownCertificate: true,
+        rootFolder: this.pkiRoot,
+        // Fase 4 (regla 8): antes quemado en `true`; ahora sale de .env. En producción
+        // contra el servidor de la planta debe ser false (confiar certs a mano, ver
+        // docs/OPTIX_CLIENT_CERT_TRUST.md).
+        automaticallyAcceptUnknownCertificate: this.config.autoAcceptUnknownCertificate,
       }),
     });
   }
 
+  /**
+   * Identidad de sesión. Para `certificate`, lee el certificado/llave que
+   * OPCUACertificateManager ya autogeneró en disco al construir el cliente (llamado
+   * SIEMPRE antes que buildIdentity() en start(): client.connect() → createSession(buildIdentity())),
+   * así que los archivos ya existen para cuando esto corre — sin condición de carrera.
+   */
   private buildIdentity(): UserIdentityInfo {
     if (this.config.identity.type === 'username') {
       return {
         type: UserTokenType.UserName,
         userName: this.config.identity.userName,
         password: this.config.identity.password,
+      };
+    }
+    if (this.config.identity.type === 'certificate') {
+      const certificateFile = join(this.pkiRoot, 'own', 'certs', 'client_certificate.pem');
+      const privateKeyFile = join(this.pkiRoot, 'own', 'private', 'private_key.pem');
+      if (!existsSync(certificateFile) || !existsSync(privateKeyFile)) {
+        throw new Error(
+          `OPC_IDENTITY=certificate pero no se encontró el certificado de cliente en ${certificateFile} ` +
+            `(¿createClient() no corrió antes de buildIdentity()?)`,
+        );
+      }
+      return {
+        type: UserTokenType.Certificate,
+        certificateData: coerceCertificate(readFileSync(certificateFile, 'utf8')),
+        privateKey: readFileSync(privateKeyFile, 'utf8'),
       };
     }
     return { type: UserTokenType.Anonymous };
@@ -470,6 +496,7 @@ export class OpcUaConnectivityAdapter implements ConnectivityAdapter {
       reconnectCount: this.reconnectCount,
       subscriptionRecycleCount: this.recycleCount,
       notificationsTotal: this.notificationsTotal,
+      droppedNotificationsTotal: this.coalescer.getDroppedCount(),
       lastHeartbeatAt: hb.lastHeartbeatAt,
       lastSuccessfulHeartbeatAt: hb.lastSuccessfulHeartbeatAt,
       heartbeatFailures: hb.heartbeatFailures,
