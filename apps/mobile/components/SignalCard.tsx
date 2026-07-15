@@ -12,12 +12,17 @@ const REASON_TEXT: Record<UnusableReason, string> = {
 
 /**
  * Tarjeta de una señal de dominio. Distingue lo confirmado de lo inferido (regla 10):
- * un caudal inferido NO se ve igual que uno confirmado. Y una señal usable:false NUNCA
- * se muestra como número: "sin dato" + la razón. Nunca un número del que no nos fiamos.
+ * un caudal inferido NO se ve igual que uno confirmado.
+ *
+ * Política de datos (usuario, 2026-07-15): si hay valor numérico SE MUESTRA tal cual,
+ * sin importar usable/reason — el backend entrega datos y metadatos; la interpretación
+ * (congelado, fuera de escala, etc.) es del frontend en diálogo con el cliente, no de
+ * esta capa. "sin dato" solo cuando literalmente no hay número (value null).
  */
 export function SignalCard({ signal, name, icon }: { signal: SignalDto; name: string; icon: string }) {
   const isInferred = signal.confidence !== 'confirmed';
   const numeric = typeof signal.value === 'number';
+  const hasRange = typeof signal.opMin === 'number' || typeof signal.opMax === 'number';
 
   return (
     <View style={styles.card}>
@@ -33,7 +38,7 @@ export function SignalCard({ signal, name, icon }: { signal: SignalDto; name: st
         )}
       </View>
 
-      {signal.usable && numeric ? (
+      {numeric ? (
         <Text style={styles.value}>
           {(signal.value as number).toFixed(2)}
           <Text style={styles.unit}> {signal.unit ?? ''}</Text>
@@ -42,6 +47,13 @@ export function SignalCard({ signal, name, icon }: { signal: SignalDto; name: st
         <View style={styles.noData}>
           <Text style={styles.noDataValue}>sin dato</Text>
           {signal.reason && <Text style={styles.noDataReason}>{REASON_TEXT[signal.reason]}</Text>}
+        </View>
+      )}
+
+      {hasRange && (
+        <View style={styles.rangeRow}>
+          {typeof signal.opMin === 'number' && <Text style={styles.rangeText}>Mín: {signal.opMin.toFixed(2)}</Text>}
+          {typeof signal.opMax === 'number' && <Text style={styles.rangeText}>Máx: {signal.opMax.toFixed(2)}</Text>}
         </View>
       )}
 
@@ -90,6 +102,8 @@ const styles = StyleSheet.create({
   inferredText: { fontSize: 9, fontWeight: '700', color: Colors.warning, letterSpacing: 0.5 },
   value: { fontSize: 28, fontWeight: '800', color: Colors.primary, marginBottom: 6 },
   unit: { fontSize: 14, fontWeight: '400', color: Colors.textSecondary },
+  rangeRow: { flexDirection: 'row', gap: 16, marginBottom: 4 },
+  rangeText: { fontSize: 12, fontWeight: '600', color: Colors.textSecondary },
   noData: { marginBottom: 6 },
   noDataValue: { fontSize: 22, fontWeight: '700', color: Colors.neutral },
   noDataReason: { fontSize: 11, color: Colors.textSecondary, marginTop: 2 },

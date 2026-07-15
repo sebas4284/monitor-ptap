@@ -22,6 +22,9 @@ export interface SignalDto {
   confidence: 'confirmed' | 'inferred' | 'estimated';
   label: string | null;
   ts: string | null; // SourceTimestamp del PLC (regla 7)
+  /** Rango operativo/normativo entregado por el operador. El front lo MUESTRA junto al valor (Mín/Máx) para que el cliente interprete la lectura, como en la app original. */
+  opMin?: number;
+  opMax?: number;
 }
 
 export interface LivenessDto {

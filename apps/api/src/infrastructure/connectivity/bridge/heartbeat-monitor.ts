@@ -67,10 +67,13 @@ export class HeartbeatMonitor {
   async runOnce(): Promise<void> {
     if (this.inFlight) return;
     this.inFlight = true;
-    this.lastHeartbeatAt = new Date().toISOString();
+    // Un solo timestamp por ciclo: el éxito registra el MISMO instante del probe
+    // (dos lecturas de reloj hacían el par diferir 1 ms de forma intermitente).
+    const probedAt = new Date().toISOString();
+    this.lastHeartbeatAt = probedAt;
     try {
       await this.opts.probe();
-      this.lastSuccessfulHeartbeatAt = new Date().toISOString();
+      this.lastSuccessfulHeartbeatAt = probedAt;
       this.consecutiveFailures = 0;
     } catch (err) {
       this.consecutiveFailures++;

@@ -121,6 +121,47 @@ test('mapping: extrae realIn[0]→inletFlow1 y realIn[5]→inletFlow2 del buffer
   assert.equal(dl.snapshot().total, 0);
 });
 
+test('mapping: sourceBuffer explícito gana sobre el empate de tamaño del canal', () => {
+  const mapping: LoadedMapping = {
+    version: '0.8.0', protocolVersion: 'v2', dtoVersion: 'v1',
+    plants: [{ plantId: 'soledad', displayName: 'Soledad', livenessWindowSec: null }],
+    targets: [],
+    signals: [
+      { plantId: 'soledad', buffer: 'realIn', sourceBuffer: 'REAL_IN_SOLEDAD', index: 0, domainKey: 'inletFlow1', label: 'Caudal de entrada', unit: 'l/s', min: 0, max: 1000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    ],
+    raw: {},
+  };
+  const engine = new MappingEngine(mapping);
+  const dl = new DeadLetterBuffer();
+  const latest = new Map<string, RawBufferSample>();
+  // dos buffers realIn del MISMO tamaño: sin sourceBuffer la elección sería no determinista
+  latest.set('DATOS_IN_PTAP_SOLEDAD', buf('DATOS_IN_PTAP_SOLEDAD', 'realIn', Array.from({ length: 50 }, () => -1)));
+  latest.set('REAL_IN_SOLEDAD', buf('REAL_IN_SOLEDAD', 'realIn', Array.from({ length: 50 }, (_, i) => i + 100)));
+  const ex = engine.extract('soledad', latest, dl);
+  assert.equal(ex[0].value, 100); // REAL_IN_SOLEDAD[0], no DATOS_IN_PTAP_SOLEDAD[0]
+  assert.equal(dl.snapshot().total, 0);
+});
+
+test('mapping: sourceBuffer ausente en runtime → dead-letter BUFFER_MISSING', () => {
+  const mapping: LoadedMapping = {
+    version: '0.8.0', protocolVersion: 'v2', dtoVersion: 'v1',
+    plants: [{ plantId: 'soledad', displayName: 'Soledad', livenessWindowSec: null }],
+    targets: [],
+    signals: [
+      { plantId: 'soledad', buffer: 'realIn', sourceBuffer: 'REAL_IN_SOLEDAD', index: 0, domainKey: 'inletFlow1', label: null, unit: null, min: null, max: null, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    ],
+    raw: {},
+  };
+  const engine = new MappingEngine(mapping);
+  const dl = new DeadLetterBuffer();
+  const latest = new Map<string, RawBufferSample>();
+  // llegó OTRO buffer del canal, pero no el declarado: NO debe usarse como sustituto
+  latest.set('DATOS_IN_PTAP_SOLEDAD', buf('DATOS_IN_PTAP_SOLEDAD', 'realIn', Array.from({ length: 50 }, () => -1)));
+  const ex = engine.extract('soledad', latest, dl);
+  assert.equal(ex[0].value, null);
+  assert.ok(dl.snapshot().counts.BUFFER_MISSING >= 1);
+});
+
 test('mapping: buffer ausente → dead-letter BUFFER_MISSING', () => {
   const engine = new MappingEngine(montebelloMapping());
   const dl = new DeadLetterBuffer();

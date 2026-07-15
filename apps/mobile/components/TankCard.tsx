@@ -72,9 +72,18 @@ export function TankCard({ tank }: Props) {
         <InfoRow label="Nivel"   value={tank.levelM !== null ? `${tank.levelM.toFixed(2)} m` : 'Sin dato'} />
         <InfoRow label="Volumen" value={tank.volumeM3 !== null ? `${tank.volumeM3.toFixed(1)} m³` : 'Sin dato'} />
         <InfoRow label="Llenado" value={pct !== null ? `${Math.round(pct)}%` : 'Por confirmar'} />
+        {(tank.levelOpMin !== null || tank.levelOpMax !== null) && (
+          <InfoRow label="Rango" value={levelRangeText(tank)} />
+        )}
       </View>
     </View>
   );
+}
+
+function levelRangeText(tank: TankView): string {
+  if (tank.levelOpMin !== null && tank.levelOpMax !== null) return `${tank.levelOpMin} a ${tank.levelOpMax} m`;
+  if (tank.levelOpMax !== null) return `≤ ${tank.levelOpMax} m`;
+  return `≥ ${tank.levelOpMin} m`;
 }
 
 function InfoRow({ label, value }: { label: string; value: string }) {

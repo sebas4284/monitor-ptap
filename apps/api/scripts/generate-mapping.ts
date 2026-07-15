@@ -46,6 +46,8 @@ interface BufferDescriptor { browseName: string; node: NodeReference; arrayLengt
 
 interface SignalDef {
   buffer: string;
+  /** browseName exacto del buffer fuente. Obligatorio si el canal tiene buffers empatados en tamaño. */
+  sourceBuffer?: string;
   index: number;
   domainKey: string;
   label: string;
@@ -65,19 +67,75 @@ interface SignalDef {
  * (NodeId exacto por sitio) verificada contra el PLC. `buffer:'realIn'` refiere al buffer
  * realIn PRIMARIO del sitio (el de arrayLength mayor), no a los de tanque TK1/TK2/TK3.
  *
- * - MONTEBELLO: caudales de entrada, verificados en vivo (idx0 ≈ HMI 14.22; idx1 =
- *   totalizador; idx5 ≈ 23.2). Evidencia: docs/FLOW_VALIDATION.md.
+ * - MONTEBELLO: caudales de entrada verificados en vivo (idx0 ≈ HMI 14.22; idx1 =
+ *   totalizador; idx5 ≈ 23.2; evidencia: docs/FLOW_VALIDATION.md). Ampliado por el
+ *   operador (2026-07-15): idx10 caudal de salida (l/s); idx15/idx16 presión de
+ *   entrada 1/2 e idx17 presión de salida (psi, sin rango operativo). El canal realIn
+ *   tiene 4 buffers (primario + TK1/TK2/TK3 de 10) → sourceBuffer explícito. TANQUES:
+ *   la app original los muestra pero NO van en los 50 índices del primario — viven en
+ *   REAL_IN_TK1/TK2/TK3_MONTEBELLO (cada uno con su MSG_READ); falta el índice de
+ *   nivel/volumen DENTRO de cada TK para mapearlos. El operador sospecha planta hija /
+ *   tanques compartidos (¿con Campoalegre?) — pendiente de rectificar.
  * - CAMPOALEGRE: confirmación del operador desde el HMI (2026-07-14): idx0 = caudal de
  *   salida 1, idx7 = caudal de salida 2 (l/s), idx12 = presión de salida 1 e idx13 =
  *   presión de salida 2 en psi con rango de instrumento 0–16 bar → max 232 psi.
  *   Tanques (misma sesión, mismo buffer): idx5/idx6 = nivel (m) / volumen (m³) del
  *   tanque 1, idx14/idx15 = tanque 2, idx16/idx17 = tanque 3. Identificador verificado
  *   contra el mapping (REAL_IN_CAMPOALEGRE = g=E1680D60-7BCD-C892-7257-C4D4AAE41E1C).
+ * - SOLEDAD: confirmación del operador (2026-07-15), buffer REAL_IN_SOLEDAD
+ *   (g=19181A21-F548-3D76-D6D9-EDAA324C20F7). El sitio tiene DOS buffers realIn de 50
+ *   elementos (REAL_IN_SOLEDAD Float y DATOS_IN_PTAP_SOLEDAD Int16) → TODAS sus señales
+ *   llevan sourceBuffer explícito; la heurística "el de más elementos" empataría.
+ *   Entrada: idx0 caudal, idx2 turbiedad, idx3 oxígeno, idx4 conductividad, idx5 pH,
+ *   idx6 temperatura. Tanque 1: idx7 nivel (op 0.75–2.8 m), idx8 volumen. Salida: idx9
+ *   caudal, idx11 turbiedad, idx12 cloro (mg/L), idx13 pH, idx14 temperatura, idx20
+ *   presión. ADEMÁS el buffer trae tanques de OTRAS plantas (Soledad parece concentrar
+ *   los sitios mínimos): idx22/idx30 nivel/volumen tanque SAN ANTONIO (op 1–2.5 m) e
+ *   idx23/idx31 nivel/volumen tanque EL QUIJOTE (op 1–3 m). Se mapean bajo soledad con
+ *   domainKeys propios (sanAntonioTank… y quijoteTank…), NO como tank2/tank3 de soledad,
+ *   PENDIENTE de rectificación con el operador; si se confirma que duplican los buffers
+ *   REAL_TK_* de esos sitios, migrarán a las plantas san-antonio/quijote.
+ *
+ * - CASCAJAL: confirmación del operador (2026-07-15), buffer REAL_IN_CASCAJAL
+ *   (g=F0C27430-68DC-74D7-BDAB-B9EDCC19F8A7, único realIn del sitio). idx0 caudal de
+ *   salida 1 e idx7 caudal de salida 2 (l/s); idx5/idx6 nivel (op 1–3 m, lleno a 3 m) /
+ *   volumen (m³) del tanque único; idx19 presión de entrada, idx12 presión de salida 1 e
+ *   idx13 presión de salida 2 (psi, sin rango operativo entregado).
+ *
  * - ALTO_MANGOS: confirmación del operador (2026-07-14, "planta Real Mangos" = buffer
  *   DATOS_REAL_IN_MANGOS, g=ECA4ABBE-2E70-B864-5B3D-B2E9D1FB7830, único realIn del sitio
  *   fusionado MANGOS/ALTO_MANGOS). idx0 caudal de entrada e idx7 caudal de salida (l/s);
  *   idx5/idx6 nivel (m, lleno a 2.5 m) / volumen (m³) del tanque único; idx12 presión de
  *   entrada e idx13 presión de salida (psi, rango operativo 1–3).
+ *
+ * - VORAGINE: confirmación del operador (2026-07-15), buffer REAL_IN_VORAGINE
+ *   (g=93BAFF92-FF57-4877-74E4-B7CC1EFAE6B3, único realIn del sitio). idx0 caudal de
+ *   entrada e idx7 caudal de salida (l/s); idx12 presión de entrada e idx13 presión de
+ *   salida (psi, sin rango operativo). Tanque único con lleno confirmado a 1.97 m:
+ *   idx5 nivel / idx6 volumen (op 1–1.97 m).
+ *
+ * - KM18: confirmación del operador (2026-07-15), buffer REAL_IN_KM18
+ *   (g=1C72A21A-8F36-327C-C0AC-CA7A9AA60D96, único realIn del sitio). idx0 caudal de
+ *   entrada e idx7 caudal de salida (l/s); idx12 presión de entrada e idx13 presión de
+ *   salida (psi, sin rango operativo). DOS tanques con lleno confirmado a 2 m:
+ *   tanque 1 = idx5/idx6, tanque 2 = idx14/idx15 (op 1–2 m c/u).
+ *
+ * - SIRENA: confirmación del operador (2026-07-15), buffer REAL_IN_SIRENA
+ *   (g=A7B368C5-2F51-723A-8108-500CFEB52374). El canal realIn tiene además los buffers
+ *   de tanque REAL_TK2/TK3_SIRENA (Float[10]) → sourceBuffer explícito por robustez.
+ *   Entrada: idx0 caudal, idx2 turbiedad, idx3 oxígeno, idx4 conductividad, idx5 pH,
+ *   idx6 temperatura, idx20 presión. Salida: idx9 caudal, idx11 turbiedad, idx12 cloro,
+ *   idx13 pH, idx14 temperatura, idx21 presión. CUATRO tanques (niveles con lleno
+ *   confirmado): tanque 1 = idx7/idx8 (1–2.8 m); tanque 2 = idx22/idx30 (1–2.5 m);
+ *   tanque 3 = idx23/idx31 (1–2.5 m); tanque 4 = idx24/idx32 (1–2.5 m). OJO: en SOLEDAD
+ *   los índices 22/23/30/31 son tanques de OTRAS plantas; aquí el operador confirmó que
+ *   son tanques PROPIOS de Sirena — otro ejemplo de que los índices no son transferibles.
+ *
+ * - PICHINDE: confirmación del operador (2026-07-15), buffer REAL_IN_PICHINDE
+ *   (g=C9C97734-E939-9008-A41E-9CA37BB7A2D0, único realIn del sitio). idx10 presión de
+ *   entrada e idx11 presión de salida (psi, sin rango operativo entregado). El operador
+ *   sospecha que el buffer trae más señales y que el sitio podría ser "anidado hijo"
+ *   (como los tanques ajenos en SOLEDAD) — pendiente de revisar.
  *
  * - CARBONERO: confirmación del operador (2026-07-14), buffer REAL_IN_CARBONERO
  *   (g=A1323D1F-4114-A49D-746E-D6DDBB3C7DE3). Entrada: idx0 caudal (l/s), idx2 turbiedad
@@ -98,31 +156,114 @@ interface SignalDef {
  * Los máximos son bounds plausibles (caudal 1000 l/s; presión 232 psi = 16 bar), no la
  * capacidad de diseño real. Upgrade a 'confirmed': añadir el documento a
  * docs/plant-documentation/ y cambiar confidence + max aquí.
+ *
+ * Presiones: min de validez -15 psi (no 0). Los transmisores manométricos derivan bajo
+ * cero y el vacío pleno es ≈ -14.7 psi: una lectura de -0.7 psi (Campoalegre, 2026-07-15)
+ * es REAL y el operador debe verla. Por debajo de -15 sí es imposible físico (sensor o
+ * escala rotos) y se descarta como OUT_OF_RANGE — p. ej. Carbonero salida leyendo -57.
  */
 const SIGNALS_BY_SITE: Record<string, SignalDef[]> = {
   MONTEBELLO: [
-    { buffer: 'realIn', index: 0, domainKey: 'inletFlow1', label: 'Caudal de entrada 1', unit: 'l/s', min: 0, max: 1000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
-    { buffer: 'realIn', index: 5, domainKey: 'inletFlow2', label: 'Caudal de entrada 2', unit: 'l/s', min: 0, max: 1000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_MONTEBELLO', index: 0, domainKey: 'inletFlow1', label: 'Caudal de entrada 1', unit: 'l/s', min: 0, max: 1000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_MONTEBELLO', index: 5, domainKey: 'inletFlow2', label: 'Caudal de entrada 2', unit: 'l/s', min: 0, max: 1000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_MONTEBELLO', index: 10, domainKey: 'outletFlow1', label: 'Caudal de salida', unit: 'l/s', min: 0, max: 1000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_MONTEBELLO', index: 15, domainKey: 'inletPressure1', label: 'Presión de entrada 1', unit: 'psi', min: -15, max: 232, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_MONTEBELLO', index: 16, domainKey: 'inletPressure2', label: 'Presión de entrada 2', unit: 'psi', min: -15, max: 232, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_MONTEBELLO', index: 17, domainKey: 'outletPressure1', label: 'Presión de salida', unit: 'psi', min: -15, max: 232, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
   ],
   CAMPOALEGRE: [
     { buffer: 'realIn', index: 0, domainKey: 'outletFlow1', label: 'Caudal de salida 1', unit: 'l/s', min: 0, max: 1000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
     { buffer: 'realIn', index: 5, domainKey: 'tank1Level', label: 'Nivel tanque 1', unit: 'm', min: 0, max: 20, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
     { buffer: 'realIn', index: 6, domainKey: 'tank1Volume', label: 'Volumen tanque 1', unit: 'm³', min: 0, max: 10000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
     { buffer: 'realIn', index: 7, domainKey: 'outletFlow2', label: 'Caudal de salida 2', unit: 'l/s', min: 0, max: 1000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
-    { buffer: 'realIn', index: 12, domainKey: 'outletPressure1', label: 'Presión de salida 1', unit: 'psi', min: 0, max: 232, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
-    { buffer: 'realIn', index: 13, domainKey: 'outletPressure2', label: 'Presión de salida 2', unit: 'psi', min: 0, max: 232, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', index: 12, domainKey: 'outletPressure1', label: 'Presión de salida 1', unit: 'psi', min: -15, max: 232, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', index: 13, domainKey: 'outletPressure2', label: 'Presión de salida 2', unit: 'psi', min: -15, max: 232, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
     { buffer: 'realIn', index: 14, domainKey: 'tank2Level', label: 'Nivel tanque 2', unit: 'm', min: 0, max: 20, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
     { buffer: 'realIn', index: 15, domainKey: 'tank2Volume', label: 'Volumen tanque 2', unit: 'm³', min: 0, max: 10000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
     { buffer: 'realIn', index: 16, domainKey: 'tank3Level', label: 'Nivel tanque 3', unit: 'm', min: 0, max: 20, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
     { buffer: 'realIn', index: 17, domainKey: 'tank3Volume', label: 'Volumen tanque 3', unit: 'm³', min: 0, max: 10000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+  ],
+  SOLEDAD: [
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SOLEDAD', index: 0, domainKey: 'inletFlow1', label: 'Caudal de entrada', unit: 'l/s', min: 0, max: 1000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SOLEDAD', index: 2, domainKey: 'inletTurbidity', label: 'Turbiedad de entrada', unit: 'NTU', min: 0, max: 1000, opMin: 0.1, opMax: 5, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SOLEDAD', index: 3, domainKey: 'inletOxygen', label: 'Oxígeno de entrada', unit: 'mg/L', min: 0, max: 20, opMin: 4, opMax: 15, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SOLEDAD', index: 4, domainKey: 'conductivity', label: 'Conductividad de entrada', unit: 'µS/cm', min: 0, max: 10000, opMin: 0.1, opMax: 1000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SOLEDAD', index: 5, domainKey: 'inletPh', label: 'pH de entrada', unit: 'pH', min: 0, max: 14, opMin: 5.5, opMax: 9, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SOLEDAD', index: 6, domainKey: 'inletTemperature', label: 'Temperatura de entrada', unit: '°C', min: 0, max: 50, opMin: 10, opMax: 30, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SOLEDAD', index: 7, domainKey: 'tank1Level', label: 'Nivel tanque 1', unit: 'm', min: 0, max: 5, opMin: 0.75, opMax: 2.8, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SOLEDAD', index: 8, domainKey: 'tank1Volume', label: 'Volumen tanque 1', unit: 'm³', min: 0, max: 10000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SOLEDAD', index: 9, domainKey: 'outletFlow1', label: 'Caudal de salida', unit: 'l/s', min: 0, max: 1000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SOLEDAD', index: 11, domainKey: 'outletTurbidity', label: 'Turbiedad de salida', unit: 'NTU', min: 0, max: 1000, opMin: 0.1, opMax: 1, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SOLEDAD', index: 12, domainKey: 'outletChlorine', label: 'Cloro de salida', unit: 'mg/L', min: 0, max: 10, opMin: 0.3, opMax: 2, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SOLEDAD', index: 13, domainKey: 'outletPh', label: 'pH de salida', unit: 'pH', min: 0, max: 14, opMin: 6, opMax: 8, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SOLEDAD', index: 14, domainKey: 'outletTemperature', label: 'Temperatura de salida', unit: '°C', min: 0, max: 50, opMin: 10, opMax: 30, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SOLEDAD', index: 20, domainKey: 'outletPressure1', label: 'Presión de salida', unit: 'psi', min: -15, max: 232, opMin: 1, opMax: 3, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SOLEDAD', index: 22, domainKey: 'sanAntonioTankLevel', label: 'Nivel tanque San Antonio', unit: 'm', min: 0, max: 5, opMin: 1, opMax: 2.5, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SOLEDAD', index: 23, domainKey: 'quijoteTankLevel', label: 'Nivel tanque El Quijote', unit: 'm', min: 0, max: 5, opMin: 1, opMax: 3, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SOLEDAD', index: 30, domainKey: 'sanAntonioTankVolume', label: 'Volumen tanque San Antonio', unit: 'm³', min: 0, max: 10000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SOLEDAD', index: 31, domainKey: 'quijoteTankVolume', label: 'Volumen tanque El Quijote', unit: 'm³', min: 0, max: 10000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+  ],
+  CASCAJAL: [
+    { buffer: 'realIn', index: 0, domainKey: 'outletFlow1', label: 'Caudal de salida 1', unit: 'l/s', min: 0, max: 1000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', index: 5, domainKey: 'tank1Level', label: 'Nivel tanque 1', unit: 'm', min: 0, max: 5, opMin: 1, opMax: 3, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', index: 6, domainKey: 'tank1Volume', label: 'Volumen tanque 1', unit: 'm³', min: 0, max: 10000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', index: 7, domainKey: 'outletFlow2', label: 'Caudal de salida 2', unit: 'l/s', min: 0, max: 1000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', index: 12, domainKey: 'outletPressure1', label: 'Presión de salida 1', unit: 'psi', min: -15, max: 232, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', index: 13, domainKey: 'outletPressure2', label: 'Presión de salida 2', unit: 'psi', min: -15, max: 232, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', index: 19, domainKey: 'inletPressure1', label: 'Presión de entrada', unit: 'psi', min: -15, max: 232, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
   ],
   ALTO_MANGOS: [
     { buffer: 'realIn', index: 0, domainKey: 'inletFlow1', label: 'Caudal de entrada', unit: 'l/s', min: 0, max: 1000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
     { buffer: 'realIn', index: 5, domainKey: 'tank1Level', label: 'Nivel tanque 1', unit: 'm', min: 0, max: 5, opMax: 2.5, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
     { buffer: 'realIn', index: 6, domainKey: 'tank1Volume', label: 'Volumen tanque 1', unit: 'm³', min: 0, max: 10000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
     { buffer: 'realIn', index: 7, domainKey: 'outletFlow1', label: 'Caudal de salida', unit: 'l/s', min: 0, max: 1000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
-    { buffer: 'realIn', index: 12, domainKey: 'inletPressure1', label: 'Presión de entrada', unit: 'psi', min: 0, max: 232, opMin: 1, opMax: 3, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
-    { buffer: 'realIn', index: 13, domainKey: 'outletPressure1', label: 'Presión de salida', unit: 'psi', min: 0, max: 232, opMin: 1, opMax: 3, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', index: 12, domainKey: 'inletPressure1', label: 'Presión de entrada', unit: 'psi', min: -15, max: 232, opMin: 1, opMax: 3, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', index: 13, domainKey: 'outletPressure1', label: 'Presión de salida', unit: 'psi', min: -15, max: 232, opMin: 1, opMax: 3, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+  ],
+  VORAGINE: [
+    { buffer: 'realIn', index: 0, domainKey: 'inletFlow1', label: 'Caudal de entrada', unit: 'l/s', min: 0, max: 1000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', index: 5, domainKey: 'tank1Level', label: 'Nivel tanque 1', unit: 'm', min: 0, max: 5, opMin: 1, opMax: 1.97, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', index: 6, domainKey: 'tank1Volume', label: 'Volumen tanque 1', unit: 'm³', min: 0, max: 10000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', index: 7, domainKey: 'outletFlow1', label: 'Caudal de salida', unit: 'l/s', min: 0, max: 1000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', index: 12, domainKey: 'inletPressure1', label: 'Presión de entrada', unit: 'psi', min: -15, max: 232, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', index: 13, domainKey: 'outletPressure1', label: 'Presión de salida', unit: 'psi', min: -15, max: 232, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+  ],
+  KM18: [
+    { buffer: 'realIn', index: 0, domainKey: 'inletFlow1', label: 'Caudal de entrada', unit: 'l/s', min: 0, max: 1000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', index: 5, domainKey: 'tank1Level', label: 'Nivel tanque 1', unit: 'm', min: 0, max: 5, opMin: 1, opMax: 2, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', index: 6, domainKey: 'tank1Volume', label: 'Volumen tanque 1', unit: 'm³', min: 0, max: 10000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', index: 7, domainKey: 'outletFlow1', label: 'Caudal de salida', unit: 'l/s', min: 0, max: 1000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', index: 12, domainKey: 'inletPressure1', label: 'Presión de entrada', unit: 'psi', min: -15, max: 232, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', index: 13, domainKey: 'outletPressure1', label: 'Presión de salida', unit: 'psi', min: -15, max: 232, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', index: 14, domainKey: 'tank2Level', label: 'Nivel tanque 2', unit: 'm', min: 0, max: 5, opMin: 1, opMax: 2, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', index: 15, domainKey: 'tank2Volume', label: 'Volumen tanque 2', unit: 'm³', min: 0, max: 10000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+  ],
+  SIRENA: [
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SIRENA', index: 0, domainKey: 'inletFlow1', label: 'Caudal de entrada', unit: 'l/s', min: 0, max: 1000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SIRENA', index: 2, domainKey: 'inletTurbidity', label: 'Turbiedad de entrada', unit: 'NTU', min: 0, max: 1000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SIRENA', index: 3, domainKey: 'inletOxygen', label: 'Oxígeno de entrada', unit: 'mg/L', min: 0, max: 20, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SIRENA', index: 4, domainKey: 'conductivity', label: 'Conductividad de entrada', unit: 'µS/cm', min: 0, max: 10000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SIRENA', index: 5, domainKey: 'inletPh', label: 'pH de entrada', unit: 'pH', min: 0, max: 14, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SIRENA', index: 6, domainKey: 'inletTemperature', label: 'Temperatura de entrada', unit: '°C', min: 0, max: 50, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SIRENA', index: 7, domainKey: 'tank1Level', label: 'Nivel tanque 1', unit: 'm', min: 0, max: 5, opMin: 1, opMax: 2.8, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SIRENA', index: 8, domainKey: 'tank1Volume', label: 'Volumen tanque 1', unit: 'm³', min: 0, max: 10000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SIRENA', index: 9, domainKey: 'outletFlow1', label: 'Caudal de salida', unit: 'l/s', min: 0, max: 1000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SIRENA', index: 11, domainKey: 'outletTurbidity', label: 'Turbiedad de salida', unit: 'NTU', min: 0, max: 1000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SIRENA', index: 12, domainKey: 'outletChlorine', label: 'Cloro de salida', unit: 'mg/L', min: 0, max: 10, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SIRENA', index: 13, domainKey: 'outletPh', label: 'pH de salida', unit: 'pH', min: 0, max: 14, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SIRENA', index: 14, domainKey: 'outletTemperature', label: 'Temperatura de salida', unit: '°C', min: 0, max: 50, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SIRENA', index: 20, domainKey: 'inletPressure1', label: 'Presión de entrada', unit: 'psi', min: -15, max: 232, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SIRENA', index: 21, domainKey: 'outletPressure1', label: 'Presión de salida', unit: 'psi', min: -15, max: 232, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SIRENA', index: 22, domainKey: 'tank2Level', label: 'Nivel tanque 2', unit: 'm', min: 0, max: 5, opMin: 1, opMax: 2.5, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SIRENA', index: 23, domainKey: 'tank3Level', label: 'Nivel tanque 3', unit: 'm', min: 0, max: 5, opMin: 1, opMax: 2.5, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SIRENA', index: 24, domainKey: 'tank4Level', label: 'Nivel tanque 4', unit: 'm', min: 0, max: 5, opMin: 1, opMax: 2.5, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SIRENA', index: 30, domainKey: 'tank2Volume', label: 'Volumen tanque 2', unit: 'm³', min: 0, max: 10000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SIRENA', index: 31, domainKey: 'tank3Volume', label: 'Volumen tanque 3', unit: 'm³', min: 0, max: 10000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', sourceBuffer: 'REAL_IN_SIRENA', index: 32, domainKey: 'tank4Volume', label: 'Volumen tanque 4', unit: 'm³', min: 0, max: 10000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+  ],
+  PICHINDE: [
+    { buffer: 'realIn', index: 10, domainKey: 'inletPressure1', label: 'Presión de entrada', unit: 'psi', min: -15, max: 232, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', index: 11, domainKey: 'outletPressure1', label: 'Presión de salida', unit: 'psi', min: -15, max: 232, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
   ],
   CARBONERO: [
     { buffer: 'realIn', index: 0, domainKey: 'inletFlow1', label: 'Caudal de entrada', unit: 'l/s', min: 0, max: 1000, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
@@ -136,7 +277,7 @@ const SIGNALS_BY_SITE: Record<string, SignalDef[]> = {
     { buffer: 'realIn', index: 11, domainKey: 'outletTurbidity', label: 'Turbiedad de salida', unit: 'NTU', min: 0, max: 1000, opMin: 0, opMax: 1, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
     { buffer: 'realIn', index: 13, domainKey: 'outletPh', label: 'pH de salida', unit: 'pH', min: 0, max: 14, opMin: 6, opMax: 8, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
     { buffer: 'realIn', index: 14, domainKey: 'outletTemperature', label: 'Temperatura de salida', unit: '°C', min: 0, max: 50, opMin: 10, opMax: 30, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
-    { buffer: 'realIn', index: 20, domainKey: 'outletPressure1', label: 'Presión de salida', unit: 'psi', min: 0, max: 232, opMin: 1, opMax: 3, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    { buffer: 'realIn', index: 20, domainKey: 'outletPressure1', label: 'Presión de salida', unit: 'psi', min: -15, max: 232, opMin: 1, opMax: 3, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
   ],
 };
 
@@ -263,7 +404,7 @@ function main(): void {
 
   const doc = {
     $schema: './opc_mapping.schema.json',
-    version: '0.7.0',
+    version: '0.14.0',
     protocolVersion: 'v2',
     dtoVersion: 'v1',
     generatedFrom: {
@@ -281,11 +422,20 @@ function main(): void {
       'Si un nsUri del mapping NO está en el NamespaceArray del servidor: NamespaceNotFoundError ⇒ BridgeStatus = Faulted (NO Recovering: no se arregla reintentando). Prohibido fallback a ns=0 o a un índice previo.',
       'MANGOS y ALTO_MANGOS fusionados en alto-los-mangos (confirmado). SAN_ANTONO normalizado a san-antonio.',
       'Sin export L5X: casi TODA señal de proceso sigue unmapped (signals: []). Única semántica confirmada por lectura: connection (DN/ER/TO de MSG_READ). Ver docs/PHASE0_VERIFICATION.md y docs/MSG_BITS_OBSERVATION.md.',
-      'Excepción: montebello.signals mapea inletFlow1 (realIn[0]) e inletFlow2 (realIn[5]) como caudales de entrada en l/s. confidence: INFERRED — inferidos del HMI de Optix (NodeId g=eba8e3eb-53a2-0ccd-3912-501c0f7e4c8f = REAL_IN_MONTEBELLO) y verificados en vivo, NO del L5X ni de documento oficial de la planta. Evidencia: docs/FLOW_VALIDATION.md. buffer:realIn = el buffer realIn primario del sitio (arrayLength 50), no los de tanque. El máximo (1000 l/s) es un bound físico plausible, no la capacidad de diseño.',
+      'Excepción: montebello.signals mapea 6 señales, TODAS con sourceBuffer REAL_IN_MONTEBELLO (g=EBA8E3EB-53A2-0CCD-3912-501C0F7E4C8F; el canal realIn también tiene TK1/TK2/TK3 de 10 elementos): caudal de entrada 1[0] y 2[5] (verificados en vivo, docs/FLOW_VALIDATION.md), caudal de salida[10] l/s; presión de entrada 1[15], de entrada 2[16] y de salida[17] psi (sin rango operativo entregado; confirmación del operador 2026-07-15). confidence: INFERRED. El máximo de caudal (1000 l/s) es un bound físico plausible, no la capacidad de diseño.',
+      'PENDIENTE DE RECTIFICAR (montebello): sus tanques NO van en los 50 índices del buffer primario — la app original los muestra y en el maestro existen REAL_IN_TK1/TK2/TK3_MONTEBELLO (Float[10], cada uno con su MSG_READ), pero falta la semántica de índices DENTRO de cada TK (¿cuál es nivel, cuál volumen?). El operador sospecha planta hija / tanques compartidos (¿con Campoalegre?). Cuando se confirme, se mapean con sourceBuffer REAL_IN_TK<N>_MONTEBELLO.',
       'Excepción: campoalegre.signals mapea outletFlow1 (realIn[0]), outletFlow2 (realIn[7]) en l/s; outletPressure1 (realIn[12]) y outletPressure2 (realIn[13]) en psi; y tanques 1/2/3: nivel en m y volumen en m³ en realIn[5]/[6], realIn[14]/[15] y realIn[16]/[17]. confidence: INFERRED — confirmación del operador desde el HMI de Optix (2026-07-14; identificador verificado: REAL_IN_CAMPOALEGRE = g=E1680D60-7BCD-C892-7257-C4D4AAE41E1C), NO del L5X ni de documento oficial. Rango de presión: instrumento 0–16 bar → max 232 psi. Máximos de nivel (20 m) y volumen (10000 m³) son bounds plausibles, no dimensiones reales del tanque.',
       'Los índices de array NO son transferibles entre plantas (realIn[5] es nivel de tanque en campoalegre y caudal en montebello). El código debe direccionar señales SIEMPRE por (plantId, domainKey), nunca por índice global.',
+      'Excepción: soledad.signals mapea 18 señales, TODAS con sourceBuffer REAL_IN_SOLEDAD (g=19181A21-F548-3D76-D6D9-EDAA324C20F7) porque el sitio tiene dos buffers realIn de 50 elementos y la heurística de primario empataría. Entrada: caudal[0] l/s, turbiedad[2] NTU, oxígeno[3] mg/L, conductividad[4] µS/cm, pH[5], temperatura[6] °C; tanque 1: nivel[7] m (op 0.75–2.8) y volumen[8] m³; salida: caudal[9] l/s, turbiedad[11] NTU, cloro[12] mg/L, pH[13], temperatura[14] °C, presión[20] psi. confidence: INFERRED — confirmación del operador (2026-07-15).',
+      'PENDIENTE DE RECTIFICAR (soledad): REAL_IN_SOLEDAD trae además tanques de otras plantas — nivel[22]/volumen[30] de SAN ANTONIO (op 1–2.5 m) y nivel[23]/volumen[31] de EL QUIJOTE (op 1–3 m). Se mapearon bajo soledad con domainKeys sanAntonioTank*/quijoteTank* (NO tank2/tank3) para no presentarlos como tanques propios. Si el operador confirma que duplican los buffers REAL_TK_SAN_ANTONO/REAL_TK_QUIJOTE, estas señales migrarán a las plantas san-antonio y quijote.',
+      'Excepción: cascajal.signals mapea 7 señales de REAL_IN_CASCAJAL (g=F0C27430-68DC-74D7-BDAB-B9EDCC19F8A7, único realIn del sitio): caudal de salida 1[0] y 2[7] l/s; tanque 1 nivel[5] m (op 1–3, lleno a 3 m confirmado por operador) y volumen[6] m³; presión de salida 1[12], de salida 2[13] y de entrada[19] psi (sin rango operativo entregado). confidence: INFERRED — confirmación del operador (2026-07-15).',
       'Excepción: alto-los-mangos.signals mapea 6 señales de DATOS_REAL_IN_MANGOS (g=ECA4ABBE-2E70-B864-5B3D-B2E9D1FB7830, único buffer realIn del sitio fusionado): caudal de entrada[0] y salida[7] l/s; tanque 1 nivel[5] m (lleno a 2.5 m, confirmado por operador) y volumen[6] m³; presión de entrada[12] y salida[13] psi (op 1–3). confidence: INFERRED — confirmación del operador (2026-07-14), NO del L5X ni de documento oficial en el repo.',
+      'Excepción: voragine.signals mapea 6 señales de REAL_IN_VORAGINE (g=93BAFF92-FF57-4877-74E4-B7CC1EFAE6B3, único realIn del sitio): caudal de entrada[0] y salida[7] l/s; presión de entrada[12] y salida[13] psi (sin rango operativo entregado); tanque único = nivel[5]/volumen[6], rango operativo 1–1.97 m y lleno confirmado a 1.97 m. confidence: INFERRED — confirmación del operador (2026-07-15).',
+      'Excepción: km18.signals mapea 8 señales de REAL_IN_KM18 (g=1C72A21A-8F36-327C-C0AC-CA7A9AA60D96, único realIn del sitio): caudal de entrada[0] y salida[7] l/s; presión de entrada[12] y salida[13] psi (sin rango operativo entregado); tanque 1 = nivel[5]/volumen[6] y tanque 2 = nivel[14]/volumen[15], ambos con rango operativo 1–2 m y lleno confirmado a 2 m. confidence: INFERRED — confirmación del operador (2026-07-15).',
+      'Excepción: sirena.signals mapea 21 señales, TODAS con sourceBuffer REAL_IN_SIRENA (g=A7B368C5-2F51-723A-8108-500CFEB52374; el canal realIn también tiene los buffers de tanque REAL_TK2/TK3_SIRENA de 10 elementos). Entrada: caudal[0], turbiedad[2], oxígeno[3], conductividad[4], pH[5], temperatura[6], presión[20]. Salida: caudal[9], turbiedad[11], cloro[12], pH[13], temperatura[14], presión[21]. Tanques PROPIOS con lleno confirmado: 1 = nivel[7]/volumen[8] (op 1–2.8 m); 2 = nivel[22]/volumen[30], 3 = nivel[23]/volumen[31], 4 = nivel[24]/volumen[32] (op 1–2.5 m c/u). OJO: en soledad los índices 22/23/30/31 son tanques de OTRAS plantas — los índices no son transferibles. confidence: INFERRED — confirmación del operador (2026-07-15).',
+      'Excepción: pichinde.signals mapea 2 señales de REAL_IN_PICHINDE (g=C9C97734-E939-9008-A41E-9CA37BB7A2D0, único realIn del sitio): presión de entrada[10] y presión de salida[11] psi (sin rango operativo entregado). confidence: INFERRED — confirmación del operador (2026-07-15). El operador sospecha que el buffer trae más señales y que el sitio podría ser anidado hijo — pendiente de revisar.',
       'Excepción: carbonero.signals mapea 12 señales de REAL_IN_CARBONERO (g=A1323D1F-4114-A49D-746E-D6DDBB3C7DE3): entrada = caudal[0] l/s, turbiedad[2] NTU, oxígeno[3] mg/L, conductividad[4] µS/cm, pH[5], temperatura[6] °C; tanque 1 = nivel[7] m, volumen[8] m³; salida = turbiedad[11] NTU, pH[13], temperatura[14] °C, presión[20] psi. confidence: INFERRED — confirmación del operador (2026-07-14), NO del L5X ni de documento oficial en el repo.',
+      'Validez de presiones: [-15, 232] psi. El min NO es 0: los transmisores manométricos derivan bajo cero (Campoalegre salida 1 leyó -0.74 psi real el 2026-07-15) y el vacío físico llega a ≈ -14.7 psi. Bajo -15 psi es imposible físico ⇒ OUT_OF_RANGE (sensor/escala dañados; p. ej. Carbonero salida -57 psi). PENDIENTE verificar contra HMI: Cascajal presión de entrada lee 384 psi (¿unidad/índice/escala?).',
       'opMin/opMax = rango OPERATIVO/normativo entregado por el operador (insumo de alarmas futuras). NO confundir con min/max, que son límites de validez física: una lectura fuera de [opMin,opMax] pero dentro de [min,max] es un dato REAL y usable (p. ej. pH de salida 5.8 o tanque en 0.5 m) que la UI debe mostrar, no descartar.',
       'Topología de san-antonio y quijote verificada por browse: son sitios mínimos reales (solo un buffer de tanque + MSG_READ). topologyVerified: true.',
       'displayName es provisional (displayNameProvisional: true) hasta confirmación escrita de la planta.',

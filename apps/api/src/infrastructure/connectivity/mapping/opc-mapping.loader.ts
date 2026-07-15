@@ -28,12 +28,17 @@ export interface MonitorTarget {
 export interface SignalMapping {
   plantId: string;
   buffer: string; // canal (realIn, intIn, …); refiere al buffer PRIMARIO de ese canal en el sitio
+  /** browseName exacto del buffer fuente. Obligatorio si el canal tiene varios buffers del mismo tamaño (la resolución por tamaño sería no determinista). */
+  sourceBuffer?: string | null;
   index: number;
   domainKey: string;
   label: string | null;
   unit: string | null;
   min: number | null;
   max: number | null;
+  /** Rango operativo/normativo (se expone en el DTO para que el front lo muestre). */
+  opMin?: number | null;
+  opMax?: number | null;
   mappingStatus: 'mapped' | 'unmapped';
   confidence: 'confirmed' | 'inferred' | 'estimated';
   writable: boolean;
@@ -78,12 +83,15 @@ function resolvePath(explicit?: string): string {
 
 interface RawSignal {
   buffer?: string;
+  sourceBuffer?: string;
   index?: number;
   domainKey?: string;
   label?: string;
   unit?: string;
   min?: number;
   max?: number;
+  opMin?: number;
+  opMax?: number;
   mappingStatus?: string;
   confidence?: string;
   writable?: boolean;
@@ -147,12 +155,15 @@ export function loadMapping(explicitPath?: string): LoadedMapping {
       signals.push({
         plantId: plant.plantId,
         buffer: s.buffer,
+        sourceBuffer: typeof s.sourceBuffer === 'string' ? s.sourceBuffer : null,
         index: s.index,
         domainKey: s.domainKey,
         label: s.label ?? null,
         unit: s.unit ?? null,
         min: typeof s.min === 'number' ? s.min : null,
         max: typeof s.max === 'number' ? s.max : null,
+        opMin: typeof s.opMin === 'number' ? s.opMin : null,
+        opMax: typeof s.opMax === 'number' ? s.opMax : null,
         mappingStatus: s.mappingStatus === 'unmapped' ? 'unmapped' : 'mapped',
         confidence: (s.confidence as SignalMapping['confidence']) ?? 'inferred',
         writable: s.writable === true,

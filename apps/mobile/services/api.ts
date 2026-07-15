@@ -32,6 +32,9 @@ export interface SignalDto {
   confidence: Confidence;
   label: string | null;
   ts: string | null;
+  /** Rango operativo entregado por el operador — se muestra junto al valor (Mín/Máx). */
+  opMin?: number;
+  opMax?: number;
 }
 
 export interface LivenessDto {

@@ -8,6 +8,8 @@ export interface ExtractedSignal {
   unit: string | null;
   min: number | null;
   max: number | null;
+  opMin: number | null;
+  opMax: number | null;
   mappingStatus: 'mapped' | 'unmapped';
   confidence: 'confirmed' | 'inferred' | 'estimated';
   value: number | boolean | null; // crudo; puede ser no-finito (lo evalúa QualityService)
@@ -24,6 +26,11 @@ export interface ExtractedSignal {
  * PRIMARIO del sitio (REAL_IN_MONTEBELLO, 50 elementos), no a los de tanque (TK1/TK2/TK3,
  * 10 elementos). Se resuelve en runtime como el buffer del canal con más elementos (el
  * primario entrega el array completo del sitio; los de tanque son sub-arrays cortos).
+ *
+ * Si la señal declara `sourceBuffer` (browseName exacto), ese buffer gana SIEMPRE sobre
+ * la heurística de tamaño. Es obligatorio en sitios con varios buffers del mismo canal e
+ * igual tamaño (SOLEDAD: REAL_IN_SOLEDAD Float[50] y DATOS_IN_PTAP_SOLEDAD Int16[50]),
+ * donde "el de más elementos" empataría y la elección sería no determinista.
  */
 export class MappingEngine {
   private readonly signalsByPlant = new Map<string, SignalMapping[]>();
@@ -57,13 +64,22 @@ export class MappingEngine {
       unit: sig.unit,
       min: sig.min,
       max: sig.max,
+      opMin: sig.opMin ?? null,
+      opMax: sig.opMax ?? null,
       mappingStatus: sig.mappingStatus,
       confidence: sig.confidence,
     };
 
-    const buffer = this.primaryBufferOfChannel(sig.buffer, latestBuffers);
+    const buffer = sig.sourceBuffer
+      ? (latestBuffers.get(sig.sourceBuffer) ?? null)
+      : this.primaryBufferOfChannel(sig.buffer, latestBuffers);
     if (!buffer) {
-      deadLetter.record('BUFFER_MISSING', sig.plantId, sig.domainKey, `sin buffer del canal ${sig.buffer}`);
+      deadLetter.record(
+        'BUFFER_MISSING',
+        sig.plantId,
+        sig.domainKey,
+        sig.sourceBuffer ? `sin buffer ${sig.sourceBuffer} (canal ${sig.buffer})` : `sin buffer del canal ${sig.buffer}`,
+      );
       return { ...base, value: null, quality: 'Bad', sourceTimestamp: null, structurallyBroken: true };
     }
     if (sig.index >= buffer.values.length) {

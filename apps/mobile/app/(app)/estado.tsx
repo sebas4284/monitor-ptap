@@ -18,7 +18,8 @@ export default function EstadoScreen() {
 
   const { data: snapshot } = useSnapshot(plantId);
   const tanks = tanksFromSnapshot(snapshot);
-  const withLevel = tanks.filter((t) => t.levelM !== null);
+  // Los tanques externos (de otras plantas, retransmitidos) no deciden el agua de esta.
+  const withLevel = tanks.filter((t) => !t.external && t.levelM !== null);
 
   const hasData = withLevel.length > 0;
   const waterOk = hasData && withLevel.every((t) => t.levelM! > EMPTY_LEVEL_M);

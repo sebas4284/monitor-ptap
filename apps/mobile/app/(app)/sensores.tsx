@@ -8,22 +8,18 @@ import { LiveBadge } from '../../components/LiveBadge';
 import { PlantSelector } from '../../components/PlantSelector';
 import Colors from '../../constants/colors';
 import type { SignalDto } from '../../services/api';
+import { isTankSignal } from '../../services/tanks';
 
-/** Icono por domainKey conocido (cosmético). */
+/** Icono por domainKey conocido (cosmético). Los tanques no van aquí: viven en Tanques. */
 const ICONS: Record<string, string> = {
   inletFlow1: 'water-outline',
   inletFlow2: 'water-outline',
   outletFlow1: 'water-outline',
   outletFlow2: 'water-outline',
   inletPressure1: 'speedometer-outline',
+  inletPressure2: 'speedometer-outline',
   outletPressure1: 'speedometer-outline',
   outletPressure2: 'speedometer-outline',
-  tank1Level: 'water-outline',
-  tank2Level: 'water-outline',
-  tank3Level: 'water-outline',
-  tank1Volume: 'cube-outline',
-  tank2Volume: 'cube-outline',
-  tank3Volume: 'cube-outline',
   inletTurbidity: 'color-filter-outline',
   outletTurbidity: 'color-filter-outline',
   inletOxygen: 'leaf-outline',
@@ -32,6 +28,7 @@ const ICONS: Record<string, string> = {
   outletPh: 'flask-outline',
   inletTemperature: 'thermometer-outline',
   outletTemperature: 'thermometer-outline',
+  outletChlorine: 'eyedrop-outline',
 };
 
 export default function SensoresScreen() {
@@ -40,7 +37,10 @@ export default function SensoresScreen() {
   const time = useTime();
 
   const timeStr = time.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  const signals: Array<[string, SignalDto]> = snapshot ? Object.entries(snapshot.signals) : [];
+  // Los tanques (propios y externos) se muestran SOLO en la pantalla Tanques.
+  const signals: [string, SignalDto][] = snapshot
+    ? Object.entries(snapshot.signals).filter(([domainKey]) => !isTankSignal(domainKey))
+    : [];
   const livenessState = snapshot?.liveness.state ?? 'unknown';
 
   return (

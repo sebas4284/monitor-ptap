@@ -1,0 +1,284 @@
+# Catálogo de datos — Monitor PTAP
+
+> **GENERADO** desde `apps/api/config/opc_mapping.json` (v0.14.0). NO editar a mano:
+> se regenera con `npm run generate:catalog -w @ptap/api` (y automáticamente con `generate:mapping`).
+
+Registro de los datos que entrega el backend de telemetría: qué señales existen por
+planta, cómo llamarlas y cómo tratarlas en el front. El backend entrega datos estables
+y completos con sus metadatos; la **interpretación** de los valores es del equipo
+frontend en diálogo con el cliente.
+
+## Cómo consumir los datos
+
+### REST (carga inicial / resincronización)
+
+| Endpoint | Devuelve |
+|---|---|
+| `GET /api/plants` | Lista de plantas: `plantId`, `displayName`, `liveness`, `bridgeStatus` |
+| `GET /api/plants/:plantId/snapshot` | `PlantSnapshotDto` de la planta (cache RAM, sin tocar el PLC) |
+
+Base URL: puerto `:4000` del backend de telemetría (`npm run start:telemetry -w @ptap/api`).
+En la app móvil se configura en `app.json → expo.extra.apiBaseUrl`.
+
+### Socket.IO (push en tiempo real — el front NO hace polling)
+
+| Acción | Evento | Payload |
+|---|---|---|
+| Suscribirse a una planta (al conectar y en cada reconexión) | emit `opc:subscribe` | `{ plantId }` |
+| Recibir snapshot (solo cuando algo cambia) | on `opc:snapshot` | `PlantSnapshotDto` |
+| Recibir cambios de frescura (broadcast, todas las plantas) | on `opc:liveness` | `{ plantId, state, lastChangeAt, windowSec }` |
+
+`sequence` es monótono por planta: si llega N+2 sin haber visto N+1, hubo un hueco —
+resincronizar por REST (el hook `useSnapshot` de la app móvil ya implementa este patrón).
+
+### Contrato `SignalDto` (cada entrada de `snapshot.signals`)
+
+| Campo | Tipo | Significado |
+|---|---|---|
+| `value` | `number \| boolean \| null` | Valor crudo del PLC. `null` = no hay número (NaN/∞ del PLC o buffer ausente) |
+| `unit` | `string \| null` | Unidad de ingeniería (`l/s`, `psi`, `m`, `m³`, `NTU`, `mg/L`, `µS/cm`, `pH`, `°C`) |
+| `quality` | `Good \| Bad \| Uncertain` | Calidad OPC UA reportada por el servidor |
+| `usable` | `boolean` | Veredicto del backend (calidad + rango de validez + frescura). **Metadato**: no oculta el valor |
+| `reason` | `BAD_QUALITY \| INVALID_NUMBER \| OUT_OF_RANGE \| BRIDGE_STALE` | Presente solo si `usable=false`; por qué |
+| `mappingStatus` | `mapped \| unmapped` | Si el índice tiene semántica asignada |
+| `confidence` | `confirmed \| inferred \| estimated` | Solidez de la semántica (ver Convenciones) |
+| `label` | `string \| null` | Nombre humano en español, listo para mostrar |
+| `ts` | `string \| null` | SourceTimestamp OPC UA de la última muestra |
+| `opMin` / `opMax` | `number` (opcionales) | Rango operativo entregado por el operador. El front lo MUESTRA junto al valor ("Mín: 1.00  Máx: 3.00", como en la app original) para que el cliente interprete la lectura |
+
+### Política de visualización (acordada 2026-07-15)
+
+**Si `value` es un número, se muestra tal cual, en cualquier planta.** Incluye valores
+congelados (`BRIDGE_STALE`), negativos o fuera de escala (`OUT_OF_RANGE`): un -57 psi
+significa algo y el cliente lo detecta precisamente porque está fuera de escala.
+"sin dato" queda reservado para `value: null`. Los metadatos (`usable`, `reason`,
+`quality`, `liveness`) viajan siempre en el DTO y quedan a disposición del front y el
+cliente para las interpretaciones que acuerden (alarmas, avisos de congelado, etc.).
+
+## Convenciones para el front
+
+- **Identidad = (`plantId`, `domainKey`).** Los índices de array NO son transferibles
+  entre plantas: `realIn[5]` es caudal en Montebello y nivel de tanque en Campoalegre.
+  Nunca direccionar por índice.
+- **domainKeys**: `inlet*`/`outlet*` + magnitud (`inletFlow1`, `outletPressure2`, …).
+  Tanques propios: `tank<N>Level` (m) y `tank<N>Volume` (m³).
+- **Pantalla Tanques**: se alimenta sola de `tank<N>Level/Volume`. En la app móvil,
+  `apps/mobile/services/tanks.ts` concentra la regla: `isTankSignal()` (excluir tanques
+  de listados generales de sensores), `EXTERNAL_TANKS` (tanques de otras plantas
+  retransmitidos, p. ej. San Antonio y El Quijote vía Soledad) y `FULL_LEVEL_M`
+  (niveles de tanque lleno confirmados, para % de llenado).
+- **`min`/`max`** = rango de VALIDEZ física (produce `usable`/`OUT_OF_RANGE`, metadato).
+  **`opMin`/`opMax`** = rango OPERATIVO/normativo entregado por el operador — insumo
+  para alarmas o avisos que el front acuerde con el cliente.
+- **`confidence: inferred`** = semántica confirmada por el operador vía HMI, sin
+  documento oficial en el repo. `confirmed` exige documento en `docs/plant-documentation/`.
+- **`liveness.state`** (`live | idle | stale | unknown`) es la frescura POR PLANTA:
+  `unknown/stale` = el PLC maestro no está refrescando ese sitio (las señales llegan
+  con el último valor conocido).
+
+## Señales disponibles por planta
+
+### La Vorágine (`voragine`) — 6 señales
+
+Fuente: `REAL_IN_VORAGINE` (Float[50], nsUri `AQUATECH`, `g=93BAFF92-FF57-4877-74E4-B7CC1EFAE6B3`)
+
+| Índice | domainKey | Señal | Unidad | Validez | Rango operativo | Confianza |
+|---|---|---|---|---|---|---|
+| 0 | `inletFlow1` | Caudal de entrada | l/s | 0 a 1000 | — | inferred |
+| 5 | `tank1Level` | Nivel tanque 1 | m | 0 a 5 | 1 a 1.97 | inferred |
+| 6 | `tank1Volume` | Volumen tanque 1 | m³ | 0 a 10000 | — | inferred |
+| 7 | `outletFlow1` | Caudal de salida | l/s | 0 a 1000 | — | inferred |
+| 12 | `inletPressure1` | Presión de entrada | psi | -15 a 232 | — | inferred |
+| 13 | `outletPressure1` | Presión de salida | psi | -15 a 232 | — | inferred |
+
+### Soledad (`soledad`) — 18 señales
+
+Fuente: `REAL_IN_SOLEDAD` (Float[50], nsUri `AQUATECH`, `g=19181A21-F548-3D76-D6D9-EDAA324C20F7`)
+
+| Índice | domainKey | Señal | Unidad | Validez | Rango operativo | Confianza |
+|---|---|---|---|---|---|---|
+| 0 | `inletFlow1` | Caudal de entrada | l/s | 0 a 1000 | — | inferred |
+| 2 | `inletTurbidity` | Turbiedad de entrada | NTU | 0 a 1000 | 0.1 a 5 | inferred |
+| 3 | `inletOxygen` | Oxígeno de entrada | mg/L | 0 a 20 | 4 a 15 | inferred |
+| 4 | `conductivity` | Conductividad de entrada | µS/cm | 0 a 10000 | 0.1 a 1000 | inferred |
+| 5 | `inletPh` | pH de entrada | pH | 0 a 14 | 5.5 a 9 | inferred |
+| 6 | `inletTemperature` | Temperatura de entrada | °C | 0 a 50 | 10 a 30 | inferred |
+| 7 | `tank1Level` | Nivel tanque 1 | m | 0 a 5 | 0.75 a 2.8 | inferred |
+| 8 | `tank1Volume` | Volumen tanque 1 | m³ | 0 a 10000 | — | inferred |
+| 9 | `outletFlow1` | Caudal de salida | l/s | 0 a 1000 | — | inferred |
+| 11 | `outletTurbidity` | Turbiedad de salida | NTU | 0 a 1000 | 0.1 a 1 | inferred |
+| 12 | `outletChlorine` | Cloro de salida | mg/L | 0 a 10 | 0.3 a 2 | inferred |
+| 13 | `outletPh` | pH de salida | pH | 0 a 14 | 6 a 8 | inferred |
+| 14 | `outletTemperature` | Temperatura de salida | °C | 0 a 50 | 10 a 30 | inferred |
+| 20 | `outletPressure1` | Presión de salida | psi | -15 a 232 | 1 a 3 | inferred |
+| 22 | `sanAntonioTankLevel` | Nivel tanque San Antonio | m | 0 a 5 | 1 a 2.5 | inferred |
+| 23 | `quijoteTankLevel` | Nivel tanque El Quijote | m | 0 a 5 | 1 a 3 | inferred |
+| 30 | `sanAntonioTankVolume` | Volumen tanque San Antonio | m³ | 0 a 10000 | — | inferred |
+| 31 | `quijoteTankVolume` | Volumen tanque El Quijote | m³ | 0 a 10000 | — | inferred |
+
+### Montebello (`montebello`) — 6 señales
+
+Fuente: `REAL_IN_MONTEBELLO` (Float[50], nsUri `AQUATECH`, `g=EBA8E3EB-53A2-0CCD-3912-501C0F7E4C8F`)
+
+| Índice | domainKey | Señal | Unidad | Validez | Rango operativo | Confianza |
+|---|---|---|---|---|---|---|
+| 0 | `inletFlow1` | Caudal de entrada 1 | l/s | 0 a 1000 | — | inferred |
+| 5 | `inletFlow2` | Caudal de entrada 2 | l/s | 0 a 1000 | — | inferred |
+| 10 | `outletFlow1` | Caudal de salida | l/s | 0 a 1000 | — | inferred |
+| 15 | `inletPressure1` | Presión de entrada 1 | psi | -15 a 232 | — | inferred |
+| 16 | `inletPressure2` | Presión de entrada 2 | psi | -15 a 232 | — | inferred |
+| 17 | `outletPressure1` | Presión de salida | psi | -15 a 232 | — | inferred |
+
+### Cascajal (`cascajal`) — 7 señales
+
+Fuente: `REAL_IN_CASCAJAL` (Float[50], nsUri `AQUATECH`, `g=F0C27430-68DC-74D7-BDAB-B9EDCC19F8A7`)
+
+| Índice | domainKey | Señal | Unidad | Validez | Rango operativo | Confianza |
+|---|---|---|---|---|---|---|
+| 0 | `outletFlow1` | Caudal de salida 1 | l/s | 0 a 1000 | — | inferred |
+| 5 | `tank1Level` | Nivel tanque 1 | m | 0 a 5 | 1 a 3 | inferred |
+| 6 | `tank1Volume` | Volumen tanque 1 | m³ | 0 a 10000 | — | inferred |
+| 7 | `outletFlow2` | Caudal de salida 2 | l/s | 0 a 1000 | — | inferred |
+| 12 | `outletPressure1` | Presión de salida 1 | psi | -15 a 232 | — | inferred |
+| 13 | `outletPressure2` | Presión de salida 2 | psi | -15 a 232 | — | inferred |
+| 19 | `inletPressure1` | Presión de entrada | psi | -15 a 232 | — | inferred |
+
+### Km 18 (`km18`) — 8 señales
+
+Fuente: `REAL_IN_KM18` (Float[50], nsUri `AQUATECH`, `g=1C72A21A-8F36-327C-C0AC-CA7A9AA60D96`)
+
+| Índice | domainKey | Señal | Unidad | Validez | Rango operativo | Confianza |
+|---|---|---|---|---|---|---|
+| 0 | `inletFlow1` | Caudal de entrada | l/s | 0 a 1000 | — | inferred |
+| 5 | `tank1Level` | Nivel tanque 1 | m | 0 a 5 | 1 a 2 | inferred |
+| 6 | `tank1Volume` | Volumen tanque 1 | m³ | 0 a 10000 | — | inferred |
+| 7 | `outletFlow1` | Caudal de salida | l/s | 0 a 1000 | — | inferred |
+| 12 | `inletPressure1` | Presión de entrada | psi | -15 a 232 | — | inferred |
+| 13 | `outletPressure1` | Presión de salida | psi | -15 a 232 | — | inferred |
+| 14 | `tank2Level` | Nivel tanque 2 | m | 0 a 5 | 1 a 2 | inferred |
+| 15 | `tank2Volume` | Volumen tanque 2 | m³ | 0 a 10000 | — | inferred |
+
+### Alto de los Mangos (`alto-los-mangos`) — 6 señales
+
+Fuente: `DATOS_REAL_IN_MANGOS` (Float[50], nsUri `AQUATECH`, `g=ECA4ABBE-2E70-B864-5B3D-B2E9D1FB7830`)
+
+| Índice | domainKey | Señal | Unidad | Validez | Rango operativo | Confianza |
+|---|---|---|---|---|---|---|
+| 0 | `inletFlow1` | Caudal de entrada | l/s | 0 a 1000 | — | inferred |
+| 5 | `tank1Level` | Nivel tanque 1 | m | 0 a 5 | ≤ 2.5 | inferred |
+| 6 | `tank1Volume` | Volumen tanque 1 | m³ | 0 a 10000 | — | inferred |
+| 7 | `outletFlow1` | Caudal de salida | l/s | 0 a 1000 | — | inferred |
+| 12 | `inletPressure1` | Presión de entrada | psi | -15 a 232 | 1 a 3 | inferred |
+| 13 | `outletPressure1` | Presión de salida | psi | -15 a 232 | 1 a 3 | inferred |
+
+### Campoalegre (`campoalegre`) — 10 señales
+
+Fuente: `REAL_IN_CAMPOALEGRE` (Float[50], nsUri `AQUATECH`, `g=E1680D60-7BCD-C892-7257-C4D4AAE41E1C`)
+
+| Índice | domainKey | Señal | Unidad | Validez | Rango operativo | Confianza |
+|---|---|---|---|---|---|---|
+| 0 | `outletFlow1` | Caudal de salida 1 | l/s | 0 a 1000 | — | inferred |
+| 5 | `tank1Level` | Nivel tanque 1 | m | 0 a 20 | — | inferred |
+| 6 | `tank1Volume` | Volumen tanque 1 | m³ | 0 a 10000 | — | inferred |
+| 7 | `outletFlow2` | Caudal de salida 2 | l/s | 0 a 1000 | — | inferred |
+| 12 | `outletPressure1` | Presión de salida 1 | psi | -15 a 232 | — | inferred |
+| 13 | `outletPressure2` | Presión de salida 2 | psi | -15 a 232 | — | inferred |
+| 14 | `tank2Level` | Nivel tanque 2 | m | 0 a 20 | — | inferred |
+| 15 | `tank2Volume` | Volumen tanque 2 | m³ | 0 a 10000 | — | inferred |
+| 16 | `tank3Level` | Nivel tanque 3 | m | 0 a 20 | — | inferred |
+| 17 | `tank3Volume` | Volumen tanque 3 | m³ | 0 a 10000 | — | inferred |
+
+### Pichindé (`pichinde`) — 2 señales
+
+Fuente: `REAL_IN_PICHINDE` (Float[50], nsUri `AQUATECH`, `g=C9C97734-E939-9008-A41E-9CA37BB7A2D0`)
+
+| Índice | domainKey | Señal | Unidad | Validez | Rango operativo | Confianza |
+|---|---|---|---|---|---|---|
+| 10 | `inletPressure1` | Presión de entrada | psi | -15 a 232 | — | inferred |
+| 11 | `outletPressure1` | Presión de salida | psi | -15 a 232 | — | inferred |
+
+### Carbonero (`carbonero`) — 12 señales
+
+Fuente: `REAL_IN_CARBONERO` (Float[50], nsUri `AQUATECH`, `g=A1323D1F-4114-A49D-746E-D6DDBB3C7DE3`)
+
+| Índice | domainKey | Señal | Unidad | Validez | Rango operativo | Confianza |
+|---|---|---|---|---|---|---|
+| 0 | `inletFlow1` | Caudal de entrada | l/s | 0 a 1000 | — | inferred |
+| 2 | `inletTurbidity` | Turbiedad de entrada | NTU | 0 a 1000 | 0 a 5 | inferred |
+| 3 | `inletOxygen` | Oxígeno de entrada | mg/L | 0 a 20 | 4 a 15 | inferred |
+| 4 | `conductivity` | Conductividad | µS/cm | 0 a 10000 | 0.1 a 1000 | inferred |
+| 5 | `inletPh` | pH de entrada | pH | 0 a 14 | 5.5 a 9 | inferred |
+| 6 | `inletTemperature` | Temperatura de entrada | °C | 0 a 50 | 10 a 30 | inferred |
+| 7 | `tank1Level` | Nivel tanque 1 | m | 0 a 5 | 1 a 2.8 | inferred |
+| 8 | `tank1Volume` | Volumen tanque 1 | m³ | 0 a 10000 | — | inferred |
+| 11 | `outletTurbidity` | Turbiedad de salida | NTU | 0 a 1000 | 0 a 1 | inferred |
+| 13 | `outletPh` | pH de salida | pH | 0 a 14 | 6 a 8 | inferred |
+| 14 | `outletTemperature` | Temperatura de salida | °C | 0 a 50 | 10 a 30 | inferred |
+| 20 | `outletPressure1` | Presión de salida | psi | -15 a 232 | 1 a 3 | inferred |
+
+### La Sirena (`sirena`) — 21 señales
+
+Fuente: `REAL_IN_SIRENA` (Float[50], nsUri `AQUATECH`, `g=A7B368C5-2F51-723A-8108-500CFEB52374`)
+
+| Índice | domainKey | Señal | Unidad | Validez | Rango operativo | Confianza |
+|---|---|---|---|---|---|---|
+| 0 | `inletFlow1` | Caudal de entrada | l/s | 0 a 1000 | — | inferred |
+| 2 | `inletTurbidity` | Turbiedad de entrada | NTU | 0 a 1000 | — | inferred |
+| 3 | `inletOxygen` | Oxígeno de entrada | mg/L | 0 a 20 | — | inferred |
+| 4 | `conductivity` | Conductividad de entrada | µS/cm | 0 a 10000 | — | inferred |
+| 5 | `inletPh` | pH de entrada | pH | 0 a 14 | — | inferred |
+| 6 | `inletTemperature` | Temperatura de entrada | °C | 0 a 50 | — | inferred |
+| 7 | `tank1Level` | Nivel tanque 1 | m | 0 a 5 | 1 a 2.8 | inferred |
+| 8 | `tank1Volume` | Volumen tanque 1 | m³ | 0 a 10000 | — | inferred |
+| 9 | `outletFlow1` | Caudal de salida | l/s | 0 a 1000 | — | inferred |
+| 11 | `outletTurbidity` | Turbiedad de salida | NTU | 0 a 1000 | — | inferred |
+| 12 | `outletChlorine` | Cloro de salida | mg/L | 0 a 10 | — | inferred |
+| 13 | `outletPh` | pH de salida | pH | 0 a 14 | — | inferred |
+| 14 | `outletTemperature` | Temperatura de salida | °C | 0 a 50 | — | inferred |
+| 20 | `inletPressure1` | Presión de entrada | psi | -15 a 232 | — | inferred |
+| 21 | `outletPressure1` | Presión de salida | psi | -15 a 232 | — | inferred |
+| 22 | `tank2Level` | Nivel tanque 2 | m | 0 a 5 | 1 a 2.5 | inferred |
+| 23 | `tank3Level` | Nivel tanque 3 | m | 0 a 5 | 1 a 2.5 | inferred |
+| 24 | `tank4Level` | Nivel tanque 4 | m | 0 a 5 | 1 a 2.5 | inferred |
+| 30 | `tank2Volume` | Volumen tanque 2 | m³ | 0 a 10000 | — | inferred |
+| 31 | `tank3Volume` | Volumen tanque 3 | m³ | 0 a 10000 | — | inferred |
+| 32 | `tank4Volume` | Volumen tanque 4 | m³ | 0 a 10000 | — | inferred |
+
+### Plantas sin señales mapeadas aún
+
+- San Antonio (`san-antonio`)
+- El Quijote (`quijote`)
+
+## Cómo se registra una planta nueva
+
+1. Agregar sus señales a `SIGNALS_BY_SITE` en `apps/api/scripts/generate-mapping.ts`
+   (si el sitio tiene varios buffers del mismo canal e igual tamaño, declarar `sourceBuffer`).
+2. `npm run generate:mapping -w @ptap/api` (regenera mapping y este catálogo).
+3. `npm run validate:mapping -w @ptap/api` y `npm test -w @ptap/api`.
+4. Reiniciar el backend de telemetría para que cargue el mapping nuevo.
+
+## Notas vigentes del mapping
+
+- Identidad canónica = plantId (slug). No usar nombres del frontend ni ptap-N.
+- Las referencias a nodos usan { nsUri, identifier } SIN índice de namespace. El adaptador de Fase 1 DEBE resolver nsUri → índice vía ReadNamespaceArray en CADA conexión y reconexión (el índice de Optix puede cambiar entre reinicios), usando scripts/resolve-namespaces.ts.
+- Si un nsUri del mapping NO está en el NamespaceArray del servidor: NamespaceNotFoundError ⇒ BridgeStatus = Faulted (NO Recovering: no se arregla reintentando). Prohibido fallback a ns=0 o a un índice previo.
+- MANGOS y ALTO_MANGOS fusionados en alto-los-mangos (confirmado). SAN_ANTONO normalizado a san-antonio.
+- Sin export L5X: casi TODA señal de proceso sigue unmapped (signals: []). Única semántica confirmada por lectura: connection (DN/ER/TO de MSG_READ). Ver docs/PHASE0_VERIFICATION.md y docs/MSG_BITS_OBSERVATION.md.
+- Excepción: montebello.signals mapea 6 señales, TODAS con sourceBuffer REAL_IN_MONTEBELLO (g=EBA8E3EB-53A2-0CCD-3912-501C0F7E4C8F; el canal realIn también tiene TK1/TK2/TK3 de 10 elementos): caudal de entrada 1[0] y 2[5] (verificados en vivo, docs/FLOW_VALIDATION.md), caudal de salida[10] l/s; presión de entrada 1[15], de entrada 2[16] y de salida[17] psi (sin rango operativo entregado; confirmación del operador 2026-07-15). confidence: INFERRED. El máximo de caudal (1000 l/s) es un bound físico plausible, no la capacidad de diseño.
+- PENDIENTE DE RECTIFICAR (montebello): sus tanques NO van en los 50 índices del buffer primario — la app original los muestra y en el maestro existen REAL_IN_TK1/TK2/TK3_MONTEBELLO (Float[10], cada uno con su MSG_READ), pero falta la semántica de índices DENTRO de cada TK (¿cuál es nivel, cuál volumen?). El operador sospecha planta hija / tanques compartidos (¿con Campoalegre?). Cuando se confirme, se mapean con sourceBuffer REAL_IN_TK<N>_MONTEBELLO.
+- Excepción: campoalegre.signals mapea outletFlow1 (realIn[0]), outletFlow2 (realIn[7]) en l/s; outletPressure1 (realIn[12]) y outletPressure2 (realIn[13]) en psi; y tanques 1/2/3: nivel en m y volumen en m³ en realIn[5]/[6], realIn[14]/[15] y realIn[16]/[17]. confidence: INFERRED — confirmación del operador desde el HMI de Optix (2026-07-14; identificador verificado: REAL_IN_CAMPOALEGRE = g=E1680D60-7BCD-C892-7257-C4D4AAE41E1C), NO del L5X ni de documento oficial. Rango de presión: instrumento 0–16 bar → max 232 psi. Máximos de nivel (20 m) y volumen (10000 m³) son bounds plausibles, no dimensiones reales del tanque.
+- Los índices de array NO son transferibles entre plantas (realIn[5] es nivel de tanque en campoalegre y caudal en montebello). El código debe direccionar señales SIEMPRE por (plantId, domainKey), nunca por índice global.
+- Excepción: soledad.signals mapea 18 señales, TODAS con sourceBuffer REAL_IN_SOLEDAD (g=19181A21-F548-3D76-D6D9-EDAA324C20F7) porque el sitio tiene dos buffers realIn de 50 elementos y la heurística de primario empataría. Entrada: caudal[0] l/s, turbiedad[2] NTU, oxígeno[3] mg/L, conductividad[4] µS/cm, pH[5], temperatura[6] °C; tanque 1: nivel[7] m (op 0.75–2.8) y volumen[8] m³; salida: caudal[9] l/s, turbiedad[11] NTU, cloro[12] mg/L, pH[13], temperatura[14] °C, presión[20] psi. confidence: INFERRED — confirmación del operador (2026-07-15).
+- PENDIENTE DE RECTIFICAR (soledad): REAL_IN_SOLEDAD trae además tanques de otras plantas — nivel[22]/volumen[30] de SAN ANTONIO (op 1–2.5 m) y nivel[23]/volumen[31] de EL QUIJOTE (op 1–3 m). Se mapearon bajo soledad con domainKeys sanAntonioTank*/quijoteTank* (NO tank2/tank3) para no presentarlos como tanques propios. Si el operador confirma que duplican los buffers REAL_TK_SAN_ANTONO/REAL_TK_QUIJOTE, estas señales migrarán a las plantas san-antonio y quijote.
+- Excepción: cascajal.signals mapea 7 señales de REAL_IN_CASCAJAL (g=F0C27430-68DC-74D7-BDAB-B9EDCC19F8A7, único realIn del sitio): caudal de salida 1[0] y 2[7] l/s; tanque 1 nivel[5] m (op 1–3, lleno a 3 m confirmado por operador) y volumen[6] m³; presión de salida 1[12], de salida 2[13] y de entrada[19] psi (sin rango operativo entregado). confidence: INFERRED — confirmación del operador (2026-07-15).
+- Excepción: alto-los-mangos.signals mapea 6 señales de DATOS_REAL_IN_MANGOS (g=ECA4ABBE-2E70-B864-5B3D-B2E9D1FB7830, único buffer realIn del sitio fusionado): caudal de entrada[0] y salida[7] l/s; tanque 1 nivel[5] m (lleno a 2.5 m, confirmado por operador) y volumen[6] m³; presión de entrada[12] y salida[13] psi (op 1–3). confidence: INFERRED — confirmación del operador (2026-07-14), NO del L5X ni de documento oficial en el repo.
+- Excepción: voragine.signals mapea 6 señales de REAL_IN_VORAGINE (g=93BAFF92-FF57-4877-74E4-B7CC1EFAE6B3, único realIn del sitio): caudal de entrada[0] y salida[7] l/s; presión de entrada[12] y salida[13] psi (sin rango operativo entregado); tanque único = nivel[5]/volumen[6], rango operativo 1–1.97 m y lleno confirmado a 1.97 m. confidence: INFERRED — confirmación del operador (2026-07-15).
+- Excepción: km18.signals mapea 8 señales de REAL_IN_KM18 (g=1C72A21A-8F36-327C-C0AC-CA7A9AA60D96, único realIn del sitio): caudal de entrada[0] y salida[7] l/s; presión de entrada[12] y salida[13] psi (sin rango operativo entregado); tanque 1 = nivel[5]/volumen[6] y tanque 2 = nivel[14]/volumen[15], ambos con rango operativo 1–2 m y lleno confirmado a 2 m. confidence: INFERRED — confirmación del operador (2026-07-15).
+- Excepción: sirena.signals mapea 21 señales, TODAS con sourceBuffer REAL_IN_SIRENA (g=A7B368C5-2F51-723A-8108-500CFEB52374; el canal realIn también tiene los buffers de tanque REAL_TK2/TK3_SIRENA de 10 elementos). Entrada: caudal[0], turbiedad[2], oxígeno[3], conductividad[4], pH[5], temperatura[6], presión[20]. Salida: caudal[9], turbiedad[11], cloro[12], pH[13], temperatura[14], presión[21]. Tanques PROPIOS con lleno confirmado: 1 = nivel[7]/volumen[8] (op 1–2.8 m); 2 = nivel[22]/volumen[30], 3 = nivel[23]/volumen[31], 4 = nivel[24]/volumen[32] (op 1–2.5 m c/u). OJO: en soledad los índices 22/23/30/31 son tanques de OTRAS plantas — los índices no son transferibles. confidence: INFERRED — confirmación del operador (2026-07-15).
+- Excepción: pichinde.signals mapea 2 señales de REAL_IN_PICHINDE (g=C9C97734-E939-9008-A41E-9CA37BB7A2D0, único realIn del sitio): presión de entrada[10] y presión de salida[11] psi (sin rango operativo entregado). confidence: INFERRED — confirmación del operador (2026-07-15). El operador sospecha que el buffer trae más señales y que el sitio podría ser anidado hijo — pendiente de revisar.
+- Excepción: carbonero.signals mapea 12 señales de REAL_IN_CARBONERO (g=A1323D1F-4114-A49D-746E-D6DDBB3C7DE3): entrada = caudal[0] l/s, turbiedad[2] NTU, oxígeno[3] mg/L, conductividad[4] µS/cm, pH[5], temperatura[6] °C; tanque 1 = nivel[7] m, volumen[8] m³; salida = turbiedad[11] NTU, pH[13], temperatura[14] °C, presión[20] psi. confidence: INFERRED — confirmación del operador (2026-07-14), NO del L5X ni de documento oficial en el repo.
+- Validez de presiones: [-15, 232] psi. El min NO es 0: los transmisores manométricos derivan bajo cero (Campoalegre salida 1 leyó -0.74 psi real el 2026-07-15) y el vacío físico llega a ≈ -14.7 psi. Bajo -15 psi es imposible físico ⇒ OUT_OF_RANGE (sensor/escala dañados; p. ej. Carbonero salida -57 psi). PENDIENTE verificar contra HMI: Cascajal presión de entrada lee 384 psi (¿unidad/índice/escala?).
+- opMin/opMax = rango OPERATIVO/normativo entregado por el operador (insumo de alarmas futuras). NO confundir con min/max, que son límites de validez física: una lectura fuera de [opMin,opMax] pero dentro de [min,max] es un dato REAL y usable (p. ej. pH de salida 5.8 o tanque en 0.5 m) que la UI debe mostrar, no descartar.
+- Topología de san-antonio y quijote verificada por browse: son sitios mínimos reales (solo un buffer de tanque + MSG_READ). topologyVerified: true.
+- displayName es provisional (displayNameProvisional: true) hasta confirmación escrita de la planta.
+- generatedFrom.namespaces es referencia histórica de la captura, NO fuente de verdad para el runtime.
