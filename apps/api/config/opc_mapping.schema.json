@@ -121,6 +121,11 @@
         "unit": { "type": "string" },
         "min": { "type": "number" },
         "max": { "type": "number" },
+        "opMin": {
+          "type": "number",
+          "description": "Rango OPERATIVO/normativo esperado (insumo de alarmas futuras). NO es validez del dato: fuera de [opMin,opMax] la lectura sigue siendo usable; la validez física la dan min/max."
+        },
+        "opMax": { "type": "number" },
         "mappingStatus": { "$ref": "#/$defs/mappingStatus" },
         "confidence": { "$ref": "#/$defs/confidence" },
         "writable": { "type": "boolean" }

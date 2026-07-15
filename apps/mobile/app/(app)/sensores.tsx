@@ -15,7 +15,23 @@ const ICONS: Record<string, string> = {
   inletFlow2: 'water-outline',
   outletFlow1: 'water-outline',
   outletFlow2: 'water-outline',
+  inletPressure1: 'speedometer-outline',
   outletPressure1: 'speedometer-outline',
+  outletPressure2: 'speedometer-outline',
+  tank1Level: 'water-outline',
+  tank2Level: 'water-outline',
+  tank3Level: 'water-outline',
+  tank1Volume: 'cube-outline',
+  tank2Volume: 'cube-outline',
+  tank3Volume: 'cube-outline',
+  inletTurbidity: 'color-filter-outline',
+  outletTurbidity: 'color-filter-outline',
+  inletOxygen: 'leaf-outline',
+  conductivity: 'flash-outline',
+  inletPh: 'flask-outline',
+  outletPh: 'flask-outline',
+  inletTemperature: 'thermometer-outline',
+  outletTemperature: 'thermometer-outline',
 };
 
 export default function SensoresScreen() {

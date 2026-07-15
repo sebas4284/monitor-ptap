@@ -60,6 +60,8 @@ export function semanticErrors(mapping: unknown): string[] {
         domainKey?: unknown;
         min?: unknown;
         max?: unknown;
+        opMin?: unknown;
+        opMax?: unknown;
       };
 
       if (typeof s.buffer === 'string' && typeof s.index === 'number') {
@@ -79,6 +81,10 @@ export function semanticErrors(mapping: unknown): string[] {
 
       if (typeof s.min === 'number' && typeof s.max === 'number' && s.min >= s.max) {
         errors.push(`${label}: min >= max (${s.min} >= ${s.max}) en "${String(s.domainKey)}"`);
+      }
+
+      if (typeof s.opMin === 'number' && typeof s.opMax === 'number' && s.opMin >= s.opMax) {
+        errors.push(`${label}: opMin >= opMax (${s.opMin} >= ${s.opMax}) en "${String(s.domainKey)}"`);
       }
     });
 

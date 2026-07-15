@@ -6,7 +6,8 @@ export type { AuthUser };
 /**
  * Cliente REST REAL del backend Monitor PTAP. CERO mocks: los datos salen del pipeline
  * de dominio (PLC → puente → cache RAM → REST). Los placeholders de features aún sin
- * mapear (tanques/válvulas/reportes) viven en services/mock-data.ts, claramente separados.
+ * mapear (válvulas/reportes) viven en services/mock-data.ts, claramente separados;
+ * los tanques ya son reales (services/tanks.ts, derivados del snapshot).
  *
  * La base URL se configura en app.json → expo.extra.apiBaseUrl (o localhost en dev).
  * En un dispositivo físico debe ser la IP LAN del backend, no localhost.

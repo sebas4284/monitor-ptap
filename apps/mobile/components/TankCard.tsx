@@ -1,10 +1,10 @@
 import { View, Text, StyleSheet, Animated } from 'react-native';
 import { useEffect, useRef } from 'react';
-import type { Tank } from '../services/mock-data';
+import type { TankView } from '../services/tanks';
 import Colors from '../constants/colors';
 
 interface Props {
-  tank: Tank;
+  tank: TankView;
 }
 
 function waterColor(pct: number): string {
@@ -14,16 +14,20 @@ function waterColor(pct: number): string {
 }
 
 export function TankCard({ tank }: Props) {
-  const pct = Math.min(100, Math.max(0, tank.percentage));
+  // percentage llega null hasta que la planta confirme la capacidad real del tanque;
+  // en ese caso NO se dibuja % de llenado (sería inventado), solo nivel y volumen reales.
+  const pct = tank.percentage !== null ? Math.min(100, Math.max(0, tank.percentage)) : null;
+  const hasLevel = tank.levelM !== null;
   const fillAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
+    if (pct === null) return;
     Animated.timing(fillAnim, {
       toValue: pct,
       duration: 900,
       useNativeDriver: false,
     }).start();
-  }, [pct]);
+  }, [pct, fillAnim]);
 
   const fillHeight = fillAnim.interpolate({
     inputRange: [0, 100],
@@ -36,28 +40,38 @@ export function TankCard({ tank }: Props) {
 
       <View style={styles.tankWrap}>
         <View style={styles.tankOuter}>
-          <Animated.View
-            style={[
-              styles.fill,
-              { height: fillHeight, backgroundColor: waterColor(pct) },
-            ]}
-          >
-            <View style={styles.wave} />
-          </Animated.View>
+          {pct !== null ? (
+            <Animated.View
+              style={[
+                styles.fill,
+                { height: fillHeight, backgroundColor: waterColor(pct) },
+              ]}
+            >
+              <View style={styles.wave} />
+            </Animated.View>
+          ) : hasLevel ? (
+            <View style={[styles.fill, styles.fillUnknownCapacity]} />
+          ) : null}
         </View>
         <View style={styles.overlay} pointerEvents="none">
           <View style={styles.pctOverlay}>
-            <Text style={[styles.pctText, { color: pct > 55 ? '#fff' : Colors.primary }]}>
-              {Math.round(pct)}%
-            </Text>
+            {pct !== null ? (
+              <Text style={[styles.pctText, { color: pct > 55 ? '#fff' : Colors.primary }]}>
+                {Math.round(pct)}%
+              </Text>
+            ) : (
+              <Text style={[styles.levelText, { color: hasLevel ? Colors.primary : Colors.textSecondary }]}>
+                {hasLevel ? `${tank.levelM!.toFixed(1)} m` : '—'}
+              </Text>
+            )}
           </View>
         </View>
       </View>
 
       <View style={styles.info}>
-        <InfoRow label="Nivel"   value={`${tank.levelM.toFixed(1)} m`} />
-        <InfoRow label="Rango"   value={`0–${tank.maxLevelM} m`} />
-        <InfoRow label="Volumen" value={`${tank.volumeM3} m³`} />
+        <InfoRow label="Nivel"   value={tank.levelM !== null ? `${tank.levelM.toFixed(2)} m` : 'Sin dato'} />
+        <InfoRow label="Volumen" value={tank.volumeM3 !== null ? `${tank.volumeM3.toFixed(1)} m³` : 'Sin dato'} />
+        <InfoRow label="Llenado" value={pct !== null ? `${Math.round(pct)}%` : 'Por confirmar'} />
       </View>
     </View>
   );
@@ -114,6 +128,10 @@ const styles = StyleSheet.create({
     width: '100%',
     borderRadius: 8,
   },
+  fillUnknownCapacity: {
+    height: '100%',
+    backgroundColor: 'rgba(79, 195, 247, 0.22)',
+  },
   wave: {
     position: 'absolute',
     top: 3,
@@ -131,6 +149,10 @@ const styles = StyleSheet.create({
   },
   pctText: {
     fontSize: 16,
+    fontWeight: '800',
+  },
+  levelText: {
+    fontSize: 14,
     fontWeight: '800',
   },
   info: {
