@@ -1,6 +1,6 @@
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import type { Valve } from '../services/api';
+import type { Valve } from '../services/mock-data';
 import Colors from '../constants/colors';
 
 interface Props {

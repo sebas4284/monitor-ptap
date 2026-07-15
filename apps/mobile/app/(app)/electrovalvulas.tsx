@@ -42,7 +42,7 @@ export default function ElectrovalvulasScreen() {
       >
         <View style={styles.sectionHeader}>
           <View>
-            <Text style={styles.plantName}>{selectedPlant}</Text>
+            <Text style={styles.plantName}>{selectedPlant.name}</Text>
             <Text style={styles.sectionSubtitle}>Electroválvulas</Text>
           </View>
           {effectiveValves && (
@@ -72,7 +72,7 @@ export default function ElectrovalvulasScreen() {
         )}
       </ScrollView>
 
-      <LiveBadge />
+      <LiveBadge state="unknown" />
     </SafeAreaView>
   );
 }

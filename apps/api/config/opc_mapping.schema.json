@@ -115,12 +115,22 @@
       "required": ["buffer", "index", "domainKey", "mappingStatus", "confidence", "writable"],
       "properties": {
         "buffer": { "$ref": "#/$defs/channel" },
+        "sourceBuffer": {
+          "type": "string",
+          "minLength": 1,
+          "description": "browseName EXACTO del buffer fuente dentro del canal `buffer`. Obligatorio cuando el sitio tiene varios buffers del mismo canal con igual tamaño (p. ej. SOLEDAD: REAL_IN_SOLEDAD Float[50] y DATOS_IN_PTAP_SOLEDAD Int16[50]) — sin él, la resolución por 'el de más elementos' sería no determinista. Ausente ⇒ buffer primario del canal."
+        },
         "index": { "type": "integer", "minimum": 0 },
         "domainKey": { "type": "string", "minLength": 1, "pattern": "^[a-zA-Z][a-zA-Z0-9_.]*$" },
         "label": { "type": "string" },
         "unit": { "type": "string" },
         "min": { "type": "number" },
         "max": { "type": "number" },
+        "opMin": {
+          "type": "number",
+          "description": "Rango OPERATIVO/normativo esperado (insumo de alarmas futuras). NO es validez del dato: fuera de [opMin,opMax] la lectura sigue siendo usable; la validez física la dan min/max."
+        },
+        "opMax": { "type": "number" },
         "mappingStatus": { "$ref": "#/$defs/mappingStatus" },
         "confidence": { "$ref": "#/$defs/confidence" },
         "writable": { "type": "boolean" }

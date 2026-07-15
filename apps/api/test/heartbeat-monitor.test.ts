@@ -64,7 +64,8 @@ test('heartbeat: getStats registra timestamps de último probe y último exitoso
   mode = 'fail';
   await monitor.runOnce();
   const afterFail = monitor.getStats();
-  // el último probe avanzó, pero el último exitoso quedó atrás
-  assert.notEqual(afterFail.lastHeartbeatAt, afterFail.lastSuccessfulHeartbeatAt);
+  // El último exitoso queda CONGELADO en el valor del OK previo; el probe fallido no lo toca.
   assert.equal(afterFail.lastSuccessfulHeartbeatAt, afterOk.lastSuccessfulHeartbeatAt);
+  assert.equal(afterFail.heartbeatFailures, 1);
+  assert.equal(afterFail.heartbeatFailuresTotal, 1);
 });

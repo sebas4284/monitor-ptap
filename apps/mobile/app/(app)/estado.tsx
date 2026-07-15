@@ -1,31 +1,41 @@
 import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useQuery } from '@tanstack/react-query';
-import { fetchTanks } from '../../services/api';
+import { useSnapshot } from '../../hooks/useSnapshot';
+import { tanksFromSnapshot } from '../../services/tanks';
+import { PLANTS } from '../../context/PlantContext';
 import { useAuth } from '../../context/AuthContext';
 import Colors from '../../constants/colors';
 
+// Bajo esta cota (m) un tanque se considera prácticamente vacío. Umbral operativo
+// provisional: sin la capacidad real del tanque no se puede juzgar "nivel bajo" en %.
+const EMPTY_LEVEL_M = 0.2;
+
 export default function EstadoScreen() {
   const { user } = useAuth();
-  const plant = user?.plant ?? 'PTAP Norte';
+  const plantId = user?.plant ?? 'montebello';
+  const plantName = PLANTS.find((p) => p.id === plantId)?.name ?? plantId;
 
-  const { data: tanks } = useQuery({
-    queryKey: ['tanks', plant],
-    queryFn: () => fetchTanks(plant),
-    refetchInterval: 30_000,
-  });
+  const { data: snapshot } = useSnapshot(plantId);
+  const tanks = tanksFromSnapshot(snapshot);
+  // Los tanques externos (de otras plantas, retransmitidos) no deciden el agua de esta.
+  const withLevel = tanks.filter((t) => !t.external && t.levelM !== null);
 
-  const avgPct = tanks
-    ? Math.round(tanks.reduce((sum, t) => sum + t.percentage, 0) / tanks.length)
-    : null;
-  const waterOk = (avgPct ?? 0) > 20;
+  const hasData = withLevel.length > 0;
+  const waterOk = hasData && withLevel.every((t) => t.levelM! > EMPTY_LEVEL_M);
+  const levelsDesc = withLevel.map((t) => `${t.name}: ${t.levelM!.toFixed(1)} m`).join(' · ');
+
+  const water = hasData
+    ? waterOk
+      ? { icon: 'water' as const, color: Colors.primaryLight, title: 'Agua disponible', desc: levelsDesc }
+      : { icon: 'water-outline' as const, color: Colors.warning, title: 'Nivel bajo de agua', desc: levelsDesc }
+    : { icon: 'help-circle-outline' as const, color: Colors.neutral, title: 'Sin datos de tanques', desc: 'Esta planta aún no tiene señales de tanque mapeadas.' };
 
   return (
     <SafeAreaView style={styles.safe} edges={['bottom']}>
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.heading}>Estado General del Sistema</Text>
-        <Text style={styles.subheading}>{plant}</Text>
+        <Text style={styles.subheading}>{plantName}</Text>
 
         <View style={styles.card}>
           <View style={[styles.iconCircle, { backgroundColor: Colors.success + '20' }]}>
@@ -36,21 +46,11 @@ export default function EstadoScreen() {
         </View>
 
         <View style={styles.card}>
-          <View style={[styles.iconCircle, { backgroundColor: (waterOk ? Colors.primaryLight : Colors.warning) + '20' }]}>
-            <Ionicons
-              name={waterOk ? 'water' : 'water-outline'}
-              size={52}
-              color={waterOk ? Colors.primaryLight : Colors.warning}
-            />
+          <View style={[styles.iconCircle, { backgroundColor: water.color + '20' }]}>
+            <Ionicons name={water.icon} size={52} color={water.color} />
           </View>
-          <Text style={styles.statusTitle}>
-            {waterOk ? 'Agua disponible' : 'Nivel bajo de agua'}
-          </Text>
-          {avgPct !== null && (
-            <Text style={styles.statusDesc}>
-              Nivel promedio de almacenamiento: {avgPct}%
-            </Text>
-          )}
+          <Text style={styles.statusTitle}>{water.title}</Text>
+          <Text style={styles.statusDesc}>{water.desc}</Text>
         </View>
 
         <View style={styles.infoBox}>

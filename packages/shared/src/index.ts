@@ -119,3 +119,24 @@ export const ROLE_COLORS: Record<Role, string> = {
   jefe: '#6A1B9A',
   admin: '#B71C1C',
 };
+
+/**
+ * Tier de acceso al backend (Fase 4 — RBAC de endpoints). Independiente de
+ * ROLE_PERMISSIONS (que gobierna features de UI en el móvil): un endpoint HTTP se
+ * gatea por tier, no por permiso granular.
+ */
+export type RoleTier = 'viewer' | 'operator' | 'admin';
+
+export const ROLE_TIER: Record<Role, RoleTier> = {
+  civil: 'viewer',
+  jefe: 'viewer',
+  operador: 'operator',
+  admin: 'admin',
+};
+
+const TIER_ORDER: RoleTier[] = ['viewer', 'operator', 'admin'];
+
+/** true si `role` alcanza al menos `minTier` (jerarquía viewer < operator < admin). */
+export function tierAtLeast(role: Role, minTier: RoleTier): boolean {
+  return TIER_ORDER.indexOf(ROLE_TIER[role]) >= TIER_ORDER.indexOf(minTier);
+}

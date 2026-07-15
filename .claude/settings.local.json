@@ -4,7 +4,23 @@
       "PowerShell(Get-ChildItem \"C:\\\\Users\\\\Proyectos\\\\monitor-ptap\" | Where-Object { -not $_.PSIsContainer } | Select-Object -ExpandProperty Name)",
       "Bash(git init *)",
       "Bash(git add *)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(cp /tmp/decorator-repro.test.ts src/decorator-repro.scratch.ts)",
+      "Bash(sed -i \"s/import { test } from 'node:test';/import { test } from 'node:test';\\\\n\\\\/\\\\/scratch/\" src/decorator-repro.scratch.ts)",
+      "Bash(node --import tsx -e \"require\\('./src/decorator-repro.scratch.ts'\\)\")",
+      "Bash(node --import tsx --test test/rbac-e2e.test.ts)",
+      "Bash(rm -f test/tsconfig.json)",
+      "Bash(cp /tmp/decorator-repro.test.ts test/decorator-repro.test.ts)",
+      "Bash(node -e ' *)",
+      "Bash(TSX_TSCONFIG_PATH=./tsconfig.json node --import tsx --test test/decorator-repro.test.ts)",
+      "Bash(cp tsconfig.json /tmp/tsconfig.json.bak)",
+      "Bash(node --import tsx --test test/decorator-repro.test.ts)",
+      "Bash(npm run *)",
+      "Bash(npx tsc *)",
+      "Bash(TSX_TSCONFIG_PATH=./tsconfig.test.json node --import tsx --test test/rbac-e2e.test.ts)"
+    ],
+    "additionalDirectories": [
+      "\\tmp"
     ]
   }
 }

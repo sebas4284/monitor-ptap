@@ -4,6 +4,7 @@ const Colors = {
   success: '#4CAF50',
   danger: '#F44336',
   warning: '#FF9800',
+  neutral: '#9CA3AF',
   bg: '#FFFFFF',
   surface: '#F5F7FA',
   textPrimary: '#1A1A2E',

@@ -56,10 +56,13 @@ export function semanticErrors(mapping: unknown): string[] {
       if (typeof signal !== 'object' || signal === null) return;
       const s = signal as {
         buffer?: unknown;
+        sourceBuffer?: unknown;
         index?: unknown;
         domainKey?: unknown;
         min?: unknown;
         max?: unknown;
+        opMin?: unknown;
+        opMax?: unknown;
       };
 
       if (typeof s.buffer === 'string' && typeof s.index === 'number') {
@@ -79,6 +82,21 @@ export function semanticErrors(mapping: unknown): string[] {
 
       if (typeof s.min === 'number' && typeof s.max === 'number' && s.min >= s.max) {
         errors.push(`${label}: min >= max (${s.min} >= ${s.max}) en "${String(s.domainKey)}"`);
+      }
+
+      if (typeof s.opMin === 'number' && typeof s.opMax === 'number' && s.opMin >= s.opMax) {
+        errors.push(`${label}: opMin >= opMax (${s.opMin} >= ${s.opMax}) en "${String(s.domainKey)}"`);
+      }
+
+      // sourceBuffer debe nombrar un buffer real del canal declarado en esa planta.
+      if (typeof s.sourceBuffer === 'string' && typeof s.buffer === 'string') {
+        const chanBufs = (plant as { opcBuffers?: Record<string, unknown> }).opcBuffers?.[s.buffer];
+        const names = Array.isArray(chanBufs)
+          ? chanBufs.map((b) => (b as { browseName?: unknown }).browseName)
+          : [];
+        if (!names.includes(s.sourceBuffer)) {
+          errors.push(`${label}: sourceBuffer "${s.sourceBuffer}" no existe en opcBuffers.${s.buffer}`);
+        }
       }
     });
 

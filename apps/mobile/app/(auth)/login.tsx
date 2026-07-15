@@ -23,7 +23,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useAuth } from '../../context/AuthContext';
-import { apiLogin } from '../../services/api';
+import { apiLogin } from '../../services/auth';
 import Colors from '../../constants/colors';
 
 export default function LoginScreen() {

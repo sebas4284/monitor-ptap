@@ -24,11 +24,40 @@ export interface MonitorTarget {
   dataType: string | null;
 }
 
+/** Señal de proceso mapeada: un elemento de un buffer con semántica de dominio. */
+export interface SignalMapping {
+  plantId: string;
+  buffer: string; // canal (realIn, intIn, …); refiere al buffer PRIMARIO de ese canal en el sitio
+  /** browseName exacto del buffer fuente. Obligatorio si el canal tiene varios buffers del mismo tamaño (la resolución por tamaño sería no determinista). */
+  sourceBuffer?: string | null;
+  index: number;
+  domainKey: string;
+  label: string | null;
+  unit: string | null;
+  min: number | null;
+  max: number | null;
+  /** Rango operativo/normativo (se expone en el DTO para que el front lo muestre). */
+  opMin?: number | null;
+  opMax?: number | null;
+  mappingStatus: 'mapped' | 'unmapped';
+  confidence: 'confirmed' | 'inferred' | 'estimated';
+  writable: boolean;
+}
+
+export interface LoadedPlant {
+  plantId: string;
+  displayName: string;
+  /** Ventana de liveness específica del sitio (s). null → usar el default de .env. */
+  livenessWindowSec: number | null;
+}
+
 export interface LoadedMapping {
   version: string;
   protocolVersion: string;
-  plants: Array<{ plantId: string; displayName: string }>;
+  dtoVersion: string;
+  plants: LoadedPlant[];
   targets: MonitorTarget[];
+  signals: SignalMapping[];
   raw: unknown; // el documento completo, para resolveNamespaces()
 }
 
@@ -52,18 +81,37 @@ function resolvePath(explicit?: string): string {
   return found;
 }
 
+interface RawSignal {
+  buffer?: string;
+  sourceBuffer?: string;
+  index?: number;
+  domainKey?: string;
+  label?: string;
+  unit?: string;
+  min?: number;
+  max?: number;
+  opMin?: number;
+  opMax?: number;
+  mappingStatus?: string;
+  confidence?: string;
+  writable?: boolean;
+}
+
 export function loadMapping(explicitPath?: string): LoadedMapping {
   const path = resolvePath(explicitPath);
   const doc = JSON.parse(readFileSync(path, 'utf8')) as {
     version?: string;
     protocolVersion?: string;
+    dtoVersion?: string;
     plants?: Array<{
       plantId?: string;
       displayName?: string;
+      livenessWindowSec?: number;
       opcBuffers?: Record<
         string,
         Array<{ browseName?: string; node?: { nsUri?: string; identifier?: string }; arrayLength?: number | null; dataType?: string | null }>
       >;
+      signals?: RawSignal[];
     }>;
   };
 
@@ -72,11 +120,16 @@ export function loadMapping(explicitPath?: string): LoadedMapping {
   }
 
   const targets: MonitorTarget[] = [];
-  const plants: Array<{ plantId: string; displayName: string }> = [];
+  const signals: SignalMapping[] = [];
+  const plants: LoadedPlant[] = [];
 
   for (const plant of doc.plants) {
     if (!plant.plantId) throw new Error(`opc_mapping.json: planta sin plantId en ${path}`);
-    plants.push({ plantId: plant.plantId, displayName: plant.displayName ?? plant.plantId });
+    plants.push({
+      plantId: plant.plantId,
+      displayName: plant.displayName ?? plant.plantId,
+      livenessWindowSec: typeof plant.livenessWindowSec === 'number' ? plant.livenessWindowSec : null,
+    });
 
     for (const [channel, buffers] of Object.entries(plant.opcBuffers ?? {})) {
       if (!DATA_CHANNELS.has(channel)) continue;
@@ -94,13 +147,37 @@ export function loadMapping(explicitPath?: string): LoadedMapping {
         });
       }
     }
+
+    for (const s of plant.signals ?? []) {
+      if (!s.buffer || typeof s.index !== 'number' || !s.domainKey) {
+        throw new Error(`opc_mapping.json: signal inválida en ${plant.plantId} (buffer/index/domainKey)`);
+      }
+      signals.push({
+        plantId: plant.plantId,
+        buffer: s.buffer,
+        sourceBuffer: typeof s.sourceBuffer === 'string' ? s.sourceBuffer : null,
+        index: s.index,
+        domainKey: s.domainKey,
+        label: s.label ?? null,
+        unit: s.unit ?? null,
+        min: typeof s.min === 'number' ? s.min : null,
+        max: typeof s.max === 'number' ? s.max : null,
+        opMin: typeof s.opMin === 'number' ? s.opMin : null,
+        opMax: typeof s.opMax === 'number' ? s.opMax : null,
+        mappingStatus: s.mappingStatus === 'unmapped' ? 'unmapped' : 'mapped',
+        confidence: (s.confidence as SignalMapping['confidence']) ?? 'inferred',
+        writable: s.writable === true,
+      });
+    }
   }
 
   return {
     version: doc.version ?? '0.0.0',
     protocolVersion: doc.protocolVersion ?? 'v0',
+    dtoVersion: doc.dtoVersion ?? 'v1',
     plants,
     targets,
+    signals,
     raw: doc,
   };
 }
