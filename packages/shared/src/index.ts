@@ -20,6 +20,22 @@ export interface AuthUser {
   plant: string;
 }
 
+/**
+ * Usuario tal como lo expone la API de administración (GET /api/users). NUNCA lleva
+ * password_hash ni pepper_version. Fuente única compartida backend↔móvil.
+ */
+export interface UserSummary {
+  id: string;
+  email: string;
+  name: string;
+  phone: string | null;
+  role: Role;
+  plant: string;
+  isActive: boolean;
+  lastLoginAt: string | null;
+  createdAt: string | null;
+}
+
 export type ConnectionStatus = 'connected' | 'disconnected' | 'mock';
 
 export interface Sensor {
@@ -99,6 +115,34 @@ export function hasPermission(role: Role, permission: Permission): boolean {
   return ROLE_PERMISSIONS[role].includes(permission);
 }
 
+/** Todos los permisos, en el orden de la matriz oficial (para renderizarla en la UI). */
+export const PERMISSIONS: Permission[] = [
+  'view_dashboard',
+  'acknowledge_alarms',
+  'adjust_setpoints',
+  'view_event_logs',
+  'control_valves',
+  'manage_users',
+  'assign_roles',
+  'configure_alarms',
+  'export_data',
+  'system_config',
+];
+
+/** Texto de cada permiso, tal como aparece en la matriz oficial del cronograma. */
+export const PERMISSION_LABELS: Record<Permission, string> = {
+  view_dashboard: 'Ver el panel principal y los datos en tiempo real',
+  acknowledge_alarms: 'Reconocer y silenciar alarmas activas',
+  adjust_setpoints: 'Ajustar parámetros o setpoints de operación',
+  view_event_logs: 'Ver los registros de eventos del sistema',
+  control_valves: 'Abrir y cerrar válvulas',
+  manage_users: 'Crear, editar y eliminar usuarios',
+  assign_roles: 'Asignar roles a los usuarios',
+  configure_alarms: 'Configurar los límites de las alarmas',
+  export_data: 'Exportar el historial completo de datos',
+  system_config: 'Acceder a la configuración general del sistema',
+};
+
 export const ROLE_LABELS: Record<Role, string> = {
   civil: 'Civil',
   operador: 'Operador',
@@ -120,23 +164,7 @@ export const ROLE_COLORS: Record<Role, string> = {
   admin: '#B71C1C',
 };
 
-/**
- * Tier de acceso al backend (Fase 4 — RBAC de endpoints). Independiente de
- * ROLE_PERMISSIONS (que gobierna features de UI en el móvil): un endpoint HTTP se
- * gatea por tier, no por permiso granular.
- */
-export type RoleTier = 'viewer' | 'operator' | 'admin';
-
-export const ROLE_TIER: Record<Role, RoleTier> = {
-  civil: 'viewer',
-  jefe: 'viewer',
-  operador: 'operator',
-  admin: 'admin',
-};
-
-const TIER_ORDER: RoleTier[] = ['viewer', 'operator', 'admin'];
-
-/** true si `role` alcanza al menos `minTier` (jerarquía viewer < operator < admin). */
-export function tierAtLeast(role: Role, minTier: RoleTier): boolean {
-  return TIER_ORDER.indexOf(ROLE_TIER[role]) >= TIER_ORDER.indexOf(minTier);
-}
+// El RBAC del backend (Fase 4) gatea por permiso granular usando ROLE_PERMISSIONS/
+// hasPermission (arriba) — la MISMA fuente que consume el móvil para features de UI.
+// Se retiró el antiguo sistema paralelo de tiers (RoleTier/ROLE_TIER/tierAtLeast) porque
+// no podía expresar la matriz oficial (p. ej. `jefe` = todo lo del operador salvo válvulas).

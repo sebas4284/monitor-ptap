@@ -6,14 +6,19 @@ import {
   ClientMonitoredItem,
   ClientSession,
   ClientSubscription,
+  DataType,
   DataValue,
   MessageSecurityMode,
+  NumericRange,
   OPCUACertificateManager,
   OPCUAClient,
   resolveNodeId,
   SecurityPolicy,
+  StatusCodes,
   TimestampsToReturn,
   UserTokenType,
+  Variant,
+  VariantArrayType,
 } from 'node-opcua';
 import type { UserIdentityInfo } from 'node-opcua';
 import { coerceCertificate } from 'node-opcua-crypto';
@@ -27,13 +32,23 @@ import { NamespaceNotFoundError, resolveNamespaces } from '../../opcua/namespace
 import type {
   AdapterDiagnostics,
   BridgeStatus,
+  BufferElementRead,
+  BufferElementTarget,
   BufferHealth,
   ConnectivityAdapter,
   OpcQuality,
   RawBufferSample,
   RawPlantFrame,
   ServerInfo,
+  WriteSecurity,
 } from '../../ports/connectivity-adapter.port';
+
+/** Tipo OPC UA del elemento según el canal de buffer (para construir el Variant de escritura). */
+function channelDataType(channel: string): DataType {
+  if (channel === 'realIn' || channel === 'realOut') return DataType.Double;
+  if (channel === 'bitIn' || channel === 'bitOut') return DataType.Boolean;
+  return DataType.Int32; // intIn | intOut | msgRead | msgWrite
+}
 
 interface ResolvedTarget extends MonitorTarget {
   nodeId: string;
@@ -564,5 +579,59 @@ export class OpcUaConnectivityAdapter implements ConnectivityAdapter {
       faulted: !t.resolved,
       reason: t.faultReason,
     }));
+  }
+
+  // ── Fase 5: canal de escritura ──────────────────────────────────────────────
+  // NOTA: la seguridad (precondición dura) y los interlocks los aplica el WriteService
+  // ANTES de llamar aquí. Estos métodos solo hacen el I/O OPC UA sobre un elemento.
+
+  getWriteSecurity(): WriteSecurity {
+    const secure = this.config.securityMode === 'SignAndEncrypt' && this.config.identity.type !== 'anonymous';
+    return { secure, securityMode: this.config.securityMode, identity: this.config.identity.type };
+  }
+
+  async writeBufferElement(target: BufferElementTarget, value: number | boolean): Promise<void> {
+    const resolved = this.findResolvedElement(target);
+    const statusCode = await this.session!.write({
+      nodeId: resolveNodeId(resolved.nodeId),
+      attributeId: AttributeIds.Value,
+      indexRange: new NumericRange(target.index), // escribe UN elemento del array (regla 6: nunca el array entero por gusto)
+      value: {
+        value: new Variant({
+          dataType: channelDataType(target.channel),
+          arrayType: VariantArrayType.Array,
+          value: [value],
+        }),
+      },
+    });
+    if (statusCode.value !== StatusCodes.Good.value) {
+      throw new Error(`write OPC UA rechazado (${statusCode.toString()}) en ${target.sourceBuffer}[${target.index}]`);
+    }
+  }
+
+  async readBufferElement(target: BufferElementTarget): Promise<BufferElementRead> {
+    const resolved = this.findResolvedElement(target);
+    const dv = await this.session!.read({
+      nodeId: resolveNodeId(resolved.nodeId),
+      attributeId: AttributeIds.Value,
+      indexRange: new NumericRange(target.index),
+    });
+    const raw = Array.isArray(dv.value?.value) ? dv.value.value[0] : dv.value?.value;
+    const value = typeof raw === 'boolean' ? raw : raw == null ? null : Number(raw);
+    return {
+      value,
+      quality: isGoodStatus(dv.statusCode) ? 'Good' : 'Bad',
+      sourceTimestamp: dv.sourceTimestamp ? new Date(dv.sourceTimestamp).toISOString() : null,
+    };
+  }
+
+  private findResolvedElement(target: BufferElementTarget): ResolvedTarget {
+    if (!this.session) throw new Error('sin sesión OPC UA activa');
+    const t = this.targets.find(
+      (x) => x.plantId === target.plantId && x.channel === target.channel && x.browseName === target.sourceBuffer,
+    );
+    if (!t) throw new Error(`buffer no encontrado para escribir/leer: ${target.plantId}/${target.channel}/${target.sourceBuffer}`);
+    if (!t.resolved) throw new Error(`buffer no resuelto (faulted): ${target.sourceBuffer}`);
+    return t;
   }
 }

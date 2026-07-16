@@ -14,9 +14,11 @@ async function bootstrap() {
 
   app.use(helmet());
   app.use(rateLimit({ windowMs: hardening.rateLimit.windowMs, max: hardening.rateLimit.max }));
-  // Límite más estricto solo para login (mitiga fuerza bruta) — se registra antes del
-  // global para /api/auth/login; ambos aplican (express-rate-limit apila por path).
-  app.use('/api/auth/login', rateLimit({ windowMs: hardening.loginRateLimit.windowMs, max: hardening.loginRateLimit.max }));
+  // Límite más estricto para login (mitiga fuerza bruta) y para registro (mitiga alta masiva
+  // de cuentas) — ambos apilan con el global (express-rate-limit apila por path).
+  const authLimiter = rateLimit({ windowMs: hardening.loginRateLimit.windowMs, max: hardening.loginRateLimit.max });
+  app.use('/api/auth/login', authLimiter);
+  app.use('/api/auth/register', authLimiter);
   if (hardening.corsOrigins) {
     app.enableCors({ origin: hardening.corsOrigins, credentials: true });
   }

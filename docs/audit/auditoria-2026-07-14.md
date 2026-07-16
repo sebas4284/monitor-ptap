@@ -62,3 +62,21 @@ Verificado al cierre: `npm run typecheck` limpio en las 3 workspaces (`@ptap/api
 2. Decidir si se integra `/api/auth/login` en el móvil ahora o se pospone a la fase que toque
    frontend.
 3. Fase 5: canal de comandos de escritura (interlocks, idempotencia, feature flag).
+
+## Actualización 2026-07-15 — ajustes de cierre antes de Fase 5
+
+Dos deudas de esta sesión se cerraron antes de abrir Fase 5 (ver plan de ajustes):
+
+- **RBAC de tiers → permisos.** El modelo de tiers (`viewer|operator|admin`) de esta sesión no
+  podía expresar la matriz oficial: el **Jefe de PTAP** hace todo lo del Operador **salvo** abrir/
+  cerrar válvulas. Se migró a permisos granulares reutilizando `ROLE_PERMISSIONS`/`hasPermission()`
+  de `@ptap/shared` (la misma fuente que ya consume el móvil): `@MinTier(tier)` → `@RequirePermission(permiso)`,
+  `MinTierGuard` → `PermissionGuard`, y se retiró `RoleTier`/`ROLE_TIER`/`tierAtLeast` de `@ptap/shared`.
+  Los diagnósticos admin (`/api/opc/info|buffers|dead-letter`) ahora exigen `system_config`; las
+  lecturas solo exigen JWT válido (sin regresión). Los comandos de Fase 5 usarán `control_valves`
+  (el jefe NO lo tiene) y `acknowledge_alarms`/`adjust_setpoints` (el jefe SÍ).
+- **Auditoría de accesos denegados.** El `AuditInterceptor` (solo registraba éxitos; los guards
+  corren antes que los interceptores en NestJS) se reemplazó por `AuditMiddleware`
+  (`res.on('finish')`), que registra **200, 401 y 403** en `audit_log` — con el usuario que
+  `JwtAuthGuard` haya seteado en un 403. También quedó auditado `/api/opc/status`, que antes no lo
+  estaba. Cobertura nueva: `test/audit-middleware.test.ts` y el caso `jefe` en `test/rbac-e2e.test.ts`.

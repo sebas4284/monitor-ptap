@@ -10,8 +10,14 @@ import {
   Alert,
   ActivityIndicator,
   StyleSheet,
-  TextInputProps,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import { router } from 'expo-router';
+import { apiRegister } from '../../services/auth';
+import { useAuth } from '../../context/AuthContext';
+import { PLANTS } from '../../context/PlantContext';
+import Colors from '../../constants/colors';
 
 function alertWeb(title: string, message: string, onDismiss?: () => void) {
   if (Platform.OS === 'web') {
@@ -21,41 +27,48 @@ function alertWeb(title: string, message: string, onDismiss?: () => void) {
     Alert.alert(title, message, onDismiss ? [{ text: 'OK', onPress: onDismiss }] : undefined);
   }
 }
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
-import { apiRegister } from '../../services/auth';
-import { PLANTS } from '../../context/PlantContext';
-import { ROLES, ROLE_LABELS, ROLE_DESCRIPTIONS, type Role } from '@ptap/shared';
-import Colors from '../../constants/colors';
 
+/**
+ * Alta de cuenta. NO hay selector de rol a propósito: toda cuenta nueva nace como **Civil**
+ * (solo lectura) y solo un Administrador puede elevarla (matriz oficial: "Asignar roles a
+ * los usuarios" → solo Admin). El backend además rechaza cualquier `role` que llegue en el
+ * body, así que esto no es solo cosmético.
+ *
+ * `plant` guarda el SLUG canónico (voragine), no el nombre visible (La Vorágine): el plantId
+ * es la única identidad del sistema.
+ */
 export default function RegisterScreen() {
+  const { login } = useAuth();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
-  const [plant, setPlant] = useState<string>(PLANTS[0].name);
-  const [role, setRole] = useState<Role>('operador');
+  const [plant, setPlant] = useState<string>(PLANTS[0].id); // slug, no displayName
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showPlantPicker, setShowPlantPicker] = useState(false);
-  const [showRolePicker, setShowRolePicker] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
+  const plantLabel = PLANTS.find((p) => p.id === plant)?.name ?? plant;
+
   async function handleRegister() {
-    if (!name.trim() || !email.trim() || !phone.trim() || !password.trim()) {
-      alertWeb('Campos requeridos', 'Por favor completa todos los campos.');
+    if (!name.trim() || !email.trim() || !password.trim()) {
+      alertWeb('Campos requeridos', 'Nombre, correo y contraseña son obligatorios.');
       return;
     }
     setIsLoading(true);
     try {
-      await apiRegister({ name, email, phone, plant, role, password });
-      alertWeb(
-        '¡Cuenta creada!',
-        'Tu cuenta fue registrada. Ahora puedes iniciar sesión.',
-        () => router.replace('/(auth)/login'),
-      );
-    } catch {
-      alertWeb('Error', 'No se pudo crear la cuenta. Intenta de nuevo.');
+      // El backend responde token+user (rol civil) → se entra directo.
+      const { token, user } = await apiRegister({
+        name: name.trim(),
+        email: email.trim(),
+        phone: phone.trim(),
+        plant,
+        password,
+      });
+      await login(token, user);
+      router.replace('/(app)/estado'); // civil → vista básica
+    } catch (err) {
+      alertWeb('No se pudo crear la cuenta', err instanceof Error ? err.message : 'Intenta de nuevo.');
     } finally {
       setIsLoading(false);
     }
@@ -63,146 +76,85 @@ export default function RegisterScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.flex}
-      >
-        <ScrollView
-          contentContainerStyle={styles.scroll}
-          keyboardShouldPersistTaps="handled"
-        >
-          {/* Back */}
-          <TouchableOpacity onPress={() => router.back()} style={styles.back}>
-            <Ionicons name="arrow-back" size={24} color={Colors.primary} />
-          </TouchableOpacity>
-
-          {/* Hero */}
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.flex}>
+        <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
           <View style={styles.hero}>
-            <View style={styles.iconWrap}>
-              <Ionicons name="person-add" size={40} color="#fff" />
-            </View>
             <Text style={styles.title}>Crear cuenta</Text>
-            <Text style={styles.subtitle}>Regístrate como operador PTAP</Text>
+            <Text style={styles.subtitle}>Monitor PTAP</Text>
           </View>
 
-          <Field
-            label="Nombre completo"
-            icon="person-outline"
-            value={name}
-            onChangeText={setName}
-            placeholder="Juan Pérez"
-            autoCapitalize="words"
-          />
-          <Field
-            label="Correo electrónico"
-            icon="mail-outline"
+          <View style={styles.notice}>
+            <Ionicons name="information-circle-outline" size={18} color={Colors.primary} />
+            <Text style={styles.noticeText}>
+              Tu cuenta se crea como <Text style={styles.noticeStrong}>Civil</Text> (solo consulta).
+              Si necesitas más acceso, un administrador puede ampliarlo.
+            </Text>
+          </View>
+
+          <Text style={styles.label}>Nombre completo</Text>
+          <TextInput style={styles.input} value={name} onChangeText={setName} placeholder="Tu nombre" placeholderTextColor={Colors.textSecondary} />
+
+          <Text style={styles.label}>Correo</Text>
+          <TextInput
+            style={styles.input}
             value={email}
             onChangeText={setEmail}
-            placeholder="operador@acueducto.co"
-            keyboardType="email-address"
+            placeholder="tucorreo@ejemplo.com"
+            placeholderTextColor={Colors.textSecondary}
             autoCapitalize="none"
+            keyboardType="email-address"
           />
-          <Field
-            label="Teléfono"
-            icon="call-outline"
+
+          <Text style={styles.label}>Teléfono</Text>
+          <TextInput
+            style={styles.input}
             value={phone}
             onChangeText={setPhone}
-            placeholder="+57 300 000 0000"
+            placeholder="Para que el administrador pueda verificarte"
+            placeholderTextColor={Colors.textSecondary}
             keyboardType="phone-pad"
           />
 
-          {/* Plant picker */}
-          <Text style={styles.label}>Planta asignada</Text>
-          <TouchableOpacity
-            style={styles.inputRow}
-            onPress={() => { setShowPlantPicker(v => !v); setShowRolePicker(false); }}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="business-outline" size={20} color={Colors.textSecondary} />
-            <Text style={[styles.inputText, { flex: 1 }]}>{plant}</Text>
-            <Ionicons
-              name={showPlantPicker ? 'chevron-up' : 'chevron-down'}
-              size={18}
-              color={Colors.textSecondary}
-            />
+          <Text style={styles.label}>Planta</Text>
+          <TouchableOpacity style={styles.select} onPress={() => setShowPlantPicker((v) => !v)} activeOpacity={0.8}>
+            <Text style={styles.inputText}>{plantLabel}</Text>
+            <Ionicons name={showPlantPicker ? 'chevron-up' : 'chevron-down'} size={18} color={Colors.textSecondary} />
           </TouchableOpacity>
           {showPlantPicker && (
-            <View style={styles.pickerDropdown}>
-              {PLANTS.map(p => (
+            <View style={styles.picker}>
+              {PLANTS.map((p) => (
                 <TouchableOpacity
                   key={p.id}
-                  style={styles.pickerOption}
-                  onPress={() => { setPlant(p.name); setShowPlantPicker(false); }}
+                  style={styles.pickerItem}
+                  onPress={() => {
+                    setPlant(p.id); // guarda el slug canónico
+                    setShowPlantPicker(false);
+                  }}
                 >
                   <Ionicons
-                    name={p.name === plant ? 'radio-button-on' : 'radio-button-off'}
+                    name={p.id === plant ? 'radio-button-on' : 'radio-button-off'}
                     size={18}
-                    color={Colors.primary}
+                    color={p.id === plant ? Colors.primary : Colors.textSecondary}
                   />
-                  <Text style={styles.pickerOptionText}>{p.name}</Text>
+                  <Text style={styles.pickerText}>{p.name}</Text>
                 </TouchableOpacity>
               ))}
             </View>
           )}
 
-          {/* Role picker */}
-          <Text style={styles.label}>Rol de usuario</Text>
-          <TouchableOpacity
-            style={styles.inputRow}
-            onPress={() => { setShowRolePicker(v => !v); setShowPlantPicker(false); }}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="shield-outline" size={20} color={Colors.textSecondary} />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.inputText}>{ROLE_LABELS[role]}</Text>
-            </View>
-            <Ionicons
-              name={showRolePicker ? 'chevron-up' : 'chevron-down'}
-              size={18}
-              color={Colors.textSecondary}
-            />
-          </TouchableOpacity>
-          {showRolePicker && (
-            <View style={styles.pickerDropdown}>
-              {ROLES.map(r => (
-                <TouchableOpacity
-                  key={r}
-                  style={styles.pickerOption}
-                  onPress={() => { setRole(r); setShowRolePicker(false); }}
-                >
-                  <Ionicons
-                    name={r === role ? 'radio-button-on' : 'radio-button-off'}
-                    size={18}
-                    color={Colors.primary}
-                  />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.pickerOptionText}>{ROLE_LABELS[r]}</Text>
-                    <Text style={styles.pickerOptionDesc}>{ROLE_DESCRIPTIONS[r]}</Text>
-                  </View>
-                </TouchableOpacity>
-              ))}
-            </View>
-          )}
-
-          {/* Password */}
-          <Text style={[styles.label, { marginTop: 14 }]}>Contraseña</Text>
-          <View style={styles.inputRow}>
-            <Ionicons name="lock-closed-outline" size={20} color={Colors.textSecondary} />
+          <Text style={styles.label}>Contraseña</Text>
+          <View style={styles.passwordRow}>
             <TextInput
-              style={[styles.inputText, styles.flex]}
-              placeholder="Mínimo 6 caracteres"
-              placeholderTextColor={Colors.textSecondary}
+              style={[styles.input, styles.passwordInput]}
               value={password}
               onChangeText={setPassword}
+              placeholder="Mínimo 8 caracteres"
+              placeholderTextColor={Colors.textSecondary}
               secureTextEntry={!showPassword}
               autoCapitalize="none"
             />
-            <TouchableOpacity onPress={() => setShowPassword(v => !v)} hitSlop={8}>
-              <Ionicons
-                name={showPassword ? 'eye-off-outline' : 'eye-outline'}
-                size={20}
-                color={Colors.textSecondary}
-              />
+            <TouchableOpacity style={styles.eye} onPress={() => setShowPassword((v) => !v)} hitSlop={8}>
+              <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={20} color={Colors.textSecondary} />
             </TouchableOpacity>
           </View>
 
@@ -212,10 +164,11 @@ export default function RegisterScreen() {
             disabled={isLoading}
             activeOpacity={0.85}
           >
-            {isLoading
-              ? <ActivityIndicator color="#fff" />
-              : <Text style={styles.btnPrimaryText}>Crear cuenta</Text>
-            }
+            {isLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.btnPrimaryText}>Crear cuenta</Text>}
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.linkBtn} onPress={() => router.replace('/(auth)/login')} activeOpacity={0.7}>
+            <Text style={styles.linkText}>Ya tengo cuenta — Iniciar sesión</Text>
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -223,104 +176,69 @@ export default function RegisterScreen() {
   );
 }
 
-interface FieldProps extends TextInputProps {
-  label: string;
-  icon: string;
-}
-
-function Field({ label, icon, ...inputProps }: FieldProps) {
-  return (
-    <>
-      <Text style={styles.label}>{label}</Text>
-      <View style={styles.inputRow}>
-        <Ionicons name={icon as any} size={20} color={Colors.textSecondary} />
-        <TextInput
-          style={[styles.inputText, styles.flex]}
-          placeholderTextColor={Colors.textSecondary}
-          {...inputProps}
-        />
-      </View>
-    </>
-  );
-}
-
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.bg },
   flex: { flex: 1 },
-  scroll: { flexGrow: 1, paddingHorizontal: 24, paddingVertical: 24 },
-  back: { marginBottom: 20 },
-  hero: { alignItems: 'center', marginBottom: 28 },
-  iconWrap: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: Colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 14,
-    shadowColor: Colors.primary,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    elevation: 7,
-  },
-  title: { fontSize: 26, fontWeight: '800', color: Colors.primary },
-  subtitle: { fontSize: 14, color: Colors.textSecondary, marginTop: 5 },
-  label: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: Colors.textPrimary,
-    marginBottom: 8,
-    marginTop: 14,
-  },
-  inputRow: {
+  scroll: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: 24, paddingVertical: 40 },
+  hero: { alignItems: 'center', marginBottom: 20 },
+  title: { fontSize: 26, fontWeight: '800', color: Colors.primary, letterSpacing: 0.5 },
+  subtitle: { fontSize: 14, color: Colors.textSecondary, marginTop: 4 },
+  notice: {
     flexDirection: 'row',
-    alignItems: 'center',
-    minHeight: 52,
-    backgroundColor: Colors.surface,
-    borderRadius: 14,
-    borderWidth: 1.5,
-    borderColor: '#E5E7EB',
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    gap: 10,
+    gap: 8,
+    alignItems: 'flex-start',
+    backgroundColor: Colors.primary + '12',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 20,
   },
-  inputText: {
+  noticeText: { flex: 1, fontSize: 12.5, lineHeight: 18, color: Colors.textSecondary },
+  noticeStrong: { fontWeight: '700', color: Colors.textPrimary },
+  label: { fontSize: 13, fontWeight: '600', color: Colors.textPrimary, marginBottom: 8, marginTop: 12 },
+  input: {
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     fontSize: 15,
     color: Colors.textPrimary,
-  },
-  pickerDropdown: {
-    marginTop: 4,
-    backgroundColor: Colors.bg,
-    borderRadius: 14,
-    borderWidth: 1.5,
+    borderWidth: 1,
     borderColor: '#E5E7EB',
-    overflow: 'hidden',
   },
-  pickerOption: {
+  inputText: { fontSize: 15, color: Colors.textPrimary },
+  select: {
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-    gap: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    justifyContent: 'space-between',
   },
-  pickerOptionText: { fontSize: 14, color: Colors.textPrimary, fontWeight: '600' },
-  pickerOptionDesc: { fontSize: 12, color: Colors.textSecondary, marginTop: 1 },
+  picker: {
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    marginTop: 6,
+    overflow: 'hidden',
+  },
+  pickerItem: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 11 },
+  pickerText: { fontSize: 14, color: Colors.textPrimary },
+  passwordRow: { position: 'relative', justifyContent: 'center' },
+  passwordInput: { paddingRight: 44 },
+  eye: { position: 'absolute', right: 12 },
   btnPrimary: {
-    marginTop: 28,
-    height: 52,
     backgroundColor: Colors.primary,
-    borderRadius: 14,
+    borderRadius: 12,
+    paddingVertical: 15,
     alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: Colors.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 5,
+    marginTop: 24,
   },
-  btnDisabled: { opacity: 0.7 },
-  btnPrimaryText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  btnDisabled: { opacity: 0.6 },
+  btnPrimaryText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  linkBtn: { alignItems: 'center', marginTop: 16 },
+  linkText: { color: Colors.primary, fontSize: 14, fontWeight: '600' },
 });

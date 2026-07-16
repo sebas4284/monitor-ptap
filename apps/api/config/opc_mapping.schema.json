@@ -133,15 +133,83 @@
         "opMax": { "type": "number" },
         "mappingStatus": { "$ref": "#/$defs/mappingStatus" },
         "confidence": { "$ref": "#/$defs/confidence" },
-        "writable": { "type": "boolean" }
+        "writable": { "type": "boolean" },
+        "write": { "$ref": "#/$defs/writeSpec" }
       },
       "allOf": [
         {
           "description": "Una señal escribible solo puede existir con semántica confirmada.",
           "if": { "properties": { "writable": { "const": true } }, "required": ["writable"] },
           "then": { "properties": { "confidence": { "const": "confirmed" } } }
+        },
+        {
+          "description": "Una señal writable DEBE declarar su write spec (comando→buffer/bit).",
+          "if": { "properties": { "writable": { "const": true } }, "required": ["writable"] },
+          "then": { "required": ["write"] }
+        },
+        {
+          "description": "El write spec solo puede existir en una señal writable (⇒ confirmed por la regla de arriba).",
+          "if": { "required": ["write"] },
+          "then": { "properties": { "writable": { "const": true } }, "required": ["writable"] }
         }
       ]
+    },
+    "writeSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Fase 5: traducción de un comando de dominio a una escritura de buffer/bit. Solo en señales writable (⇒ confidence:confirmed). La semántica vive aquí, nunca en el código (regla 2).",
+      "required": ["target", "commands", "readBack", "timeoutMs", "rollbackValue", "permission"],
+      "properties": {
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Elemento de un buffer de SALIDA donde se escribe el comando.",
+          "required": ["channel", "sourceBuffer", "index"],
+          "properties": {
+            "channel": {
+              "type": "string",
+              "enum": ["realOut", "intOut", "bitOut", "msgWrite"],
+              "description": "Solo canales de salida: la escritura va a un buffer *_OUT_* del maestro."
+            },
+            "sourceBuffer": { "type": "string", "minLength": 1 },
+            "index": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "commands": {
+          "type": "object",
+          "description": "Verbo de dominio → valor a escribir (p. ej. openValve→1, closeValve→0).",
+          "minProperties": 1,
+          "propertyNames": { "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" },
+          "additionalProperties": { "type": ["number", "boolean"] }
+        },
+        "readBack": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Elemento a re-leer para confirmar la escritura. confirmsWrittenValue:true ⇒ éxito si el read-back == valor escrito; si es un feedback distinto, declarar expectedValue.",
+          "required": ["channel", "index"],
+          "properties": {
+            "channel": { "$ref": "#/$defs/channel" },
+            "sourceBuffer": { "type": "string", "minLength": 1 },
+            "index": { "type": "integer", "minimum": 0 },
+            "confirmsWrittenValue": { "type": "boolean" },
+            "expectedValue": { "type": ["number", "boolean"] }
+          }
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Tiempo máximo de espera del read-back de confirmación."
+        },
+        "rollbackValue": {
+          "type": ["number", "boolean"],
+          "description": "Valor seguro a re-escribir si la confirmación falla (best-effort)."
+        },
+        "permission": {
+          "type": "string",
+          "enum": ["control_valves", "acknowledge_alarms", "adjust_setpoints"],
+          "description": "Permiso granular (@ptap/shared) requerido para ejecutar el comando. Un jefe tiene acknowledge_alarms/adjust_setpoints pero NO control_valves."
+        }
+      }
     },
     "plant": {
       "type": "object",

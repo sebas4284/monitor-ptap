@@ -79,10 +79,33 @@ test('rechaza writable:true con confidence != confirmed (regla de schema)', () =
   assert.ok(result.errors.some((e) => e.startsWith('schema')), result.errors.join('\n'));
 });
 
-test('acepta writable:true cuando confidence == confirmed', () => {
+test('rechaza writable:true sin write spec (Fase 5: regla de schema)', () => {
   const plant = basePlant();
   plant.signals = [
     { buffer: 'intOut', index: 0, domainKey: 'openValve', mappingStatus: 'mapped', confidence: 'confirmed', writable: true },
+  ];
+  const result = validateMapping(schema, wrap(plant));
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((e) => e.startsWith('schema') && /write/.test(e)), result.errors.join('\n'));
+});
+
+test('acepta writable:true con confidence confirmed + write spec válido', () => {
+  const plant = basePlant();
+  (plant.opcBuffers as Record<string, unknown>).intOut = [
+    { browseName: 'INT_OUT_VORAGINE', node: { ...NODE_BUF }, arrayLength: 50, dataType: 'Int16' },
+  ];
+  plant.signals = [
+    {
+      buffer: 'intOut', index: 0, domainKey: 'valveEV01', mappingStatus: 'mapped', confidence: 'confirmed', writable: true,
+      write: {
+        target: { channel: 'intOut', sourceBuffer: 'INT_OUT_VORAGINE', index: 0 },
+        commands: { openValve: 1, closeValve: 0 },
+        readBack: { channel: 'intOut', sourceBuffer: 'INT_OUT_VORAGINE', index: 0, confirmsWrittenValue: true },
+        timeoutMs: 3000,
+        rollbackValue: 0,
+        permission: 'control_valves',
+      },
+    },
   ];
   const result = validateMapping(schema, wrap(plant));
   assert.equal(result.ok, true, result.errors.join('\n'));

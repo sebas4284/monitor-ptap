@@ -1,17 +1,14 @@
 /**
  * Audit log (Fase 4, criterio de aceptación): registra usuario/IP/timestamp. AuditLogService
  * se construye contra un Pool falso (captura los params del INSERT, no toca MySQL real).
- * AuditInterceptor y ConnectionEventsSubscriber se prueban por separado, con dobles simples.
+ * El AuditMiddleware (registro de accesos permitidos y denegados) se prueba en
+ * audit-middleware.test.ts; ConnectionEventsSubscriber se prueba aquí con un doble simple.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { of } from 'rxjs';
-import type { CallHandler, ExecutionContext } from '@nestjs/common';
 import type { Pool } from 'mysql2/promise';
 import { AuditLogService } from '../src/infrastructure/audit/audit-log.service';
-import { AuditInterceptor } from '../src/infrastructure/audit/audit.interceptor';
 import { ConnectionEventsSubscriber } from '../src/infrastructure/audit/connection-events.subscriber';
-import type { AuthenticatedRequest } from '../src/modules/auth/authenticated-request';
 import type { ConnectivityAdapter, BridgeStatus } from '../src/infrastructure/connectivity/ports/connectivity-adapter.port';
 
 interface Captured {
@@ -98,41 +95,6 @@ test('audit-log: detail se trunca cuando excede AUDIT_LOG_DETAIL_MAX_BYTES', asy
     if (prev === undefined) delete process.env.AUDIT_LOG_DETAIL_MAX_BYTES;
     else process.env.AUDIT_LOG_DETAIL_MAX_BYTES = prev;
   }
-});
-
-test('audit-interceptor: extrae method/path/ip/user y statusCode de la respuesta', async () => {
-  const { pool, calls } = fakePool();
-  const auditLog = new AuditLogService(pool);
-  const interceptor = new AuditInterceptor(auditLog);
-
-  const request: AuthenticatedRequest = {
-    method: 'GET',
-    originalUrl: '/api/plants',
-    ip: '192.168.1.10',
-    user: { id: 'u2', name: 'B', email: 'b@c.com', role: 'operador', plant: 'sirena' },
-  } as AuthenticatedRequest;
-  const response = { statusCode: 200 };
-  const ctx = {
-    switchToHttp: () => ({ getRequest: () => request, getResponse: () => response }),
-  } as unknown as ExecutionContext;
-  const handler: CallHandler = { handle: () => of({ ok: true }) };
-
-  await new Promise<void>((resolve) => {
-    interceptor.intercept(ctx, handler).subscribe(() => {
-      setImmediate(resolve); // el record() es fire-and-forget dentro del tap()
-    });
-  });
-
-  assert.equal(calls.length, 1);
-  const [eventType, userId, userEmail, role, ip, method, path, statusCode] = calls[0].params;
-  assert.equal(eventType, 'http.request');
-  assert.equal(userId, 'u2');
-  assert.equal(userEmail, 'b@c.com');
-  assert.equal(role, 'operador');
-  assert.equal(ip, '192.168.1.10');
-  assert.equal(method, 'GET');
-  assert.equal(path, '/api/plants');
-  assert.equal(statusCode, 200);
 });
 
 test('connection-events-subscriber: registra opc.bridge_status_change en cada transición', async () => {

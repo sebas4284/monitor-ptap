@@ -1,183 +1,100 @@
-# Backend methods and current structure
+# Métodos y contratos internos del backend
 
-## Estado actual
+> Complemento del [documento de arquitectura](./backend-structure.md). Describe **qué hace cada
+> pieza por dentro** y con qué contrato. El contrato **HTTP** no se documenta aquí, para no
+> duplicarlo y que se desincronice: vive en [`docs/api/openapi.yaml`](../api/openapi.yaml).
 
-Esta actualizacion crea solo la infraestructura inicial del backend. No implementa autenticacion real, JWT, MySQL, PLC real, OPC-UA real, alarmas, reportes reales ni control de electroválvulas.
+## 1. Puerto `ConnectivityAdapter`
 
-El bridge industrial queda dentro de NestJS, bajo `apps/api/src/infrastructure/connectivity`. El antiguo `PlcModule` no se elimina, pero deja de estar conectado al `AppModule`.
+Contrato único que implementan `OpcUaConnectivityAdapter` (PLC real) y `SimulatorBridgeAdapter`
+(testbed sin PLC), seleccionados por `CONNECTIVITY_PROVIDER`.
 
-## Flujo implementado
+| Método | Devuelve | Notas |
+|---|---|---|
+| `start()` / `stop()` | `Promise<void>` | Idempotentes. `start()` no bloquea el boot: si el PLC no responde, se reintenta en segundo plano. |
+| `getBridgeStatus()` | `BridgeStatus` | Máquina de estados, nunca un boolean. |
+| `onFrame(cb)` | — | Push de `RawPlantFrame`: uno por planta por ventana de coalescing. |
+| `onStatusChange(cb)` | — | Cada transición del puente, con motivo. |
+| `getDiagnostics()` | `AdapterDiagnostics` | Alimenta `/api/opc/status` y `/api/health/opc`. |
+| `getServerInfo()` | `Promise<ServerInfo>` | Metadata del servidor OPC UA; campos no disponibles → `null` explícito. |
+| `getBufferHealth()` | `BufferHealth[]` | Estado por buffer: un NodeId inválido marca **solo** ese buffer, no la planta. |
+| `getWriteSecurity()` | `WriteSecurity` | `secure` = sesión autenticada **y** cifrada. Precondición dura de escritura. |
+| `writeBufferElement(target, value)` | `Promise<void>` | Escribe UN elemento (IndexRange). No valida seguridad: eso es del WriteService. |
+| `readBufferElement(target)` | `Promise<BufferElementRead>` | Read-back de confirmación. |
 
-```txt
-apps/api/opc-config.json
-  -> OpcConfigService
-  -> SimulatorConnectivityAdapter
-  -> ConnectivityService
-  -> polling cada 5 segundos
-  -> snapshot normalizado en memoria
-  -> REST: GET /api/snapshots/:plantId
-  -> Socket.io: evento opc:snapshot
-```
+## 2. Pipeline de dominio (`PlantPipelineService`)
 
-`opc-config.json` es una fuente temporal de configuracion. Representa 8 PTAPs, sus endpoints OPC-UA previstos, NodeIds, indices de sensores e indices de tanques. MySQL debe reemplazarlo en una fase posterior.
-
-## REST
-
-### `GET /api/health`
-
-Metodo existente para validar que el API levanta.
-
-Respuesta esperada:
-
-```json
-{
-  "status": "ok",
-  "service": "ptap-api",
-  "sharedRoles": 4
-}
-```
-
-### `GET /api/snapshots/:plantId`
-
-Devuelve el ultimo snapshot normalizado de una PTAP.
-
-Ejemplo:
+Cadena **100 % síncrona** por frame — sin `await` entre pasos. Eso garantiza que un snapshot
+representa siempre un estado lógico consistente **sin necesidad de locks**: Node ejecuta el
+callback hasta completarlo, así que dos frames de la misma planta no pueden intercalarse.
 
 ```txt
-GET /api/snapshots/ptap-1
+adapter.onFrame → processFrame → liveness.ingest → rebuildAndMaybeEmit
+                → engine.extract → buildSnapshot → evaluateQuality
+                → cache.write (ÚNICO escritor) → snapshot$.next → Socket.IO
 ```
 
-Respuesta conceptual:
+| Paso | Pieza | Responsabilidad |
+|---|---|---|
+| Parser/estado | `latestBuffers` | Acumula la última muestra de cada buffer, para reconstruir el DTO completo aunque el frame coalescido traiga solo los que cambiaron. |
+| Liveness | `LivenessTracker` | Frescura **por planta**: `live` / `idle` / `stale` / `unknown`. Un barrido periódico pasa `idle→stale` aunque no lleguen frames — un caudal congelado no puede verse conectado. |
+| Mapping | `MappingEngine` | `(buffer, índice) → domainKey` desde `opc_mapping.json`. Índice fuera de rango o buffer ausente → DeadLetter + `structurallyBroken`. |
+| Calidad | `evaluateQuality()` | Decide `usable`. Orden: `StatusCode != Good` → `BAD_QUALITY`; NaN/∞ → `INVALID_NUMBER`; liveness stale/unknown → `BRIDGE_STALE`. Fuera de `[min,max]` **sigue siendo usable**: solo marca `outOfRange` (aviso), nunca oculta la lectura. |
+| DTO | `buildSnapshot()` | Ensambla `PlantSnapshotDto`. Nunca asciende `inferred → confirmed`. No-finitos → `null` (JSON-safe). |
+| Cache | `PlantCache` | RAM. Custodia el `sequence` monótono por planta. Único escritor: el pipeline. |
 
-```json
-{
-  "plantId": "ptap-1",
-  "timestamp": "2026-07-08T00:00:00.000Z",
-  "connectionStatus": "mock",
-  "sensors": [],
-  "tanks": []
-}
-```
+**Emisión**: `opc:snapshot` solo cuando el snapshot **cambia** (diff por firma, sin `sequence`);
+`opc:liveness` en cambios de estado (broadcast).
 
-`valves` queda omitido mientras no exista el mapa real de bits para electroválvulas empaquetadas en arrays INT.
+## 3. Contrato de dato (`SignalDto`)
 
-## Socket.io
+Cada señal lleva SIEMPRE `value`, `quality` (Good|Bad|Uncertain), `usable`, `mappingStatus`
+(mapped|unmapped), `confidence` (confirmed|inferred|estimated) y `ts` (SourceTimestamp del PLC).
+Opcionales: `reason`, `outOfRange`, `unit`, `label`, `opMin`/`opMax`.
 
-### Evento de suscripcion
+- `min`/`max` = **validez física** (producen `outOfRange`).
+- `opMin`/`opMax` = **rango operativo** entregado por el operador (insumo de alarmas futuras).
+- `confidence: confirmed` exige documento oficial/L5X. Hoy **todo es `inferred`** (confirmado por
+  el operador vía HMI, sin documento en el repo).
 
-```txt
-client -> server: opc:subscribe
-```
+## 4. Canal de escritura (`WriteService`)
 
-Payload:
+Único punto que escribe al PLC. Flujo por comando:
 
-```json
-{
-  "plantId": "ptap-1"
-}
-```
+1. Resolver `(plantId, target)` → señal `writable` + su `write` spec en el mapping.
+2. Verbo válido (`write.commands`), si no → `UNKNOWN_COMMAND`.
+3. **Precondición dura**: `OPCUA_WRITES_ENABLED` **y** sesión segura; si no →
+   `WRITES_DISABLED_INSECURE_SESSION`. Sin excepciones.
+4. **RBAC dinámico**: el permiso lo declara el mapping (`control_valves`, `acknowledge_alarms`…).
+5. **Interlock**: `bridgeStatus === Connected` + snapshot fresco (`liveness.live`).
+6. **Idempotencia**: reserva *insert-pending-first* en `command_log` — una `idempotencyKey`
+   repetida no re-ejecuta, ni siquiera tras reiniciar el proceso.
+7. Leer valor previo → escribir → **read-back con timeout** → `confirmed` | `failed`
+   (+ rollback best-effort). Sin read-back confirmado **nunca** se reporta éxito.
+8. **Audit log siempre**, con valor previo/confirmado y el `sequence` usado en el interlock.
 
-El gateway agrega el socket a una sala con el id de la PTAP. Si el cliente cambia de PTAP, se sale de salas `ptap-*` anteriores antes de unirse a la nueva.
+> Hoy el mapping de producción **no tiene señales `writable`** (falta el L5X), así que todo comando
+> real responde `TARGET_NOT_WRITABLE`: el mecanismo está probado, la escritura real sigue cerrada.
 
-### Evento de snapshot
+## 5. Autenticación y permisos
 
-```txt
-server -> client: opc:snapshot
-```
+| Pieza | Responsabilidad |
+|---|---|
+| `PasswordHashingService` | Argon2id (parámetros OWASP) + pepper HMAC versionado. |
+| `JwtService` | Firma/valida el JWT (8 h). `JWT_SECRET` sin fallback inseguro: el backend no arranca si falta. |
+| `AuthService.login()` | Verifica credenciales y audita éxito/fallo (nunca la contraseña ni el token). |
+| `AuthService.register()` | Fuerza `role: 'civil'` **en el servidor**; el schema `.strict()` rechaza un `role` del cliente con 400. Email duplicado → 409. |
+| `JwtAuthGuard` | Sin token válido → 401. Respeta `@Public()`. |
+| `PermissionGuard` | Sin `@RequirePermission` → solo exige JWT. Con permiso declarado → `hasPermission()` de `@ptap/shared`; si el rol no lo tiene → 403. |
+| `UsersService` | Gestión admin. Guard rails: un admin no puede cambiar su propio rol ni desactivarse. Audita `user.role_changed` con from→to. |
 
-Payload:
+## 6. Observabilidad
 
-```json
-{
-  "plantId": "ptap-1",
-  "timestamp": "2026-07-08T00:00:00.000Z",
-  "connectionStatus": "mock",
-  "sensors": [],
-  "tanks": []
-}
-```
-
-El servidor emite snapshots solo a la sala de la PTAP correspondiente.
-
-## Servicios y puertos backend
-
-### `ConnectivityService`
-
-Responsabilidades:
-
-- iniciar el adapter de conectividad al levantar el modulo;
-- leer snapshots de todas las PTAPs configuradas cada 5 segundos;
-- guardar el ultimo snapshot por PTAP en memoria;
-- exponer `getSnapshot(plantId)`;
-- emitir cada snapshot mediante `snapshot$` para el gateway WebSocket.
-
-### `IndustrialReaderPort`
-
-Contrato para lectura industrial:
-
-```txt
-listPlants()
-readSnapshot(plantId)
-```
-
-Los modulos de negocio deben depender de este puerto o de servicios que lo encapsulen, no de librerias OPC-UA directamente.
-
-### `IndustrialWriterPort`
-
-Contrato reservado para comandos industriales futuros.
-
-En Fase 1 no se habilita escritura real porque las electroválvulas tienen bits empaquetados sin mapeo confirmado.
-
-### `ProtocolAdapterPort`
-
-Contrato para ciclo de vida del protocolo:
-
-```txt
-connect()
-disconnect()
-getStatus()
-```
-
-### `SimulatorConnectivityAdapter`
-
-Adapter temporal para Fase 1.
-
-Genera sensores y tanques simulados a partir de `opc-config.json`. Su `connectionStatus` es `mock`, para dejar claro que no hay PLC real conectado.
-
-## Seguridad preparada
-
-### `PasswordHashingService`
-
-Servicio preparado para una fase futura de autenticacion real.
-
-No registra usuarios ni valida sesiones. Solo deja listo el mecanismo de hashing:
-
-```txt
-password plano
-  -> HMAC-SHA256 con pepper secreto
-  -> Argon2id con salt automatico
-  -> password_hash + password_pepper_version
-```
-
-Variables esperadas:
-
-```env
-PASSWORD_PEPPER_CURRENT_VERSION=1
-PASSWORD_PEPPER_V1_BASE64=
-```
-
-Reglas:
-
-- el pepper debe decodificar exactamente 64 bytes;
-- el pepper no se guarda en MySQL;
-- el pepper no se expone al frontend;
-- el hash final de Argon2id incluye su salt;
-- MySQL futuro solo debe guardar `password_hash` y `password_pepper_version`.
-
-## Pendientes explicitos
-
-- Reemplazar `opc-config.json` por MySQL cuando se apruebe persistencia.
-- Implementar adapter OPC-UA real con `node-opcua`.
-- Mapear bits reales de electroválvulas antes de exponer control.
-- Conectar `telemetry`, `commands`, `alarms` y `reports` de forma progresiva.
-- Implementar autenticacion real, JWT y permisos en una fase posterior.
+- `computeOpcHealth()` — función pura (testeable sin Nest): deriva la salud industrial del
+  diagnóstico del adapter. **503 en `Stale`/`Faulted`**, para servir de liveness/readiness.
+- `MetricsService` — Prometheus. `opc_quality_good/bad_total` y `opc_subscription_latency_ms`
+  llevan label `plantId`; el resto son de proceso (la sesión OPC es única para las 12 plantas).
+- `AuditMiddleware` — engancha `res.on('finish')`: audita **200, 401 y 403** por igual, porque en
+  NestJS los guards cortan **antes** que los interceptores (un interceptor nunca vería un 403).
+- `DeadLetterBuffer` — ring buffer en RAM con contadores por tipo, expuesto en
+  `/api/opc/dead-letter` (regla 12: nada se pierde en silencio).

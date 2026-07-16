@@ -1,31 +1,32 @@
 import { CanActivate, ExecutionContext, ForbiddenException, Inject, Injectable, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { tierAtLeast, type RoleTier } from '@ptap/shared';
+import { hasPermission, type Permission } from '@ptap/shared';
 import type { AuthenticatedRequest } from '../authenticated-request';
-import { MIN_TIER_KEY } from '../decorators/min-tier.decorator';
+import { PERMISSION_KEY } from '../decorators/require-permission.decorator';
 
 /**
  * Debe registrarse DESPUÉS de JwtAuthGuard (lee request.user, que ese guard setea).
- * Sin @MinTier() declarado en la ruta, este guard es un no-op (allow) — toda ruta
- * protegida debe declarar su tier explícitamente.
+ * Sin @RequirePermission() declarado en la ruta, este guard es un no-op (allow): la ruta
+ * solo exige un JWT válido (equivale al antiguo tier `viewer` = "cualquier autenticado").
+ * Con permiso declarado, exige que el rol lo tenga según ROLE_PERMISSIONS de @ptap/shared.
  */
 @Injectable()
-export class MinTierGuard implements CanActivate {
+export class PermissionGuard implements CanActivate {
   constructor(@Inject(Reflector) private readonly reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
-    const minTier = this.reflector.getAllAndOverride<RoleTier | undefined>(MIN_TIER_KEY, [
+    const required = this.reflector.getAllAndOverride<Permission | undefined>(PERMISSION_KEY, [
       context.getHandler(),
       context.getClass(),
     ]);
-    if (!minTier) return true;
+    if (!required) return true;
 
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     if (!request.user) {
       throw new UnauthorizedException('Falta autenticación');
     }
-    if (!tierAtLeast(request.user.role, minTier)) {
-      throw new ForbiddenException('Rol insuficiente');
+    if (!hasPermission(request.user.role, required)) {
+      throw new ForbiddenException('Permiso insuficiente');
     }
     return true;
   }

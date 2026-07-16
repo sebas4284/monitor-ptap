@@ -24,6 +24,29 @@ export interface MonitorTarget {
   dataType: string | null;
 }
 
+/** Elemento de un buffer (canal + browseName + índice). Fase 5: destino/feedback de escritura. */
+export interface BufferElementRef {
+  channel: string;
+  sourceBuffer: string;
+  index: number;
+}
+
+/** Fase 5: traducción de comando de dominio a escritura de buffer/bit (vive en el mapping, regla 2). */
+export interface WriteSpec {
+  target: BufferElementRef; // buffer de SALIDA donde se escribe
+  commands: Record<string, number | boolean>; // verbo → valor a escribir
+  readBack: {
+    channel: string;
+    sourceBuffer: string | null;
+    index: number;
+    confirmsWrittenValue: boolean;
+    expectedValue?: number | boolean;
+  };
+  timeoutMs: number;
+  rollbackValue: number | boolean;
+  permission: string; // Permission de @ptap/shared (control_valves | acknowledge_alarms | adjust_setpoints)
+}
+
 /** Señal de proceso mapeada: un elemento de un buffer con semántica de dominio. */
 export interface SignalMapping {
   plantId: string;
@@ -42,6 +65,8 @@ export interface SignalMapping {
   mappingStatus: 'mapped' | 'unmapped';
   confidence: 'confirmed' | 'inferred' | 'estimated';
   writable: boolean;
+  /** Presente solo si writable (⇒ confidence:confirmed, garantizado por el schema). */
+  write?: WriteSpec;
 }
 
 export interface LoadedPlant {
@@ -81,6 +106,15 @@ function resolvePath(explicit?: string): string {
   return found;
 }
 
+interface RawWriteSpec {
+  target?: { channel?: string; sourceBuffer?: string; index?: number };
+  commands?: Record<string, number | boolean>;
+  readBack?: { channel?: string; sourceBuffer?: string; index?: number; confirmsWrittenValue?: boolean; expectedValue?: number | boolean };
+  timeoutMs?: number;
+  rollbackValue?: number | boolean;
+  permission?: string;
+}
+
 interface RawSignal {
   buffer?: string;
   sourceBuffer?: string;
@@ -95,6 +129,34 @@ interface RawSignal {
   mappingStatus?: string;
   confidence?: string;
   writable?: boolean;
+  write?: RawWriteSpec;
+}
+
+/**
+ * Parsea el write spec. Confía en que el schema ya validó la forma (validate:mapping es el
+ * gate); aquí solo se normaliza. Devuelve undefined si la señal no es writable o no lo trae.
+ */
+function parseWriteSpec(raw: RawWriteSpec | undefined): WriteSpec | undefined {
+  if (!raw || !raw.target || !raw.commands || !raw.readBack) return undefined;
+  const { channel, sourceBuffer, index } = raw.target;
+  if (typeof channel !== 'string' || typeof sourceBuffer !== 'string' || typeof index !== 'number') return undefined;
+  if (typeof raw.readBack.channel !== 'string' || typeof raw.readBack.index !== 'number') return undefined;
+  if (typeof raw.timeoutMs !== 'number' || typeof raw.permission !== 'string') return undefined;
+  if (raw.rollbackValue === undefined) return undefined;
+  return {
+    target: { channel, sourceBuffer, index },
+    commands: raw.commands,
+    readBack: {
+      channel: raw.readBack.channel,
+      sourceBuffer: typeof raw.readBack.sourceBuffer === 'string' ? raw.readBack.sourceBuffer : null,
+      index: raw.readBack.index,
+      confirmsWrittenValue: raw.readBack.confirmsWrittenValue !== false,
+      expectedValue: raw.readBack.expectedValue,
+    },
+    timeoutMs: raw.timeoutMs,
+    rollbackValue: raw.rollbackValue,
+    permission: raw.permission,
+  };
 }
 
 export function loadMapping(explicitPath?: string): LoadedMapping {
@@ -167,6 +229,7 @@ export function loadMapping(explicitPath?: string): LoadedMapping {
         mappingStatus: s.mappingStatus === 'unmapped' ? 'unmapped' : 'mapped',
         confidence: (s.confidence as SignalMapping['confidence']) ?? 'inferred',
         writable: s.writable === true,
+        write: s.writable === true ? parseWriteSpec(s.write) : undefined,
       });
     }
   }

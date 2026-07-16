@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { ExecutionContext, ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { JwtAuthGuard } from '../src/modules/auth/guards/jwt-auth.guard';
-import { MinTierGuard } from '../src/modules/auth/guards/min-tier.guard';
+import { PermissionGuard } from '../src/modules/auth/guards/permission.guard';
 import { JwtService } from '../src/modules/auth/jwt.service';
 import type { AuthenticatedRequest } from '../src/modules/auth/authenticated-request';
 
@@ -54,28 +54,36 @@ test('JwtAuthGuard: token válido → setea request.user y permite', () => {
   assert.equal(request.user?.id, 'u1');
 });
 
-test('MinTierGuard: sin @MinTier() declarado → no-op, permite', () => {
-  const guard = new MinTierGuard(new Reflector());
+test('PermissionGuard: sin @RequirePermission() declarado → no-op, permite', () => {
+  const guard = new PermissionGuard(new Reflector());
   const ctx = fakeContext({} as AuthenticatedRequest);
   assert.equal(guard.canActivate(ctx), true);
 });
 
-test('MinTierGuard: rol insuficiente (civil pide admin) → ForbiddenException (403)', () => {
-  const guard = new MinTierGuard(new Reflector());
+test('PermissionGuard: permiso insuficiente (civil pide system_config) → ForbiddenException (403)', () => {
+  const guard = new PermissionGuard(new Reflector());
   const request = { user: { id: 'u1', name: 'A', email: 'a@b.com', role: 'civil', plant: 'montebello' } } as AuthenticatedRequest;
-  const ctx = fakeContext(request, { minTier: 'admin' });
+  const ctx = fakeContext(request, { requiredPermission: 'system_config' });
   assert.throws(() => guard.canActivate(ctx), ForbiddenException);
 });
 
-test('MinTierGuard: rol suficiente (admin pide viewer) → permite', () => {
-  const guard = new MinTierGuard(new Reflector());
+// El caso clave: jefe tiene acknowledge_alarms pero NO control_valves (matriz oficial).
+test('PermissionGuard: jefe permite acknowledge_alarms pero rechaza control_valves', () => {
+  const guard = new PermissionGuard(new Reflector());
+  const request = { user: { id: 'u1', name: 'J', email: 'j@b.com', role: 'jefe', plant: 'montebello' } } as AuthenticatedRequest;
+  assert.equal(guard.canActivate(fakeContext(request, { requiredPermission: 'acknowledge_alarms' })), true);
+  assert.throws(() => guard.canActivate(fakeContext(request, { requiredPermission: 'control_valves' })), ForbiddenException);
+});
+
+test('PermissionGuard: admin permite system_config', () => {
+  const guard = new PermissionGuard(new Reflector());
   const request = { user: { id: 'u1', name: 'A', email: 'a@b.com', role: 'admin', plant: 'montebello' } } as AuthenticatedRequest;
-  const ctx = fakeContext(request, { minTier: 'viewer' });
+  const ctx = fakeContext(request, { requiredPermission: 'system_config' });
   assert.equal(guard.canActivate(ctx), true);
 });
 
-test('MinTierGuard: sin request.user (JwtAuthGuard no corrió antes) → UnauthorizedException', () => {
-  const guard = new MinTierGuard(new Reflector());
-  const ctx = fakeContext({} as AuthenticatedRequest, { minTier: 'viewer' });
+test('PermissionGuard: sin request.user (JwtAuthGuard no corrió antes) → UnauthorizedException', () => {
+  const guard = new PermissionGuard(new Reflector());
+  const ctx = fakeContext({} as AuthenticatedRequest, { requiredPermission: 'view_dashboard' });
   assert.throws(() => guard.canActivate(ctx), UnauthorizedException);
 });

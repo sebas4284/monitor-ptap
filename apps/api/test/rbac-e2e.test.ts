@@ -1,24 +1,29 @@
 /**
- * E2E ligero (Fase 4, criterio de aceptación): "sin JWT → 401; rol insuficiente → 403"
- * probado con requests HTTP reales (@nestjs/testing + supertest) contra un controlador
- * de prueba con rutas viewer/operator/admin — sin MYSQL_POOL ni AuthController real
- * (login no se prueba aquí, eso es responsabilidad de auth.service, no de los guards).
+ * E2E ligero (Fase 4, criterio de aceptación): "sin JWT → 401; permiso insuficiente → 403"
+ * probado con requests HTTP reales (@nestjs/testing + supertest) contra un controlador de
+ * prueba con rutas por permiso — sin MYSQL_POOL ni AuthController real (login no se prueba
+ * aquí, eso es de auth.service, no de los guards).
+ *
+ * El caso central es `jefe`: la matriz oficial le da todo lo del operador SALVO abrir/cerrar
+ * válvulas. El modelo de permisos (ROLE_PERMISSIONS de @ptap/shared) lo expresa; el antiguo
+ * tier lineal no podía. Aquí se prueba: jefe → 403 en control_valves, 200 en acknowledge_alarms.
  */
 import 'reflect-metadata';
 import { test } from 'node:test';
 import { Controller, Get, INestApplication, Module, UseGuards } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
-import { MinTier } from '../src/modules/auth/decorators/min-tier.decorator';
+import type { Role } from '@ptap/shared';
+import { RequirePermission } from '../src/modules/auth/decorators/require-permission.decorator';
 import { Public } from '../src/modules/auth/decorators/public.decorator';
 import { JwtAuthGuard } from '../src/modules/auth/guards/jwt-auth.guard';
-import { MinTierGuard } from '../src/modules/auth/guards/min-tier.guard';
+import { PermissionGuard } from '../src/modules/auth/guards/permission.guard';
 import { JwtService } from '../src/modules/auth/jwt.service';
 
 process.env.JWT_SECRET = process.env.JWT_SECRET ?? 'test-secret-rbac-e2e';
 
 @Controller('probe')
-@UseGuards(JwtAuthGuard, MinTierGuard)
+@UseGuards(JwtAuthGuard, PermissionGuard)
 class ProbeController {
   @Public()
   @Get('public')
@@ -26,20 +31,32 @@ class ProbeController {
     return { ok: true };
   }
 
-  @Get('viewer')
-  @MinTier('viewer')
-  viewerRoute() {
+  /** Sin @RequirePermission: cualquier rol autenticado (equivale al antiguo tier viewer). */
+  @Get('open')
+  openRoute() {
+    return { ok: true };
+  }
+
+  @Get('valves')
+  @RequirePermission('control_valves')
+  valvesRoute() {
+    return { ok: true };
+  }
+
+  @Get('ack-alarms')
+  @RequirePermission('acknowledge_alarms')
+  ackAlarmsRoute() {
     return { ok: true };
   }
 
   @Get('admin')
-  @MinTier('admin')
+  @RequirePermission('system_config')
   adminRoute() {
     return { ok: true };
   }
 }
 
-@Module({ controllers: [ProbeController], providers: [JwtAuthGuard, MinTierGuard, JwtService] })
+@Module({ controllers: [ProbeController], providers: [JwtAuthGuard, PermissionGuard, JwtService] })
 class ProbeModule {}
 
 async function buildApp(): Promise<{ app: INestApplication; jwt: JwtService }> {
@@ -47,6 +64,10 @@ async function buildApp(): Promise<{ app: INestApplication; jwt: JwtService }> {
   const app = moduleRef.createNestApplication();
   await app.init();
   return { app, jwt: moduleRef.get(JwtService) };
+}
+
+function tokenFor(jwt: JwtService, role: Role): string {
+  return jwt.sign({ sub: `u-${role}`, email: `${role}@ptap.co`, name: role, role, plant: 'montebello' });
 }
 
 test('rbac-e2e: ruta @Public() responde 200 sin token', async () => {
@@ -61,39 +82,52 @@ test('rbac-e2e: ruta @Public() responde 200 sin token', async () => {
 test('rbac-e2e: ruta protegida sin Authorization → 401', async () => {
   const { app } = await buildApp();
   try {
-    await request(app.getHttpServer()).get('/probe/viewer').expect(401);
+    await request(app.getHttpServer()).get('/probe/open').expect(401);
+    await request(app.getHttpServer()).get('/probe/admin').expect(401);
   } finally {
     await app.close();
   }
 });
 
-test('rbac-e2e: token válido pero rol insuficiente (civil pide admin) → 403', async () => {
+test('rbac-e2e: ruta sin @RequirePermission → 200 con cualquier rol autenticado (incl. civil)', async () => {
   const { app, jwt } = await buildApp();
   try {
-    const token = jwt.sign({ sub: 'u1', email: 'a@b.com', name: 'A', role: 'civil', plant: 'montebello' });
-    await request(app.getHttpServer()).get('/probe/admin').set('Authorization', `Bearer ${token}`).expect(403);
+    for (const role of ['civil', 'operador', 'jefe', 'admin'] as Role[]) {
+      await request(app.getHttpServer()).get('/probe/open').set('Authorization', `Bearer ${tokenFor(jwt, role)}`).expect(200);
+    }
   } finally {
     await app.close();
   }
 });
 
-test('rbac-e2e: token válido con rol suficiente (admin) → 200 en ruta admin y viewer', async () => {
+test('rbac-e2e: permiso insuficiente (civil pide system_config) → 403; admin → 200', async () => {
   const { app, jwt } = await buildApp();
   try {
-    const token = jwt.sign({ sub: 'u1', email: 'a@b.com', name: 'A', role: 'admin', plant: 'montebello' });
-    await request(app.getHttpServer()).get('/probe/admin').set('Authorization', `Bearer ${token}`).expect(200);
-    await request(app.getHttpServer()).get('/probe/viewer').set('Authorization', `Bearer ${token}`).expect(200);
+    await request(app.getHttpServer()).get('/probe/admin').set('Authorization', `Bearer ${tokenFor(jwt, 'civil')}`).expect(403);
+    await request(app.getHttpServer()).get('/probe/admin').set('Authorization', `Bearer ${tokenFor(jwt, 'admin')}`).expect(200);
   } finally {
     await app.close();
   }
 });
 
-test('rbac-e2e: token válido con rol operador → 200 en viewer, 403 en admin', async () => {
+// El caso que motivó migrar de tiers a permisos: jefe = operador MENOS control_valves.
+test('rbac-e2e: jefe → 403 en control_valves pero 200 en acknowledge_alarms', async () => {
   const { app, jwt } = await buildApp();
   try {
-    const token = jwt.sign({ sub: 'u1', email: 'a@b.com', name: 'A', role: 'operador', plant: 'montebello' });
-    await request(app.getHttpServer()).get('/probe/viewer').set('Authorization', `Bearer ${token}`).expect(200);
-    await request(app.getHttpServer()).get('/probe/admin').set('Authorization', `Bearer ${token}`).expect(403);
+    const jefe = `Bearer ${tokenFor(jwt, 'jefe')}`;
+    await request(app.getHttpServer()).get('/probe/valves').set('Authorization', jefe).expect(403);
+    await request(app.getHttpServer()).get('/probe/ack-alarms').set('Authorization', jefe).expect(200);
+  } finally {
+    await app.close();
+  }
+});
+
+test('rbac-e2e: operador → 200 en control_valves y en acknowledge_alarms', async () => {
+  const { app, jwt } = await buildApp();
+  try {
+    const operador = `Bearer ${tokenFor(jwt, 'operador')}`;
+    await request(app.getHttpServer()).get('/probe/valves').set('Authorization', operador).expect(200);
+    await request(app.getHttpServer()).get('/probe/ack-alarms').set('Authorization', operador).expect(200);
   } finally {
     await app.close();
   }

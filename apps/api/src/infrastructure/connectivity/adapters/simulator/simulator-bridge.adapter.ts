@@ -8,11 +8,14 @@ import type { LoadedMapping, MonitorTarget } from '../../mapping/opc-mapping.loa
 import type {
   AdapterDiagnostics,
   BridgeStatus,
+  BufferElementRead,
+  BufferElementTarget,
   BufferHealth,
   ConnectivityAdapter,
   RawBufferSample,
   RawPlantFrame,
   ServerInfo,
+  WriteSecurity,
 } from '../../ports/connectivity-adapter.port';
 
 type Outcome = 'success' | 'fail';
@@ -50,6 +53,10 @@ export class SimulatorBridgeAdapter implements ConnectivityAdapter {
   // Perillas de emulación: el resultado que darán los reciclajes y los probes de heartbeat.
   private recycleOutcome: Outcome = 'success';
   private heartbeatOutcome: Outcome = 'success';
+
+  // Fase 5: store de escrituras en RAM (emula los buffers OUT del maestro) + seam de test.
+  private readonly writeStore = new Map<string, number | boolean>();
+  private writeConfirms = true;
 
   constructor(
     private readonly config: OpcUaConfig,
@@ -118,6 +125,39 @@ export class SimulatorBridgeAdapter implements ConnectivityAdapter {
   /** Define si el probe de heartbeat resolverá (success) o lanzará (fail). */
   setHeartbeatOutcome(outcome: Outcome): void {
     this.heartbeatOutcome = outcome;
+  }
+
+  /** Fase 5 (solo tests): si false, el read-back devuelve un valor que NO coincide (prueba de 'fallido'). */
+  setWriteConfirms(confirms: boolean): void {
+    this.writeConfirms = confirms;
+  }
+
+  // ── Fase 5: canal de escritura (emulado) ────────────────────────────────────────
+
+  getWriteSecurity(): WriteSecurity {
+    // El simulador no cifra nada, pero refleja la config para poder probar la precondición dura:
+    // secure ⇔ SignAndEncrypt + identidad no anónima (mismos campos que el adaptador OPC UA real).
+    const secure = this.config.securityMode === 'SignAndEncrypt' && this.config.identity.type !== 'anonymous';
+    return { secure, securityMode: this.config.securityMode, identity: this.config.identity.type };
+  }
+
+  async writeBufferElement(target: BufferElementTarget, value: number | boolean): Promise<void> {
+    this.writeStore.set(this.elementKey(target), value);
+  }
+
+  async readBufferElement(target: BufferElementTarget): Promise<BufferElementRead> {
+    const stored = this.writeStore.get(this.elementKey(target));
+    let value: number | boolean | null;
+    if (stored === undefined) {
+      value = 0; // elemento nunca escrito: default determinista (≠ 1, útil para probar 'fallido')
+    } else {
+      value = this.writeConfirms ? stored : typeof stored === 'boolean' ? !stored : Number(stored) + 1;
+    }
+    return { value, quality: 'Good', sourceTimestamp: new Date().toISOString() };
+  }
+
+  private elementKey(t: BufferElementTarget): string {
+    return `${t.plantId}/${t.channel}/${t.sourceBuffer}[${t.index}]`;
   }
 
   // ── emisión interna ─────────────────────────────────────────────────────────────

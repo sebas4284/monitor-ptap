@@ -15,6 +15,29 @@ export type { AuthUser };
 export const API_BASE_URL: string =
   (Constants.expoConfig?.extra as { apiBaseUrl?: string } | undefined)?.apiBaseUrl ?? 'http://localhost:4000';
 
+// ── Sesión: el JWT viaja en cada petición (el backend completo exige Authorization) ──
+
+let authToken: string | null = null;
+let onUnauthorized: (() => void) | null = null;
+
+/** Lo llama AuthContext al restaurar/iniciar/cerrar sesión. null = sin sesión. */
+export function setAuthToken(token: string | null): void {
+  authToken = token;
+}
+
+export function getAuthToken(): string | null {
+  return authToken;
+}
+
+/**
+ * Callback para un 401 del backend (token vencido/inválido): AuthContext registra su
+ * logout aquí, de modo que una sesión muerta se limpie sola en vez de dejar la app
+ * mostrando errores con un token que ya no sirve.
+ */
+export function setOnUnauthorized(cb: (() => void) | null): void {
+  onUnauthorized = cb;
+}
+
 // ── Contrato del DTO (espejo de PlantSnapshotDto del backend) ────────────────────
 
 export type LivenessState = 'live' | 'idle' | 'stale' | 'unknown';
@@ -72,10 +95,47 @@ export interface LivenessChange {
   windowSec: number;
 }
 
-async function getJson<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE_URL}${path}`);
-  if (!res.ok) throw new Error(`GET ${path} → ${res.status}`);
+/** Mensaje de error del backend (Nest devuelve { message }), o un fallback legible. */
+async function errorMessage(res: Response, path: string): Promise<string> {
+  try {
+    const body = (await res.json()) as { message?: string | string[] };
+    const msg = Array.isArray(body.message) ? body.message.join(', ') : body.message;
+    if (msg) return msg;
+  } catch {
+    /* respuesta sin JSON */
+  }
+  return `${path} → ${res.status}`;
+}
+
+async function request<T>(method: 'GET' | 'POST' | 'PATCH', path: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = {};
+  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+
+  if (res.status === 401) {
+    onUnauthorized?.(); // sesión vencida/inválida → que AuthContext la limpie
+    throw new Error('Tu sesión expiró. Vuelve a iniciar sesión.');
+  }
+  if (!res.ok) throw new Error(await errorMessage(res, path));
   return (await res.json()) as T;
+}
+
+export async function getJson<T>(path: string): Promise<T> {
+  return request<T>('GET', path);
+}
+
+export async function postJson<T>(path: string, body: unknown): Promise<T> {
+  return request<T>('POST', path, body);
+}
+
+export async function patchJson<T>(path: string, body: unknown): Promise<T> {
+  return request<T>('PATCH', path, body);
 }
 
 /** Lista de plantas con su liveness (GET /api/plants). */

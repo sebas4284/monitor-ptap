@@ -63,6 +63,10 @@ export function semanticErrors(mapping: unknown): string[] {
         max?: unknown;
         opMin?: unknown;
         opMax?: unknown;
+        write?: {
+          target?: { channel?: unknown; sourceBuffer?: unknown };
+          readBack?: { channel?: unknown; sourceBuffer?: unknown };
+        };
       };
 
       if (typeof s.buffer === 'string' && typeof s.index === 'number') {
@@ -96,6 +100,23 @@ export function semanticErrors(mapping: unknown): string[] {
           : [];
         if (!names.includes(s.sourceBuffer)) {
           errors.push(`${label}: sourceBuffer "${s.sourceBuffer}" no existe en opcBuffers.${s.buffer}`);
+        }
+      }
+
+      // Fase 5: el buffer OUT destino y el de read-back del write spec deben existir en la planta.
+      const bufferNames = (channel: unknown): unknown[] => {
+        if (typeof channel !== 'string') return [];
+        const chanBufs = (plant as { opcBuffers?: Record<string, unknown> }).opcBuffers?.[channel];
+        return Array.isArray(chanBufs) ? chanBufs.map((b) => (b as { browseName?: unknown }).browseName) : [];
+      };
+      if (s.write) {
+        const t = s.write.target;
+        if (t && typeof t.sourceBuffer === 'string' && !bufferNames(t.channel).includes(t.sourceBuffer)) {
+          errors.push(`${label}: write.target.sourceBuffer "${t.sourceBuffer}" no existe en opcBuffers.${String(t.channel)} (señal "${String(s.domainKey)}")`);
+        }
+        const rb = s.write.readBack;
+        if (rb && typeof rb.sourceBuffer === 'string' && !bufferNames(rb.channel).includes(rb.sourceBuffer)) {
+          errors.push(`${label}: write.readBack.sourceBuffer "${rb.sourceBuffer}" no existe en opcBuffers.${String(rb.channel)} (señal "${String(s.domainKey)}")`);
         }
       }
     });

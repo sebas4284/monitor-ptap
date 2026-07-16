@@ -1,142 +1,263 @@
 {
   "info": {
     "name": "Monitor PTAP API",
-    "description": "Colección de la API real de @ptap/api (NestJS, prefijo /api, puerto 4000). Generada el 2026-07-10 a partir del código en apps/api. Los datos de plantas/snapshots provienen del adapter simulador (connectionStatus: 'mock') hasta que exista OPC UA real.",
+    "description": "Colección de la API real de @ptap/api (actualizada 2026-07-16). Contrato completo: docs/api/openapi.yaml.\n\nCÓMO USARLA\n1. Levanta el backend COMPLETO: `npm run dev:api` (requiere MySQL). El arranque de telemetría (`start:telemetry`) NO tiene auth ni /api/auth/login.\n2. Ejecuta primero **Auth → Login**: guarda el JWT en la variable {{token}} automáticamente; el resto de requests lo usan.\n3. Usuarios de prueba (`npm run db:seed-users -w @ptap/api`), contraseña `Demo1234!`:\n   civil@ptap.co · operador@ptap.co · jefe@ptap.co · admin@ptap.co\n\nAUTORIZACIÓN: por permisos granulares. Sin token → 401; sin el permiso → 403.\nPruébalo: haz login como `civil` y ejecuta *Usuarios → Listar* (403) u *OPC → Info* (403); repite como `admin` (200).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+  },
   "variable": [
-    { "key": "baseUrl", "value": "http://localhost:4000", "type": "string" }
+    { "key": "baseUrl", "value": "http://localhost:4000", "type": "string" },
+    { "key": "token", "value": "", "type": "string" },
+    { "key": "plantId", "value": "montebello", "type": "string" },
+    { "key": "userId", "value": "", "type": "string" }
   ],
   "item": [
     {
-      "name": "Health",
+      "name": "Auth",
       "item": [
         {
-          "name": "GET /api/health — liveness",
-          "request": {
-            "method": "GET",
-            "header": [{ "key": "Accept", "value": "application/json" }],
-            "url": { "raw": "{{baseUrl}}/api/health", "host": ["{{baseUrl}}"], "path": ["api", "health"] },
-            "description": "Liveness de la app. Respuesta esperada 200: {\"status\":\"ok\",\"service\":\"ptap-api\",\"sharedRoles\":4}"
-          },
+          "name": "Login (guarda el token)",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status 200', () => pm.response.to.have.status(200));",
-                  "pm.test('payload', () => {",
-                  "  const b = pm.response.json();",
-                  "  pm.expect(b.status).to.eql('ok');",
-                  "  pm.expect(b.service).to.eql('ptap-api');",
-                  "  pm.expect(b.sharedRoles).to.be.a('number');",
-                  "});"
+                  "const ok = pm.response.code === 201 || pm.response.code === 200;",
+                  "pm.test('login OK', () => pm.expect(ok).to.be.true);",
+                  "if (ok) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set('token', body.token);",
+                  "  console.log('Sesión iniciada como', body.user.email, '| rol:', body.user.role);",
+                  "}"
                 ]
               }
             }
-          ]
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@ptap.co\",\n  \"password\": \"Demo1234!\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/auth/login", "host": ["{{baseUrl}}"], "path": ["api", "auth", "login"] },
+            "description": "Devuelve { token, user }. El rol sale de MySQL, no del email."
+          }
         },
         {
-          "name": "GET /api/health/db — readiness MySQL",
+          "name": "Registro (crea SIEMPRE rol civil)",
           "request": {
-            "method": "GET",
-            "header": [{ "key": "Accept", "value": "application/json" }],
-            "url": { "raw": "{{baseUrl}}/api/health/db", "host": ["{{baseUrl}}"], "path": ["api", "health", "db"] },
-            "description": "Verifica la conexión al pool MySQL (SELECT 1). 200: {\"status\":\"ok\",\"database\":\"monitor_ptap\",\"latencyMs\":n}. 503 si la BD no responde: {\"status\":\"error\",\"database\":\"monitor_ptap\",\"message\":\"...\"}"
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('status 200', () => pm.response.to.have.status(200));",
-                  "pm.test('payload', () => {",
-                  "  const b = pm.response.json();",
-                  "  pm.expect(b.status).to.eql('ok');",
-                  "  pm.expect(b.database).to.eql('monitor_ptap');",
-                  "  pm.expect(b.latencyMs).to.be.a('number');",
-                  "});"
-                ]
-              }
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "name": "Plantas",
-      "item": [
-        {
-          "name": "GET /api/plants — lista de plantas",
-          "request": {
-            "method": "GET",
-            "header": [{ "key": "Accept", "value": "application/json" }],
-            "url": { "raw": "{{baseUrl}}/api/plants", "host": ["{{baseUrl}}"], "path": ["api", "plants"] },
-            "description": "Catálogo de plantas desde apps/api/opc-config.json. 200: [{\"id\":\"ptap-1\",\"name\":\"PTAP 1\"}, ... 8 plantas]. Cada elemento es un PlantDefinition de @ptap/shared."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('status 200', () => pm.response.to.have.status(200));",
-                  "pm.test('array de plantas con id y name', () => {",
-                  "  const b = pm.response.json();",
-                  "  pm.expect(b).to.be.an('array').with.length.above(0);",
-                  "  pm.expect(b[0]).to.have.keys(['id', 'name']);",
-                  "});"
-                ]
-              }
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "name": "Snapshots",
-      "item": [
-        {
-          "name": "GET /api/snapshots/:plantId — snapshot OPC",
-          "request": {
-            "method": "GET",
-            "header": [{ "key": "Accept", "value": "application/json" }],
-            "url": {
-              "raw": "{{baseUrl}}/api/snapshots/:plantId",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "snapshots", ":plantId"],
-              "variable": [{ "key": "plantId", "value": "ptap-1", "description": "id de planta de GET /api/plants (ptap-1 … ptap-8). Es el id, NO el nombre." }]
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Persona Nueva\",\n  \"email\": \"nuevo@ptap.co\",\n  \"phone\": \"3001112233\",\n  \"plant\": \"montebello\",\n  \"password\": \"Secreta123!\"\n}"
             },
-            "description": "Último snapshot conocido de la planta (OpcSnapshot de @ptap/shared): {plantId, timestamp ISO-8601, connectionStatus: 'connected'|'disconnected'|'mock', sensors: Sensor[4], tanks: Tank[4], valves?: Valve[]}. Hoy el backend simula (connectionStatus='mock'). 404 si el plantId no existe (NotFoundException del adapter)."
-          },
+            "url": { "raw": "{{baseUrl}}/api/auth/register", "host": ["{{baseUrl}}"], "path": ["api", "auth", "register"] },
+            "description": "La cuenta nace SIEMPRE con rol 'civil'. Email duplicado → 409."
+          }
+        },
+        {
+          "name": "Registro con role=admin (DEBE dar 400)",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status 200', () => pm.response.to.have.status(200));",
-                  "pm.test('estructura OpcSnapshot', () => {",
-                  "  const b = pm.response.json();",
-                  "  pm.expect(b.plantId).to.be.a('string');",
-                  "  pm.expect(b.timestamp).to.be.a('string');",
-                  "  pm.expect(['connected','disconnected','mock']).to.include(b.connectionStatus);",
-                  "  pm.expect(b.sensors).to.be.an('array');",
-                  "  pm.expect(b.tanks).to.be.an('array');",
-                  "});"
+                  "pm.test('el servidor rechaza el rol enviado por el cliente (400)', () => pm.response.to.have.status(400));"
                 ]
               }
             }
-          ]
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Atacante\",\n  \"email\": \"escalada@ptap.co\",\n  \"plant\": \"montebello\",\n  \"password\": \"Secreta123!\",\n  \"role\": \"admin\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/auth/register", "host": ["{{baseUrl}}"], "path": ["api", "auth", "register"] },
+            "description": "Prueba de seguridad: el schema es .strict(), así que enviar 'role' se RECHAZA con 400 en vez de ignorarse. Nadie puede auto-asignarse un rol."
+          }
         }
       ]
     },
     {
-      "name": "Socket.IO (referencia — no ejecutable en colección v2.1)",
-      "description": "Postman v2.1 no modela WebSockets; esta carpeta es documentación.\n\nEndpoint: ws://localhost:4000 (path por defecto /socket.io). CORS: origin '*'.\n\nEventos:\n1. Cliente → servidor: 'opc:subscribe' con payload { \"plantId\": \"ptap-1\" }. El socket abandona cualquier room 'ptap-*' anterior, se une al room del plantId y recibe de inmediato un 'opc:snapshot' con el último snapshot (o null si no hay datos).\n2. Servidor → cliente: 'opc:snapshot' con payload OpcSnapshot. Se emite al room de la planta en cada ciclo de polling (pollingIntervalMs: 5000, definido en apps/api/opc-config.json).\n\nNota: el frontend móvil actual NO usa Socket.IO (hace polling HTTP cada 30 s con React Query); socket.io-client no está instalado en apps/mobile.",
-      "item": []
+      "name": "Usuarios (solo Admin)",
+      "item": [
+        {
+          "name": "Listar usuarios",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/users", "host": ["{{baseUrl}}"], "path": ["api", "users"] },
+            "description": "Requiere el permiso manage_users (solo admin). Con token de civil/operador/jefe → 403."
+          }
+        },
+        {
+          "name": "Asignar rol",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"role\": \"operador\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/users/{{userId}}/role",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "users", "{{userId}}", "role"]
+            },
+            "description": "Requiere assign_roles (solo admin). Se audita (quién, a quién, de→a). Un admin no puede cambiar su propio rol (400). El rol nuevo aplica cuando el usuario vuelve a iniciar sesión (viaja en el JWT)."
+          }
+        },
+        {
+          "name": "Activar / desactivar cuenta",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"isActive\": false\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/users/{{userId}}/active",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "users", "{{userId}}", "active"]
+            },
+            "description": "Requiere manage_users. Un usuario inactivo no puede iniciar sesión. Un admin no puede desactivarse a sí mismo (400)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Plantas (telemetría)",
+      "item": [
+        {
+          "name": "Listar plantas",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/plants", "host": ["{{baseUrl}}"], "path": ["api", "plants"] },
+            "description": "Solo exige JWT válido (cualquier rol)."
+          }
+        },
+        {
+          "name": "Snapshot de una planta",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/plants/{{plantId}}/snapshot",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "plants", "{{plantId}}", "snapshot"]
+            },
+            "description": "Desde cache RAM (<50 ms); nunca toca el PLC bajo demanda."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Comandos (Fase 5)",
+      "item": [
+        {
+          "name": "Ejecutar comando",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"command\": \"openValve\",\n  \"target\": \"valveEV01\",\n  \"idempotencyKey\": \"demo-001\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/plants/{{plantId}}/commands",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "plants", "{{plantId}}", "commands"]
+            },
+            "description": "HOY responde 404 TARGET_NOT_WRITABLE: el mapping de producción no tiene señales writable (falta el L5X) y OPCUA_WRITES_ENABLED=false por defecto. El mecanismo está construido y probado; la escritura real sigue cerrada a propósito.\n\nCódigos: 200 confirmado · 502 fallido (sin read-back) · 403 permiso o sesión insegura · 409 interlock."
+          }
+        }
+      ]
+    },
+    {
+      "name": "OPC (observabilidad)",
+      "item": [
+        {
+          "name": "Status del puente",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/opc/status", "host": ["{{baseUrl}}"], "path": ["api", "opc", "status"] },
+            "description": "Solo exige JWT válido."
+          }
+        },
+        {
+          "name": "Info del servidor OPC UA (admin)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/opc/info", "host": ["{{baseUrl}}"], "path": ["api", "opc", "info"] },
+            "description": "Requiere system_config (solo admin). Con token de civil → 403."
+          }
+        },
+        {
+          "name": "Salud por buffer (admin)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/opc/buffers", "host": ["{{baseUrl}}"], "path": ["api", "opc", "buffers"] },
+            "description": "Requiere system_config (solo admin)."
+          }
+        },
+        {
+          "name": "Dead letter (admin)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/opc/dead-letter", "host": ["{{baseUrl}}"], "path": ["api", "opc", "dead-letter"] },
+            "description": "Requiere system_config (solo admin). Señales anómalas descartadas (regla 12)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health / Métricas",
+      "item": [
+        {
+          "name": "Health de la app",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/health", "host": ["{{baseUrl}}"], "path": ["api", "health"] }
+          }
+        },
+        {
+          "name": "Health de MySQL",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/health/db", "host": ["{{baseUrl}}"], "path": ["api", "health", "db"] }
+          }
+        },
+        {
+          "name": "Health industrial del puente",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/api/health/opc", "host": ["{{baseUrl}}"], "path": ["api", "health", "opc"] },
+            "description": "Público a propósito (liveness/readiness para orquestadores). Devuelve 503 si el bridge está Stale o Faulted."
+          }
+        },
+        {
+          "name": "Métricas Prometheus",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/metrics", "host": ["{{baseUrl}}"], "path": ["metrics"] },
+            "description": "FUERA del prefijo /api (convención de Prometheus). Abierto salvo que definas METRICS_AUTH_TOKEN."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Socket.IO (referencia — no ejecutable en Postman v2.1)",
+      "item": [],
+      "description": "El cliente emite `opc:subscribe` { plantId } y recibe:\n- `opc:snapshot` (por planta, SOLO cuando el snapshot cambia)\n- `opc:liveness` (broadcast, en cambios de frescura)\n\n`sequence` es monótono por planta: si llega N+2 sin ver N+1, hubo un hueco → resincronizar por REST.\n\nGap conocido: el gateway NO autentica el handshake (docs/SECURITY_FINDING_P0.md §6)."
     }
   ]
 }

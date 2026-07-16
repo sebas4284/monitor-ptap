@@ -2,13 +2,13 @@ import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nest
 import { CONNECTIVITY_ADAPTER, CONNECTIVITY_CONFIG } from './connectivity.tokens';
 import type { ConnectivityConfig } from './connectivity.config';
 import type { ConnectivityAdapter } from './ports/connectivity-adapter.port';
-import { RawFrameCache } from './raw-frame-cache';
 
 /**
- * Gestiona el ciclo de vida del ConnectivityAdapter (Fase 1): lo arranca, canaliza
- * sus frames crudos al cache RAM, y lo detiene al apagar. El arranque no bloquea el
- * boot: si el PLC no está accesible, se reintenta en segundo plano (la reconexión
- * posterior a la primera conexión la maneja node-opcua).
+ * Gestiona el ciclo de vida del ConnectivityAdapter (Fase 1): lo arranca y lo detiene al
+ * apagar. El arranque no bloquea el boot: si el PLC no está accesible, se reintenta en
+ * segundo plano (la reconexión posterior a la primera conexión la maneja node-opcua).
+ *
+ * Los frames los consume PlantPipelineService directamente vía adapter.onFrame().
  */
 @Injectable()
 export class BridgeOrchestratorService implements OnModuleInit, OnModuleDestroy {
@@ -17,15 +17,13 @@ export class BridgeOrchestratorService implements OnModuleInit, OnModuleDestroy 
   private stopped = false;
 
   constructor(
-    // @Inject explícito en los 3: tsx (esbuild) no emite design:paramtypes; la
-    // inyección por tipo llega undefined (bug P2-3 del audit).
+    // @Inject explícito: tsx (esbuild) no emite design:paramtypes; la inyección por
+    // tipo llega undefined (bug P2-3 del audit).
     @Inject(CONNECTIVITY_ADAPTER) private readonly adapter: ConnectivityAdapter,
     @Inject(CONNECTIVITY_CONFIG) private readonly config: ConnectivityConfig,
-    @Inject(RawFrameCache) private readonly rawCache: RawFrameCache,
   ) {}
 
   onModuleInit(): void {
-    this.adapter.onFrame((frame) => this.rawCache.ingest(frame));
     this.adapter.onStatusChange((status, reason) =>
       this.logger.log(`bridge(${this.adapter.provider}) → ${status}: ${reason}`),
     );

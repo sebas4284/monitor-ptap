@@ -11,9 +11,8 @@ import { JsonLogger } from './infrastructure/logging/json-logger.service';
 /**
  * Controlador SIN guards a propósito: main.telemetry.ts es el arranque de demo sin BD
  * (ver comentario del módulo abajo) y no debe requerir AuthModule/MySQL. Duplica los dos
- * métodos de PlantsController (que en el arranque completo SÍ lleva @MinTier('viewer'))
- * en vez de reutilizar esa clase directamente, para no arrastrar su dependencia de
- * AuthModule aquí.
+ * métodos de PlantsController (que en el arranque completo SÍ lleva JwtAuthGuard) en vez
+ * de reutilizar esa clase directamente, para no arrastrar su dependencia de AuthModule aquí.
  */
 @Controller('plants')
 class TelemetryPlantsController {

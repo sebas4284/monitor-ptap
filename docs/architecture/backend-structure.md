@@ -1,235 +1,150 @@
-# Backend Structure - Fase 1
+# Arquitectura del backend — Monitor PTAP
 
-## Alcance de esta fase
+> Documento de arquitectura (entregable Semana 1 del plan de trabajo), **actualizado al estado
+> real del sistema**. Describe el diseño implementado y verificado, no un plan.
+> Contrato HTTP: [`docs/api/openapi.yaml`](../api/openapi.yaml). Puesta en marcha:
+> [`docs/SETUP.md`](../SETUP.md). Datos por planta: [`docs/DATA_CATALOG.md`](../DATA_CATALOG.md).
 
-Esta fase deja preparada la infraestructura del backend para comenzar desarrollo funcional, sin implementar todavia autenticacion real, JWT, base de datos, alarmas, PLC real, OPC-UA real, Modbus, MQTT, logica de negocio ni Docker funcional.
+## 1. Qué resuelve
 
-La arquitectura general se mantiene. El ajuste principal es reducir el plan anterior a cambios que resuelven problemas presentes o muy proximos, evitando carpetas vacias y modulos sin uso real.
+Leer en tiempo real 13 sitios de tratamiento de agua potable concentrados en un PLC maestro
+Allen-Bradley, expuesto por un servidor **FactoryTalk Optix OPC UA**, y presentarlos en una app
+móvil/web **sin que el tablero mienta**: un dato congelado se ve congelado, un valor inferido no
+se presenta igual que uno confirmado, y una señal en la que no confiamos no se muestra como número.
 
-## Decisiones revisadas
+## 2. Flujo de datos (capas obligatorias, sin saltos)
 
-### AuditModule
-
-No se crea en Fase 1.
-
-Aunque la auditoria sera importante para trazabilidad industrial, un modulo completamente vacio no aporta comportamiento, contratos ni integracion real. Se documenta como modulo futuro y se crea cuando exista el primer caso de uso concreto, por ejemplo registrar comandos ejecutados, reconocimiento de alarmas o cambios de configuracion.
-
-### packages/shared
-
-Se mantiene un unico `packages/shared/src/index.ts` por ahora.
-
-El archivo actual todavia contiene pocos tipos, permisos y helpers. Dividirlo en `auth/`, `telemetry/` o `plants/` seria prematuro mientras no existan suficientes contratos por dominio. La regla queda documentada: se divide cuando el volumen o los conflictos de edicion lo justifiquen, manteniendo la API publica de `@ptap/shared`.
-
-### Carpetas domain vacias
-
-No se crean `domain/`, `entities/`, `value-objects/` ni `repositories/` vacias dentro de cada modulo.
-
-La convencion si queda documentada: cada modulo podra agregar esas carpetas cuando aparezca logica de negocio suficiente. Esto evita una estructura grande que parezca completa pero no contenga reglas reales.
-
-### Framework HTTP
-
-Las rutas y contratos deben definirse de forma independiente del framework. Mientras no se cierre la decision Express vs NestJS, el plan debe hablar de rutas HTTP, controladores/handlers y contratos, no de decoradores especificos como requisito arquitectonico.
-
-## Tipografia de rutas API
-
-Estas reglas aplican tanto si se implementan con NestJS como si se implementan con Express:
-
-- Usar prefijo global `/api`.
-- Evaluar `/api/v1` cuando exista necesidad real de versionado publico; no agregarlo solo por plantilla.
-- Usar sustantivos en plural y minusculas: `/api/plants`, `/api/users`, `/api/telemetry`.
-- Usar kebab-case para nombres compuestos: `/api/event-logs`, `/api/control-commands`.
-- Evitar verbos en la ruta base; el verbo lo expresa el metodo HTTP.
-- Usar identificadores como segmentos: `/api/plants/:plantId`.
-- Usar subrecursos cuando exista pertenencia clara: `/api/plants/:plantId/telemetry`.
-- Mantener nombres estables aunque cambie el framework interno.
-
-Ejemplos de estilo reservado para fases futuras:
-
-```txt
-GET    /api/health
-GET    /api/plants
-GET    /api/plants/:plantId
-GET    /api/plants/:plantId/telemetry
-POST   /api/plants/:plantId/control-commands
-GET    /api/alarms
-PATCH  /api/alarms/:alarmId/acknowledgement
-GET    /api/event-logs
+```
+PLC (Allen-Bradley + FactoryTalk Optix OPC UA)
+  │  opc.tcp://181.204.165.66:59100
+  ▼
+OPC UA Adapter ─────────► RawPlantFrame por planta (coalescido)
+  │   1 MonitoredItem por BUFFER (nodo array completo), nunca uno por elemento
+  │   + watchdog + heartbeat + máquina de estados del puente
+  ▼
+FrameCoalescer      → un frame por planta por ventana (no uno por buffer)
+  ▼
+Parser + Sequence   → RawSnapshot { plantId, sequence, buffers } + DeadLetter de anómalos
+  ▼
+Liveness            → live | idle | stale | unknown  (frescura POR PLANTA)
+  ▼
+Mapping Engine      → (buffer, índice) → domainKey, desde config/opc_mapping.json
+  ▼
+Quality Service     → usable / reason (calidad OPC, rango, NaN, frescura)
+  ▼
+Snapshot Builder    → PlantSnapshotDto (DTO de dominio)
+  ▼
+PlantCache (RAM, único escritor)
+  ▼
+REST + Socket.IO ───────► App móvil / web (Expo)
 ```
 
-En Fase 1 existen `GET /api/health` y `GET /api/snapshots/:plantId`. Las demas rutas quedan como convencion, no como implementacion.
+**Es el único camino de datos vivo.** El poller legado previo al puente (ports
+`IndustrialReader/Writer/ProtocolAdapter`, `ConnectivityService`, `RawFrameCache`) se **eliminó**
+al completarse el Mapping Engine; no quedan dos caminos compitiendo.
 
-## Bridge OPC-UA en NestJS
+## 3. Reglas de diseño que no se rompen
 
-El bridge industrial vive dentro de `apps/api`, no en un `server/` independiente. La capa `src/infrastructure/connectivity` contiene los puertos de lectura, escritura y estado de protocolo, mas un adapter simulador para Fase 1.
+1. **La telemetría no se persiste.** Cache solo en RAM. MySQL guarda únicamente usuarios,
+   auditoría y comandos.
+2. **Cero números mágicos de índice en el código**: toda la semántica vive en `opc_mapping.json`.
+3. **El adapter no conoce la PTAP**: solo endpoints, NodeIds y buffers.
+4. **El frontend nunca recibe arrays crudos**: solo DTOs de dominio.
+5. **El simulador no se elimina**: `SimulatorBridgeAdapter` es el testbed permanente sin PLC.
+6. **Un MonitoredItem por buffer**; el diff de elementos lo hace el parser.
+7. **SourceTimestamp del PLC**, nunca `Date.now()` para datos de proceso.
+8. **Toda la config OPC sale de `.env`**: cero valores quemados.
+9. **Escritura al PLC detrás de feature flag + sesión autenticada y cifrada.**
+10. Cada dato lleva `value`, `quality`, `usable`, `mappingStatus`, `confidence`, `sourceTimestamp`.
+11. **Estado del puente = máquina de estados explícita**, nunca un boolean.
+12. **Nada se pierde en silencio**: lo anómalo va al DeadLetter, consultable por endpoint admin.
 
-Flujo implementado:
+## 4. Puertos y adaptadores
 
-```txt
-opc-config.json
-  -> ConnectivityModule
-  -> SimulatorConnectivityAdapter
-  -> polling cada 5 segundos
-  -> ultimo snapshot en memoria
-  -> REST: GET /api/snapshots/:plantId
-  -> Socket.io: opc:snapshot por sala de PTAP
-  -> cliente futuro: suscripcion por PTAP
+Un único puerto, `ConnectivityAdapter`, con dos implementaciones seleccionadas por
+`CONNECTIVITY_PROVIDER`:
+
+| Provider | Implementación | Uso |
+|---|---|---|
+| `opcua` | `OpcUaConnectivityAdapter` | PLC real (node-opcua: Subscriptions, PKI, reconexión) |
+| `simulator` | `SimulatorBridgeAdapter` | Testbed sin PLC; emula todos los estados del puente |
+
+El puerto expone lectura push (`onFrame`, `onStatusChange`), diagnóstico (`getDiagnostics`,
+`getServerInfo`, `getBufferHealth`) y, desde Fase 5, escritura (`writeBufferElement`,
+`readBufferElement`, `getWriteSecurity`).
+
+## 5. Estado del puente (`BridgeStatus`)
+
+Máquina de estados explícita con transiciones registradas (timestamp + motivo):
+
+`Connecting → Connected → Recovering | Stale | Disconnected | Faulted`
+
+- **Stale**: sesión viva pero sin notificaciones nuevas (datos congelados).
+- **Faulted**: error irrecuperable que exige intervención (p. ej. namespace no resuelto).
+
+Resiliencia en capas: watchdog (sin notificaciones) → reciclaje de subscription → reciclaje de
+sesión; heartbeat independiente; reconexión con backoff de node-opcua.
+
+## 6. Estructura del código
+
+```
+apps/api/src/
+├── main.ts                 # Arranque COMPLETO (requiere MySQL): auth, RBAC, usuarios, comandos
+├── main.telemetry.ts       # Arranque de TELEMETRÍA (sin BD): puente + pipeline + REST + Socket.IO
+├── config/load-env.ts      # Carga el .env de la raíz del monorepo
+├── infrastructure/
+│   ├── connectivity/       # ★ El corazón: puente + pipeline (sin BD)
+│   │   ├── adapters/opcua|simulator/
+│   │   ├── bridge/         # watchdog, heartbeat, frame-coalescer, state-machine
+│   │   ├── pipeline/       # parser, liveness, mapping, quality, snapshot, cache, dead-letter
+│   │   ├── mapping/        # loader de opc_mapping.json
+│   │   ├── ports/          # ConnectivityAdapter (contrato único)
+│   │   ├── connectivity.config.ts     # TODA la config OPC desde .env
+│   │   ├── connectivity.gateway.ts    # Socket.IO
+│   │   └── opc-observability.module.ts # /api/opc/* con RBAC (CON BD; solo main.ts)
+│   ├── database/           # Pool MySQL + migrations/ (users, audit_log, command_log)
+│   ├── audit/              # AuditLogService + AuditMiddleware (accesos permitidos y denegados)
+│   ├── metrics/            # Prometheus (/metrics)
+│   ├── logging/            # JsonLogger (pino)
+│   └── validation/         # ZodValidationPipe
+└── modules/                # Dominios HTTP: auth, users, plants, health, commands
 ```
 
-`opc-config.json` representa temporalmente las 8 PTAPs, sus NodeIds, indices de sensores e indices de tanques. MySQL reemplazara esta fuente en una fase posterior.
+**Por qué dos entrypoints:** `main.ts` monta todo y por eso exige MySQL. `main.telemetry.ts` monta
+solo el slice de telemetría — todo lo que el móvil necesita para ver datos — y no toca la base de
+datos. La observabilidad con RBAC vive en un módulo aparte (`OpcObservabilityModule`) para que
+importar `ConnectivityModule` nunca obligue a tener MySQL arriba.
 
-Las electroválvulas no tienen lectura real todavia: las PTAPs usan bits empaquetados en arrays INT y el mapa de bits no esta confirmado. Por eso el backend no inventa `valves` reales.
+## 7. Seguridad
 
-## Seguridad de contrasenas
+- **Autenticación**: `POST /api/auth/login` → JWT (8 h). Contraseñas con **Argon2id + pepper**.
+- **Auto-registro**: `POST /api/auth/register` crea SIEMPRE rol `civil`; el rol lo fija el
+  servidor (el schema es `.strict()`: enviar `role` → 400).
+- **Autorización**: permisos granulares de `@ptap/shared` (`ROLE_PERMISSIONS`/`hasPermission`),
+  aplicados con `@RequirePermission(...)` + `PermissionGuard`. Es la **misma fuente** que consume
+  el móvil para su UI. Solo el Administrador gestiona usuarios y asigna roles.
+- **Auditoría**: `AuditMiddleware` registra accesos **permitidos y denegados** (200/401/403);
+  los cambios de rol y las transiciones del puente se auditan con detalle.
+- **OPC UA**: conmutación por `.env` a `SignAndEncrypt`/`Basic256Sha256` con identidad
+  `username` o `certificate`.
+- **Hallazgo P0 abierto**: el servidor de la planta acepta `Anonymous + None` — ver
+  [`docs/SECURITY_FINDING_P0.md`](../SECURITY_FINDING_P0.md).
 
-La autenticacion real queda pendiente, pero el backend ya reserva el servicio de hashing seguro:
+## 8. Convenciones de rutas API
 
-```txt
-password plano
-  -> HMAC-SHA256 con pepper secreto de 64 bytes
-  -> Argon2id con salt automatico embebido
-  -> password_hash + password_pepper_version
-```
+- Prefijo global `/api` (excepto `/metrics`, fuera del prefijo por convención de Prometheus).
+- Sustantivos en plural y minúsculas: `/api/plants`, `/api/users`.
+- kebab-case para nombres compuestos: `/api/opc/dead-letter`.
+- Sin verbos en la ruta base; el verbo lo expresa el método HTTP.
+- Identificadores como segmentos: `/api/plants/:plantId`.
+- Subrecursos cuando hay pertenencia clara: `/api/plants/:plantId/snapshot`, `.../commands`.
+- `/api/v1` solo si aparece necesidad real de versionado público; el DTO ya viaja versionado
+  (`protocolVersion`/`dtoVersion`).
 
-El pepper se carga desde variables de entorno:
+## 9. Identidad de planta
 
-```env
-PASSWORD_PEPPER_CURRENT_VERSION=1
-PASSWORD_PEPPER_V1_BASE64=
-```
-
-El pepper no se guarda en MySQL, no se expone al frontend y no debe versionarse con secretos reales.
-
-## Nuevo plan de tareas minimalista
-
-### 1. Reubicar `modules/plc` hacia `src/infrastructure/connectivity`
-
-**Objetivo:** dejar claro que PLC, OPC-UA, Modbus, MQTT y simuladores pertenecen a infraestructura de conectividad, no a modulos de negocio.
-
-**Por que se hace ahora:** `plc` ya existe como modulo, pero conceptualmente esta en una capa incorrecta. Corregir esa ubicacion antes de que tenga servicios, controllers o dependencias evita acoplamiento temprano.
-
-**Por que no deberia posponerse:** si se empieza a implementar telemetria o comandos sobre `modules/plc`, luego habra que separar protocolo, lectura, escritura y reglas de negocio con mas costo.
-
-**Costo de implementacion:** bajo. Es una reubicacion estructural con un modulo de conectividad minimo y puertos iniciales, sin adapters reales.
-
-**Impacto futuro:** permite que `telemetry` y `commands` dependan de puertos de conectividad, no de librerias industriales concretas.
-
-### 2. Crear `src/config`
-
-**Objetivo:** reservar un lugar unico para configuracion de la aplicacion: puerto, entorno, prefijo API y, mas adelante, protocolo activo.
-
-**Por que se hace ahora:** la configuracion transversal aparece desde el primer servicio real. Centralizarla evita lecturas directas de `process.env` dispersas.
-
-**Por que no deberia posponerse:** una vez que cada modulo lea variables por su cuenta, normalizar nombres, defaults y validaciones se vuelve mas costoso.
-
-**Costo de implementacion:** bajo. Puede empezar con archivos minimos y sin validacion avanzada.
-
-**Impacto futuro:** facilita agregar validacion de entorno, configuracion por ambiente y seleccion de adapters sin tocar modulos de negocio.
-
-### 3. Crear `src/common` sin subcarpetas vacias innecesarias
-
-**Objetivo:** reservar el espacio para utilidades transversales reales del backend.
-
-**Por que se hace ahora:** filtros, pipes, interceptors, constantes y helpers compartidos suelen aparecer pronto en una API.
-
-**Por que no deberia posponerse:** sin una ubicacion comun, cada modulo puede empezar a crear helpers incompatibles o duplicados.
-
-**Costo de implementacion:** bajo, siempre que no se creen arboles vacios por categoria. Se puede iniciar con `common/` y agregar subcarpetas cuando exista el primer archivo real.
-
-**Impacto futuro:** ordena responsabilidades transversales sin convertir `common` en un cajon de logica de negocio.
-
-### 4. Actualizar `AppModule`
-
-**Objetivo:** reflejar la estructura aprobada: quitar la dependencia conceptual hacia `PlcModule` y registrar la conectividad desde `src/infrastructure/connectivity`.
-
-**Por que se hace ahora:** `AppModule` es el mapa principal del backend. Debe mostrar la separacion correcta entre modulos de negocio e infraestructura.
-
-**Por que no deberia posponerse:** mantener `PlcModule` registrado como feature module comunica una direccion equivocada al equipo.
-
-**Costo de implementacion:** bajo. Solo cambia el registro de imports cuando se haga la reubicacion.
-
-**Impacto futuro:** deja claro que `auth`, `users`, `plants`, `telemetry`, `alarms`, `commands` y `reports` son modulos funcionales; conectividad es soporte tecnico.
-
-### 5. Documentar convenciones de crecimiento por modulo
-
-**Objetivo:** definir como debe crecer un modulo cuando tenga logica real, sin crear carpetas vacias ahora.
-
-**Por que se hace ahora:** el equipo necesita una guia comun antes de comenzar funcionalidades.
-
-**Por que no deberia posponerse:** si cada modulo crece con una forma distinta desde el primer caso de uso, la arquitectura aprobada se diluye rapidamente.
-
-**Costo de implementacion:** muy bajo. Es documentacion.
-
-**Impacto futuro:** permite agregar `dto/`, `domain/`, `entities/`, `value-objects/`, `repositories/` o `infrastructure/` solo cuando resuelvan una necesidad concreta.
-
-Convencion:
-
-```txt
-modules/<feature>/
-  <feature>.module.ts
-  <feature>.controller.ts      # Cuando exista API HTTP real
-  <feature>.service.ts         # Cuando exista orquestacion real
-  dto/                         # Cuando existan contratos HTTP propios
-  domain/                      # Cuando existan reglas de negocio
-  infrastructure/              # Cuando existan implementaciones tecnicas propias
-```
-
-### 6. Mantener `packages/shared` simple
-
-**Objetivo:** conservar `packages/shared/src/index.ts` como barrel unico mientras el volumen sea bajo.
-
-**Por que se hace ahora:** ya existe y funciona como punto comun entre mobile y API.
-
-**Por que no deberia posponerse:** no hay nada que implementar ahora; la decision importante es evitar fragmentarlo prematuramente.
-
-**Costo de implementacion:** nulo.
-
-**Impacto futuro:** se puede dividir sin romper imports si se mantiene `index.ts` como API publica.
-
-Regla de division futura:
-
-```txt
-packages/shared/src/
-  index.ts
-  auth/        # Cuando roles, permisos y contratos auth crezcan
-  telemetry/   # Cuando existan contratos reales de sensores, tanques o lecturas
-  plants/      # Cuando existan contratos propios de plantas
-```
-
-### 7. Documentar `audit` como modulo futuro
-
-**Objetivo:** reconocer que auditoria sera necesaria, pero no crear un modulo vacio.
-
-**Por que se hace ahora:** el alcance de Fase 1 debe dejar claro que auditoria pertenece a una fase posterior.
-
-**Por que no deberia posponerse:** si no se documenta, puede confundirse con `reports` o `alarms` cuando aparezcan los primeros eventos.
-
-**Costo de implementacion:** muy bajo. Solo documentacion.
-
-**Impacto futuro:** cuando se implemente, `audit` tendra una responsabilidad clara: trazabilidad de acciones y eventos operativos, no reportes ni evaluacion de alarmas.
-
-## Cambios excluidos de Fase 1
-
-No se implementan ahora:
-
-- `AuditModule` vacio.
-- Division interna de `packages/shared`.
-- Carpetas `domain/`, `entities/`, `value-objects/` o `repositories/` vacias por modulo.
-- Adapters reales de OPC-UA, Modbus o MQTT.
-- PLC real y adapters reales de OPC-UA, Modbus o MQTT.
-- Base de datos.
-- JWT, guards de permisos o decoradores de usuario.
-- Docker funcional.
-
-## Estado final esperado
-
-Con este plan minimalista, la infraestructura del backend puede considerarse terminada para Fase 1 cuando existan:
-
-- `src/infrastructure/connectivity` como lugar oficial de conectividad industrial.
-- `GET /api/snapshots/:plantId` como endpoint de snapshot normalizado.
-- Socket.io emitiendo `opc:snapshot` por PTAP seleccionada.
-- `src/config` como punto inicial de configuracion.
-- `src/common` como espacio transversal sin sobrepoblar.
-- `AppModule` actualizado para reflejar la separacion entre modulos funcionales e infraestructura.
-- Este documento como guia de estructura, rutas API y crecimiento por modulo.
-
-Al completar esos puntos, el backend queda listo para comenzar desarrollo de funcionalidades sin cargar deuda innecesaria desde el inicio.
+El `plantId` (**slug canónico**) es la única identidad en todo el sistema: `voragine, soledad,
+montebello, cascajal, km18, alto-los-mangos, campoalegre, pichinde, carbonero, sirena,
+san-antonio, quijote`. Nada de `PTAP Norte` ni `ptap-1`. Los índices de array **no son
+transferibles entre plantas** (`realIn[5]` es caudal en Montebello y nivel de tanque en
+Campoalegre): siempre se direcciona por `(plantId, domainKey)`.
