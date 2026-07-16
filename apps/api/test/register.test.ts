@@ -1,8 +1,11 @@
 /**
- * Registro público (auto-registro). La garantía central: la cuenta nace SIEMPRE con rol
- * 'civil' y el cliente NO puede influir en el rol — el schema `.strict()` rechaza el campo
- * `role` con 400 en vez de ignorarlo en silencio. Se prueba contra el AuthService real con
- * un UsersRepository/AuditLog dobles (sin MySQL) y el esquema zod real vía el controller.
+ * Registro público (auto-registro). Dos garantías centrales, ambas del servidor:
+ *  1. La cuenta nace SIEMPRE con rol 'civil' y el cliente NO puede influir — el schema
+ *     `.strict()` rechaza el campo `role` con 400 en vez de ignorarlo en silencio.
+ *  2. La cuenta nace PENDIENTE de aprobación: no se devuelve token, así que registrarse no
+ *     da acceso. Es la defensa contra cuentas falsas/fantasma.
+ * Se prueba contra el AuthService real con un UsersRepository/AuditLog dobles (sin MySQL) y
+ * el esquema zod real vía el controller.
  */
 import 'reflect-metadata';
 import { test } from 'node:test';
@@ -90,19 +93,32 @@ test('register-schema: exige email válido y plant en formato slug', () => {
 
 // ── End-to-end por HTTP ──
 
-test('register: crea la cuenta SIEMPRE con rol civil y devuelve token', async () => {
+test('register: crea la cuenta SIEMPRE con rol civil', async () => {
+  const repo = fakeRepo();
+  const audit = fakeAudit();
+  const app = await buildApp(repo, audit.service);
+  try {
+    await request(app.getHttpServer()).post('/api/auth/register').send(VALID).expect(201);
+    // lo persistido es civil (el rol lo fija el servidor, no el cliente)
+    assert.equal(repo.created[0].role, 'civil');
+    assert.equal(repo.created[0].email, VALID.email);
+    assert.equal(repo.created[0].phone, VALID.phone);
+  } finally {
+    await app.close();
+  }
+});
+
+test('register: NO devuelve token — la cuenta queda pendiente de aprobación', async () => {
   const repo = fakeRepo();
   const audit = fakeAudit();
   const app = await buildApp(repo, audit.service);
   try {
     const res = await request(app.getHttpServer()).post('/api/auth/register').send(VALID).expect(201);
-    assert.equal(res.body.user.role, 'civil');
-    assert.equal(res.body.user.email, VALID.email);
-    assert.equal(typeof res.body.token, 'string');
-    assert.equal(res.body.token.split('.').length, 3, 'debe ser un JWT');
-    // lo persistido también es civil (no solo la respuesta)
-    assert.equal(repo.created[0].role, 'civil');
-    assert.equal(repo.created[0].phone, VALID.phone);
+    assert.equal(res.body.status, 'pending_approval');
+    assert.equal(res.body.email, VALID.email);
+    assert.equal(res.body.token, undefined, 'registrarse NO puede dar sesión: la aprueba un admin');
+    assert.equal(res.body.user, undefined);
+    assert.match(res.body.message, /pendiente de aprobación/i);
   } finally {
     await app.close();
   }
@@ -142,6 +158,7 @@ test('register: el alta queda auditada como auth.register con rol civil', async 
     assert.ok(entry, 'debe auditarse el registro');
     assert.equal(entry.role, 'civil');
     assert.equal(entry.userEmail, VALID.email);
+    assert.equal((entry.detail as { status?: string }).status, 'pending_approval');
   } finally {
     await app.close();
   }

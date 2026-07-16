@@ -13,6 +13,11 @@ import { PasswordHashingService } from './password-hashing.service';
   imports: [forwardRef(() => UsersModule), AuditModule],
   controllers: [AuthController],
   providers: [PasswordHashingService, JwtService, AuthService, JwtAuthGuard, PermissionGuard],
-  exports: [PasswordHashingService, JwtService, JwtAuthGuard, PermissionGuard],
+  // Se reexporta UsersModule a propósito: Nest instancia los guards referenciados por clase en
+  // `@UseGuards()` dentro del módulo del CONTROLLER, y allí resuelve sus dependencias. Como
+  // JwtAuthGuard ahora necesita UsersRepository (relee al usuario en cada petición), cualquier
+  // módulo que importe AuthModule para usar el guard debe recibir también con qué construirlo;
+  // si no, Nest revienta en el arranque con "can't resolve dependencies of the JwtAuthGuard".
+  exports: [PasswordHashingService, JwtService, JwtAuthGuard, PermissionGuard, forwardRef(() => UsersModule)],
 })
 export class AuthModule {}

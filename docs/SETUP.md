@@ -120,30 +120,58 @@ npm run db:seed-admin -w @ptap/api
 | `jefe@ptap.co` | jefe | Todo lo del operador **salvo** abrir/cerrar válvulas |
 | `admin@ptap.co` | admin | Control total |
 
-## Alta de usuarios y asignación de roles
+> Estas cuentas se siembran **ya aprobadas** (`is_active = 1`): son la semilla del sistema, no pasan
+> por el auto-registro. Toda cuenta creada desde la app sí nace pendiente (ver abajo).
+
+## Alta de usuarios, aprobación y asignación de roles
 
 Según la **matriz oficial de permisos**, *"Crear, editar y eliminar usuarios"* y *"Asignar roles a
 los usuarios"* son atribuciones **exclusivas del Administrador**. El flujo implementado:
 
-1. **Cualquiera se registra** desde la app (`POST /api/auth/register`) y entra de inmediato…
-2. …**siempre con rol `civil`** (solo consulta: si el sistema opera y si hay agua). El rol lo fija
-   el **servidor**: la pantalla no tiene selector de rol y el schema es `.strict()`, así que mandar
-   `role` en el body devuelve **400**. Nadie puede auto-asignarse un rol.
-3. **Un administrador verifica a la persona** (para eso el registro pide teléfono) y le asigna el
-   rol que corresponda desde la pantalla **Usuarios** (menú ☰, visible solo para admin) o por API.
-4. **Cada cambio queda auditado** en `audit_log` (`user.role_changed`) con quién lo hizo, a quién,
-   y de qué rol a cuál.
+1. **Cualquiera se registra** desde la app (`POST /api/auth/register`). El alta **no da acceso**:
+   la cuenta nace con `is_active = 0` y la respuesta **no trae token**.
+2. **Nace siempre con rol `civil`** (solo consulta: si el sistema opera y si hay agua). El rol lo
+   fija el **servidor**: la pantalla no tiene selector de rol y el schema es `.strict()`, así que
+   mandar `role` en el body devuelve **400**. Nadie puede auto-asignarse un rol.
+3. **Mientras espera, el login responde 403** con "pendiente de aprobación" — pero solo si la
+   contraseña es correcta (ver el recuadro de abajo).
+4. **Un administrador la aprueba**: entra a **Usuarios** (menú ☰, solo admin), abre la pestaña
+   **Pendientes**, verifica a la persona (para eso el registro pide teléfono), pulsa **Aprobar** y,
+   si corresponde, le asigna el rol. Por API son `PATCH /api/users/:id/active` y `.../role`.
+5. **Cada cambio queda auditado** en `audit_log` (`user.active_changed`, `user.role_changed`) con
+   quién lo hizo, a quién, y de qué → a qué.
+
+### Por qué aprobación humana y no verificación por correo
+
+Confirmar un correo solo prueba que alguien tiene acceso a ese buzón — y una cuenta desechable se
+crea en treinta segundos. Contra cuentas falsas o fantasma no aporta nada. Lo que sí frena a un
+impostor es que **una persona lo reconozca** antes de dejarlo entrar: por eso el registro pide
+teléfono y la decisión la toma un admin. Si más adelante se quiere reducir el ruido de altas
+basura, la verificación por correo se puede **sumar** como filtro previo, pero no sustituye a la
+aprobación.
 
 | Método · Ruta | Permiso | Para qué |
 |---|---|---|
-| `POST /api/auth/register` | público | Alta propia → siempre `civil` |
-| `GET /api/users` | `manage_users` (admin) | Listar usuarios |
+| `POST /api/auth/register` | público | Alta propia → `civil` + **pendiente**, sin token |
+| `GET /api/users` | `manage_users` (admin) | Listar/buscar (`?search=`, `?role=`, `?isActive=`) |
+| `PATCH /api/users/:id/active` | `manage_users` (admin) | **Aprobar** / activar / desactivar |
 | `PATCH /api/users/:id/role` | `assign_roles` (admin) | Asignar rol |
-| `PATCH /api/users/:id/active` | `manage_users` (admin) | Activar/desactivar cuenta |
 
-> **Nota:** el rol viaja dentro del JWT (vive 8 h), así que un cambio de rol **se aplica cuando el
-> usuario vuelve a iniciar sesión**. Además, un admin **no puede** cambiar su propio rol ni
-> desactivarse (evita quedarse fuera del sistema).
+> **Buscar entre los registrados:** `GET /api/users?search=ana&role=civil&isActive=false`. `search`
+> es coincidencia parcial contra **nombre, correo o teléfono**; `isActive=false` es la bandeja de
+> **pendientes**. El filtro se resuelve en **SQL parametrizado**, no en el cliente: el navegador
+> nunca recibe los datos personales que el filtro excluye.
+
+> **Sobre los mensajes del login (es a propósito):** con la contraseña **incorrecta** el servidor
+> responde siempre `401 Credenciales inválidas`, sea la cuenta inexistente, pendiente o activa. Solo
+> **después** de verificar la contraseña admite que la cuenta existe pero está pendiente (`403`). Si
+> lo dijera antes, cualquiera podría averiguar qué correos están registrados probando contraseñas al
+> azar.
+
+> **Nota:** los cambios aplican en la **siguiente petición** del usuario, no cuando vuelve a entrar:
+> el guard relee su fila en la base en cada petición, así que desactivar una cuenta corta esa sesión
+> en el acto y un rol degradado no sobrevive dentro del token. Además, un admin **no puede** cambiar
+> su propio rol ni desactivarse (evita quedarse fuera del sistema).
 
 > `db:migrate` crea la base de datos `monitor_ptap` si no existe y aplica las migraciones
 > pendientes. Sin este paso, la BD existe pero **vacía** → el login y cualquier ruta que

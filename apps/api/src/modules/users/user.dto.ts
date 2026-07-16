@@ -18,3 +18,18 @@ export const updateActiveSchema = z
   .strict();
 
 export type UpdateActiveDto = z.infer<typeof updateActiveSchema>;
+
+/**
+ * Filtros del listado de administración (query string). Todo opcional: sin parámetros, el
+ * listado sale completo. `isActive` llega como texto en la URL, de ahí la coerción explícita
+ * a booleano — `?isActive=false` debe filtrar los pendientes, no interpretarse como "truthy".
+ */
+export const listUsersQuerySchema = z
+  .object({
+    search: z.string().trim().min(1).max(120).optional(),
+    role: z.enum(ROLES as [string, ...string[]]).optional(),
+    isActive: z.enum(['true', 'false']).optional(),
+  })
+  .strict();
+
+export type ListUsersQueryDto = z.infer<typeof listUsersQuerySchema>;

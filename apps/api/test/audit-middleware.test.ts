@@ -17,8 +17,20 @@ import { RequirePermission } from '../src/modules/auth/decorators/require-permis
 import { JwtAuthGuard } from '../src/modules/auth/guards/jwt-auth.guard';
 import { PermissionGuard } from '../src/modules/auth/guards/permission.guard';
 import { JwtService } from '../src/modules/auth/jwt.service';
+import { UsersRepository, type UserRecord } from '../src/modules/users/users.repository';
 
 process.env.JWT_SECRET = process.env.JWT_SECRET ?? 'test-secret-audit-mw';
+
+/** JwtAuthGuard relee al usuario en cada petición; los ids son `u-<rol>` (ver tokenFor). */
+const usersDouble = {
+  findById: async (id: string): Promise<UserRecord | null> => {
+    const role = id.replace(/^u-/, '');
+    return {
+      id, email: `${role}@ptap.co`, name: role, role, plant: 'montebello',
+      passwordHash: 'x', pepperVersion: 1, isActive: true,
+    };
+  },
+} as unknown as UsersRepository;
 
 // Rutas bajo /api/plants (prefijo auditado) para ejercitar el filtro del middleware.
 @Controller('plants')
@@ -55,7 +67,11 @@ async function buildApp(): Promise<{ app: INestApplication; jwt: JwtService; rec
 
   @Module({
     controllers: [AuditedController, HealthProbeController],
-    providers: [JwtAuthGuard, PermissionGuard, JwtService, AuditMiddleware, { provide: AuditLogService, useValue: auditStub }],
+    providers: [
+      JwtAuthGuard, PermissionGuard, JwtService, AuditMiddleware,
+      { provide: AuditLogService, useValue: auditStub },
+      { provide: UsersRepository, useValue: usersDouble },
+    ],
   })
   class AuditProbeModule implements NestModule {
     configure(consumer: MiddlewareConsumer): void {

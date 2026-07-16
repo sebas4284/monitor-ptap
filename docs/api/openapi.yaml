@@ -62,19 +62,38 @@ paths:
                 password: { type: string }
       responses:
         '201': { $ref: '#/components/responses/AuthResult' }
-        '401': { description: Credenciales inválidas }
+        '401':
+          description: >
+            Credenciales inválidas. Respuesta idéntica tanto si el correo no existe como si la
+            contraseña es incorrecta: distinguirlas permitiría enumerar los correos registrados.
+        '403':
+          description: >
+            La contraseña era correcta, pero la cuenta está pendiente de aprobación o fue
+            desactivada por un administrador. Solo se llega aquí DESPUÉS de verificar la
+            contraseña, por lo mismo que el 401 es genérico.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string, example: Tu cuenta está pendiente de aprobación por un administrador. }
         '429': { description: Demasiados intentos (rate-limit) }
 
   /api/auth/register:
     post:
-      summary: Auto-registro (crea SIEMPRE rol civil)
+      summary: Auto-registro (rol civil, cuenta pendiente de aprobación)
       operationId: register
       tags: [auth]
       security: []
       description: >
-        La cuenta nace SIEMPRE con rol 'civil' (solo consulta): el rol lo fija el servidor.
-        El schema es .strict(), así que enviar 'role' en el body devuelve 400 — nadie puede
-        auto-asignarse un rol. Elevarlo es potestad del Administrador (PATCH /api/users/{id}/role).
+        Dos cosas las fija el servidor y no el cliente:
+        (1) el rol es SIEMPRE 'civil' (solo consulta) — el schema es .strict(), así que enviar
+        'role' en el body devuelve 400; elevarlo es potestad del Admin (PATCH /api/users/{id}/role).
+        (2) la cuenta nace INACTIVA (is_active=0) y NO se devuelve token: hasta que un
+        administrador la apruebe (PATCH /api/users/{id}/active), el login responde 403. Es la
+        defensa contra cuentas falsas o fantasma — verificar el correo no aporta nada frente a
+        un impostor con una cuenta desechable; lo que frena es que un humano lo reconozca (de
+        ahí que se pida el teléfono).
       requestBody:
         required: true
         content:
@@ -90,7 +109,17 @@ paths:
                 plant: { type: string, description: Slug canónico de la planta, example: montebello }
                 password: { type: string, minLength: 8 }
       responses:
-        '201': { $ref: '#/components/responses/AuthResult' }
+        '201':
+          description: Cuenta creada y pendiente de aprobación. NO incluye token.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, email, message]
+                properties:
+                  status: { type: string, enum: [pending_approval] }
+                  email: { type: string, format: email }
+                  message: { type: string }
         '400': { description: Body inválido (incluye el caso de enviar 'role') }
         '409': { description: Ese correo ya está registrado }
         '429': { description: Demasiados intentos (rate-limit) }
@@ -98,10 +127,30 @@ paths:
   # ── USERS (solo Admin) ──────────────────────────────────────────────────────
   /api/users:
     get:
-      summary: Listar usuarios
+      summary: Listar/buscar usuarios
       operationId: listUsers
       tags: [users]
-      description: Requiere el permiso `manage_users` (solo admin). Nunca expone password_hash.
+      description: >
+        Requiere el permiso `manage_users` (solo admin). Nunca expone password_hash.
+        El filtrado ocurre en SQL, no en el cliente: así el navegador no recibe los correos y
+        teléfonos que el filtro excluye. `?isActive=false` es la bandeja de cuentas pendientes
+        de aprobación.
+      parameters:
+        - name: search
+          in: query
+          required: false
+          description: Coincidencia parcial contra nombre, correo o teléfono.
+          schema: { type: string, minLength: 1, maxLength: 120 }
+          example: ana
+        - name: role
+          in: query
+          required: false
+          schema: { type: string, enum: [civil, operador, jefe, admin] }
+        - name: isActive
+          in: query
+          required: false
+          description: '`false` = pendientes de aprobación o desactivadas.'
+          schema: { type: string, enum: ['true', 'false'] }
       responses:
         '200':
           description: Lista de usuarios
@@ -113,6 +162,7 @@ paths:
                   users:
                     type: array
                     items: { $ref: '#/components/schemas/UserSummary' }
+        '400': { description: Query inválida (rol inexistente, isActive no booleano, parámetro desconocido) }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
@@ -124,7 +174,8 @@ paths:
       description: >
         Requiere el permiso `assign_roles` (solo admin). Audita el cambio (quién, a quién, de→a).
         Guard rail: un admin NO puede cambiar su propio rol (400).
-        El rol viaja en el JWT (8 h): aplica cuando el usuario vuelve a iniciar sesión.
+        El rol nuevo aplica en la SIGUIENTE petición del usuario, sin que tenga que volver a entrar:
+        el guard relee su fila en la base en cada petición, así que el rol del token no manda.
       parameters: [{ $ref: '#/components/parameters/UserId' }]
       requestBody:
         required: true
@@ -149,12 +200,16 @@ paths:
 
   /api/users/{id}/active:
     patch:
-      summary: Activar/desactivar una cuenta
+      summary: Aprobar una cuenta pendiente / activar / desactivar
       operationId: updateUserActive
       tags: [users]
       description: >
         Requiere el permiso `manage_users` (solo admin). Un usuario inactivo no puede iniciar
-        sesión. Guard rail: un admin NO puede desactivarse a sí mismo (400).
+        sesión (login → 403). `isActive: true` sobre una cuenta recién registrada es la
+        APROBACIÓN que la habilita — es el único camino para que un auto-registro obtenga acceso.
+        `isActive: false` corta la sesión en curso en la SIGUIENTE petición (401), sin esperar a que
+        caduque su token: el guard relee la fila en la base y `findById` filtra `is_active = 1`.
+        Guard rail: un admin NO puede desactivarse a sí mismo (400).
       parameters: [{ $ref: '#/components/parameters/UserId' }]
       requestBody:
         required: true
@@ -408,9 +463,14 @@ components:
 
   responses:
     Unauthorized:
-      description: Falta el JWT o no es válido
+      description: >
+        Falta el JWT, no es válido, o la SESIÓN FUE REVOCADA: la firma puede seguir siendo buena y el
+        token no haber caducado, pero la cuenta ya no está activa (o fue eliminada). El guard relee al
+        usuario en la base en cada petición, así que desactivar una cuenta la corta aquí mismo.
     Forbidden:
-      description: El rol no tiene el permiso requerido
+      description: >
+        El rol no tiene el permiso requerido. El rol se toma de la BASE en cada petición, no del token:
+        si un admin acaba de degradar a este usuario, aplica ya.
     AuthResult:
       description: Token JWT + usuario
       content:

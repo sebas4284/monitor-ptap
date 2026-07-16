@@ -15,7 +15,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { apiRegister } from '../../services/auth';
-import { useAuth } from '../../context/AuthContext';
 import { PLANTS } from '../../context/PlantContext';
 import Colors from '../../constants/colors';
 
@@ -34,11 +33,13 @@ function alertWeb(title: string, message: string, onDismiss?: () => void) {
  * los usuarios" → solo Admin). El backend además rechaza cualquier `role` que llegue en el
  * body, así que esto no es solo cosmético.
  *
+ * Registrarse tampoco da acceso: la cuenta queda pendiente hasta que un administrador la
+ * apruebe. Por eso aquí no se inicia sesión — solo se confirma y se vuelve al login.
+ *
  * `plant` guarda el SLUG canónico (voragine), no el nombre visible (La Vorágine): el plantId
  * es la única identidad del sistema.
  */
 export default function RegisterScreen() {
-  const { login } = useAuth();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -57,16 +58,15 @@ export default function RegisterScreen() {
     }
     setIsLoading(true);
     try {
-      // El backend responde token+user (rol civil) → se entra directo.
-      const { token, user } = await apiRegister({
+      // No hay token: la cuenta queda pendiente de aprobación → de vuelta al login.
+      const { message } = await apiRegister({
         name: name.trim(),
         email: email.trim(),
         phone: phone.trim(),
         plant,
         password,
       });
-      await login(token, user);
-      router.replace('/(app)/estado'); // civil → vista básica
+      alertWeb('Cuenta creada', message, () => router.replace('/(auth)/login'));
     } catch (err) {
       alertWeb('No se pudo crear la cuenta', err instanceof Error ? err.message : 'Intenta de nuevo.');
     } finally {
@@ -86,8 +86,10 @@ export default function RegisterScreen() {
           <View style={styles.notice}>
             <Ionicons name="information-circle-outline" size={18} color={Colors.primary} />
             <Text style={styles.noticeText}>
-              Tu cuenta se crea como <Text style={styles.noticeStrong}>Civil</Text> (solo consulta).
-              Si necesitas más acceso, un administrador puede ampliarlo.
+              Tu cuenta queda <Text style={styles.noticeStrong}>pendiente de aprobación</Text>: un
+              administrador la habilita antes de que puedas entrar. Se crea como{' '}
+              <Text style={styles.noticeStrong}>Civil</Text> (solo consulta) y, si necesitas más acceso,
+              el administrador puede ampliarlo. Deja un teléfono donde puedan verificarte.
             </Text>
           </View>
 

@@ -8,8 +8,23 @@ export type { UserSummary };
  * `assign_roles`: si otro rol llama a esto, responde 403 y aquí se propaga el mensaje.
  */
 
-export async function fetchUsers(): Promise<UserSummary[]> {
-  const body = await getJson<{ users: UserSummary[] }>('/api/users');
+/** Criterios de búsqueda. Se resuelven en el SERVIDOR (SQL), no filtrando en memoria. */
+export interface UserFilter {
+  /** Coincidencia parcial contra nombre, correo o teléfono. */
+  search?: string;
+  role?: Role;
+  /** `false` = pendientes de aprobación. */
+  isActive?: boolean;
+}
+
+export async function fetchUsers(filter: UserFilter = {}): Promise<UserSummary[]> {
+  const params = new URLSearchParams();
+  if (filter.search?.trim()) params.set('search', filter.search.trim());
+  if (filter.role) params.set('role', filter.role);
+  if (filter.isActive !== undefined) params.set('isActive', String(filter.isActive));
+
+  const qs = params.toString();
+  const body = await getJson<{ users: UserSummary[] }>(`/api/users${qs ? `?${qs}` : ''}`);
   return body.users;
 }
 

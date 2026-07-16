@@ -19,8 +19,25 @@ import { Public } from '../src/modules/auth/decorators/public.decorator';
 import { JwtAuthGuard } from '../src/modules/auth/guards/jwt-auth.guard';
 import { PermissionGuard } from '../src/modules/auth/guards/permission.guard';
 import { JwtService } from '../src/modules/auth/jwt.service';
+import { UsersRepository, type UserRecord } from '../src/modules/users/users.repository';
 
 process.env.JWT_SECRET = process.env.JWT_SECRET ?? 'test-secret-rbac-e2e';
+
+/**
+ * Repo doble: JwtAuthGuard relee al usuario en cada petición, así que estos tests necesitan una
+ * base. Los ids son `u-<rol>` (ver `tokenFor`), de modo que el rol de la fila coincide con el
+ * del token — lo que aquí se prueba es el RBAC por ruta, no la divergencia token↔base (eso vive
+ * en jwt-auth.guard.test.ts).
+ */
+const usersDouble = {
+  findById: async (id: string): Promise<UserRecord | null> => {
+    const role = id.replace(/^u-/, '');
+    return {
+      id, email: `${role}@ptap.co`, name: role, role, plant: 'montebello',
+      passwordHash: 'x', pepperVersion: 1, isActive: true,
+    };
+  },
+} as unknown as UsersRepository;
 
 @Controller('probe')
 @UseGuards(JwtAuthGuard, PermissionGuard)
@@ -56,7 +73,10 @@ class ProbeController {
   }
 }
 
-@Module({ controllers: [ProbeController], providers: [JwtAuthGuard, PermissionGuard, JwtService] })
+@Module({
+  controllers: [ProbeController],
+  providers: [JwtAuthGuard, PermissionGuard, JwtService, { provide: UsersRepository, useValue: usersDouble }],
+})
 class ProbeModule {}
 
 async function buildApp(): Promise<{ app: INestApplication; jwt: JwtService }> {

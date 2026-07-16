@@ -82,9 +82,10 @@ mismo patrón ya establecido en `connectivity.config.ts`, no una regresión nuev
 > `mock-data.ts` cubre **a propósito** features que el backend aún no mapea (válvulas, reportes).
 > El **login ya es real**: `services/auth.ts` llama a `POST /api/auth/login`, el rol sale de MySQL
 > (no del email), el JWT viaja en cada petición REST y la sesión persiste (secure-store/
-> localStorage), con un 401 limpiándola automáticamente. **No hay auto-registro** (los usuarios se
-> provisionan con `npm run db:seed-users -w @ptap/api`). Ojo: el login exige el arranque COMPLETO
-> (`npm run dev:api`); `start:telemetry` no monta `/api/auth/login` ni los guards.
+> localStorage), con un 401 limpiándola automáticamente. **Hay auto-registro**, pero la cuenta nace
+> `civil` y **pendiente**: la habilita un admin (ver §Gestión de usuarios). Las cuentas de demo se
+> siembran ya aprobadas con `npm run db:seed-users -w @ptap/api`. Ojo: el login exige el arranque
+> COMPLETO (`npm run dev:api`); `start:telemetry` no monta `/api/auth/login` ni los guards.
 
 ---
 
@@ -276,7 +277,7 @@ Claves relevantes (todas documentadas en `.env.example`):
 | `JWT_SECRET` | *(vacío, obligatorio)* | Firma de tokens (Fase 4). El backend completo no arranca sin esto. |
 | `SEED_ADMIN_EMAIL`/`PASSWORD`/`NAME`/`PLANT` | *(vacío)* | Solo los lee `npm run db:seed-admin -w @ptap/api` (no el runtime). |
 | `OPC_AUTO_ACCEPT_UNKNOWN_CERTIFICATE` | `false` | `true` solo para bootstrap/desarrollo; nunca en producción contra la planta (ver `docs/OPTIX_CLIENT_CERT_TRUST.md`). |
-| `CORS_ORIGINS` | *(vacío)* | Orígenes permitidos, separados por coma; vacío = CORS deshabilitado en `main.ts`. |
+| `CORS_ORIGINS` | *(vacío)* | Orígenes permitidos, separados por coma; vacío = CORS deshabilitado en `main.ts` (y el arranque lo avisa en el log). **Para la web de Expo pon `http://localhost:8081`**: corre en otro puerto que el backend, así que sin esto el *navegador* bloquea el login. `curl` no lo detecta — no aplica CORS. |
 
 > El móvil apunta por defecto a `http://localhost:4000`. Para un **dispositivo físico**, pon la
 > IP LAN del backend en `apps/mobile/app.json` → `expo.extra.apiBaseUrl`.
@@ -327,8 +328,12 @@ Prefijo global: **`/api`** (excepto `/metrics`, fuera del prefijo por convenció
 
 | Método · Ruta | Devuelve |
 |---------------|----------|
-| `POST /api/auth/login` | `{ email, password } → { token, user: AuthUser }` — mismo shape que ya espera `apps/mobile/services/auth.ts`. Rate-limit propio (`LOGIN_RATE_LIMIT_*`). |
-| `POST /api/auth/register` | `{ name, email, phone?, plant, password } → { token, user }` — alta propia. La cuenta nace **SIEMPRE con rol `civil`**: el rol lo fija el servidor y el schema es `.strict()`, así que enviar `role` → **400**. Mismo rate-limit que login. |
+| `POST /api/auth/login` | `{ email, password } → { token, user: AuthUser }` — mismo shape que ya espera `apps/mobile/services/auth.ts`. Rate-limit propio (`LOGIN_RATE_LIMIT_*`). **401** genérico si las credenciales son malas; **403** si son buenas pero la cuenta está pendiente/desactivada. |
+| `POST /api/auth/register` | `{ name, email, phone?, plant, password } → { status: 'pending_approval', email, message }` — alta propia. **Sin token**: la cuenta nace `is_active = 0` y no puede entrar hasta que un admin la apruebe. Nace **SIEMPRE con rol `civil`**: el rol lo fija el servidor y el schema es `.strict()`, así que enviar `role` → **400**. Mismo rate-limit que login. |
+
+> **El orden del login es la defensa:** la contraseña se verifica **antes** de mirar `is_active`. Con
+> la contraseña mala siempre sale el mismo `401`, exista o no el correo — si el 403 saliera antes,
+> cualquiera podría enumerar los correos registrados probando contraseñas al azar.
 
 ### Gestión de usuarios (Fase 4) — solo Administrador
 
@@ -336,13 +341,24 @@ La matriz oficial reserva *"Crear, editar y eliminar usuarios"* y *"Asignar role
 
 | Método · Ruta | Permiso | Devuelve |
 |---------------|---------|----------|
-| `GET /api/users` | `manage_users` (admin) | Lista de usuarios (`UserSummary`, sin secretos). |
+| `GET /api/users` | `manage_users` (admin) | Lista de usuarios (`UserSummary`, sin secretos). Filtra en **SQL parametrizado**: `?search=` (nombre/correo/teléfono), `?role=`, `?isActive=` (`false` = pendientes). Query inválida → **400**. |
+| `PATCH /api/users/:id/active` | `manage_users` (admin) | **Aprueba** (`true` sobre una cuenta nueva), activa o desactiva; audita `user.active_changed`. |
 | `PATCH /api/users/:id/role` | `assign_roles` (admin) | Asigna rol; audita `user.role_changed` (quién, a quién, de→a). |
-| `PATCH /api/users/:id/active` | `manage_users` (admin) | Activa/desactiva la cuenta (inactivo no puede entrar). |
 
-Flujo: **el usuario se registra como `civil` → un admin lo verifica y lo eleva** desde la pantalla
-"Usuarios" del móvil (menú ☰, solo admin). El rol viaja en el JWT (8 h): aplica al reingresar. Un
-admin no puede cambiar su propio rol ni desactivarse (evita perder el acceso).
+Flujo: **el usuario se registra → queda pendiente → un admin lo verifica (por eso se pide teléfono),
+lo aprueba y, si corresponde, lo eleva** desde la pantalla "Usuarios" del móvil (menú ☰, solo admin;
+pestaña *Pendientes*). Un admin no puede cambiar su propio rol ni desactivarse (evita perder el acceso).
+
+> **Los cambios aplican en la siguiente petición, no al reingresar.** `JwtAuthGuard` relee al usuario
+> en la base en cada petición (`UsersRepository.findById`, que filtra `is_active = 1`) y puebla
+> `request.user` con **la fila, no con el payload del token**. El JWT es una credencial —prueba quién
+> firmó el login—, no una autorización: desactivar una cuenta corta esa sesión en el acto y un rol
+> degradado no sobrevive dentro del token. Cuesta una consulta por clave primaria por petición.
+
+> **Por qué aprobación humana y no verificación por correo:** confirmar un correo solo prueba que
+> alguien tiene acceso a ese buzón, y una cuenta desechable se crea en treinta segundos — contra
+> cuentas fantasma no aporta nada. Lo que frena a un impostor es que una persona lo reconozca. La
+> verificación por correo puede **sumarse** después como filtro de ruido, pero no sustituye esto.
 
 El resto de rutas (salvo `/api/health*` y `/metrics`) exige `Authorization: Bearer <token>`. El
 RBAC gatea por **permiso granular** (`@RequirePermission(...)`, sobre `hasPermission()` de
@@ -453,6 +469,12 @@ npm run db:seed-users  -w @ptap/api   # siembra un usuario por rol para probar R
 npm run db:seed-admin  -w @ptap/api   # siembra solo el primer admin desde SEED_ADMIN_* (.env)
 ```
 
+> ⚠️ **Las 4 cuentas demo tienen una contraseña pública.** `Demo1234!` está escrita en este README, en
+> `docs/SETUP.md`, en `docs/SETUP_AGENT.md` y en el `.env.example` — es decir, **cualquiera que abra el
+> repo puede entrar como `admin@ptap.co`**. Es aceptable en local, pero **antes de exponer el backend
+> fuera de tu máquina hay que desactivarlas o cambiarles la contraseña** (`PATCH /api/users/:id/active`
+> con `isActive:false` las corta al instante). No son un mecanismo de acceso: son un atajo de demo.
+
 > **Nota de tooling:** los archivos en `test/` no están en el `include` de `tsconfig.json` (por
 > diseño, para no mezclarse con el `build` de `src/`), pero eso hace que `tsx`/esbuild use el
 > transform de decoradores "nuevo estilo" (incompatible con los decoradores de Nest) si no se le
@@ -516,6 +538,7 @@ pichinde, carbonero, sirena, san-antonio, quijote`). Nada de `PTAP Norte` ni `pt
 | `docs/SECURITY_FINDING_P0.md` | Hallazgo P0: el servidor OPC UA acepta Anonymous + None. Sección 6 tiene el seguimiento de las mitigaciones de Fase 4. |
 | `docs/OPTIX_CLIENT_CERT_TRUST.md` | ★ Fase 4: cómo confiar el certificado de cliente del gateway en FactoryTalk Optix (y el del servidor, en el gateway). |
 | `docs/SETUP.md` | Puesta en marcha desde cero (MySQL, `.env`, migraciones, usuarios de prueba). Empieza por aquí si acabas de clonar. |
+| `docs/SETUP_AGENT.md` | El mismo montaje como **runbook ejecutable** (pasos + verificación + errores típicos), pensado para que lo siga un agente de IA. |
 | `docs/DATA_CATALOG.md` | Catálogo de señales por planta (generado desde el mapping). |
 | `docs/architecture/` | Documento de arquitectura + métodos/contratos internos del backend. |
 | `docs/api/openapi.yaml`, `docs/postman/` | Contrato de API (todas las rutas, con su permiso). |

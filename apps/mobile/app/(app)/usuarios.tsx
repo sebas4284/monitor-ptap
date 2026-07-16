@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   View,
   Text,
+  TextInput,
   FlatList,
   TouchableOpacity,
   ActivityIndicator,
@@ -22,14 +23,32 @@ function notify(title: string, message: string) {
   else Alert.alert(title, message);
 }
 
+/** Filtro por estado. `pendientes` (is_active=0) es la bandeja de entrada del admin. */
+type StatusFilter = 'todos' | 'pendientes' | 'activos';
+
+const STATUS_TABS: Array<{ key: StatusFilter; label: string }> = [
+  { key: 'pendientes', label: 'Pendientes' },
+  { key: 'activos', label: 'Activos' },
+  { key: 'todos', label: 'Todos' },
+];
+
+function isActiveOf(status: StatusFilter): boolean | undefined {
+  if (status === 'pendientes') return false;
+  if (status === 'activos') return true;
+  return undefined;
+}
+
 /**
  * Gestión de usuarios — SOLO Administrador (matriz oficial: "Crear, editar y eliminar
  * usuarios" y "Asignar roles a los usuarios"). El backend es quien manda: exige los permisos
  * `manage_users`/`assign_roles` y responde 403 a cualquier otro rol. Ocultar esta pantalla
  * es comodidad de UI, NO la seguridad.
  *
- * Aquí es donde "alguien confirma" el rol: los usuarios se registran solos como Civil y un
- * admin los eleva desde esta lista. Cada cambio queda en el audit log.
+ * Aquí es donde "alguien confirma" el rol: los usuarios se registran solos y quedan pendientes
+ * hasta que un admin los aprueba (y, si corresponde, los eleva). Cada cambio queda auditado.
+ *
+ * La búsqueda y los filtros se resuelven en el servidor: la pantalla arranca en "Pendientes"
+ * porque son las cuentas que esperan una decisión.
  */
 export default function UsuariosScreen() {
   const { user: current, hasPermission } = useAuth();
@@ -38,21 +57,30 @@ export default function UsuariosScreen() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [status, setStatus] = useState<StatusFilter>('pendientes');
+  const [roleFilter, setRoleFilter] = useState<Role | null>(null);
 
-  const load = useCallback(async () => {
-    try {
-      setError(null);
-      setUsers(await fetchUsers());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudieron cargar los usuarios');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const load = useCallback(
+    async (term: string, statusFilter: StatusFilter, role: Role | null) => {
+      try {
+        setError(null);
+        setUsers(await fetchUsers({ search: term, role: role ?? undefined, isActive: isActiveOf(statusFilter) }));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'No se pudieron cargar los usuarios');
+      } finally {
+        setLoading(false);
+      }
+    },
+    [],
+  );
 
+  // Debounce: cada tecla es una consulta a la BD; 300 ms basta para que se sienta inmediato
+  // sin disparar una petición por letra.
   useEffect(() => {
-    void load();
-  }, [load]);
+    const id = setTimeout(() => void load(search, status, roleFilter), 300);
+    return () => clearTimeout(id);
+  }, [load, search, status, roleFilter]);
 
   if (!hasPermission('manage_users')) {
     return (
@@ -83,8 +111,11 @@ export default function UsuariosScreen() {
   async function toggleActive(target: UserSummary) {
     setBusyId(target.id);
     try {
-      const updated = await setUserActive(target.id, !target.isActive);
-      setUsers((prev) => prev.map((u) => (u.id === updated.id ? updated : u)));
+      await setUserActive(target.id, !target.isActive);
+      // Recargar, no parchear en memoria: al aprobar a alguien desde "Pendientes" la cuenta
+      // deja de cumplir el filtro y debe desaparecer de la lista. Parchearla la dejaría ahí,
+      // contradiciendo el filtro activo.
+      await load(search, status, roleFilter);
     } catch (err) {
       notify('No se pudo cambiar el estado', err instanceof Error ? err.message : 'Intenta de nuevo.');
     } finally {
@@ -113,18 +144,84 @@ export default function UsuariosScreen() {
         data={users}
         keyExtractor={(u) => u.id}
         contentContainerStyle={styles.list}
-        refreshControl={<RefreshControl refreshing={false} onRefresh={() => void load()} />}
-        ListHeaderComponent={
-          <Text style={styles.intro}>
-            Las cuentas nuevas se registran como <Text style={styles.bold}>Civil</Text> (solo consulta).
-            Asigna aquí el rol que corresponda tras verificar a la persona. Cada cambio queda auditado.
+        keyboardShouldPersistTaps="handled"
+        refreshControl={<RefreshControl refreshing={false} onRefresh={() => void load(search, status, roleFilter)} />}
+        ListEmptyComponent={
+          <Text style={styles.empty}>
+            {status === 'pendientes' && !search && !roleFilter
+              ? 'No hay cuentas pendientes de aprobación.'
+              : 'Ningún usuario coincide con la búsqueda.'}
           </Text>
+        }
+        ListHeaderComponent={
+          <View style={styles.header}>
+            <Text style={styles.intro}>
+              Las cuentas nuevas se registran como <Text style={styles.bold}>Civil</Text> y quedan{' '}
+              <Text style={styles.bold}>pendientes</Text>: nadie entra hasta que las apruebes. Verifica a la
+              persona (el teléfono aparece en la ficha), apruébala y asígnale el rol. Todo queda auditado.
+            </Text>
+
+            <View style={styles.searchBox}>
+              <Ionicons name="search-outline" size={17} color={Colors.textSecondary} />
+              <TextInput
+                style={styles.searchInput}
+                value={search}
+                onChangeText={setSearch}
+                placeholder="Buscar por nombre, correo o teléfono"
+                placeholderTextColor={Colors.textSecondary}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              {search.length > 0 && (
+                <TouchableOpacity onPress={() => setSearch('')} hitSlop={8}>
+                  <Ionicons name="close-circle" size={17} color={Colors.textSecondary} />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <View style={styles.chips}>
+              {STATUS_TABS.map((tab) => (
+                <TouchableOpacity
+                  key={tab.key}
+                  style={[styles.chip, status === tab.key && styles.chipOn]}
+                  onPress={() => setStatus(tab.key)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.chipText, status === tab.key && styles.chipTextOn]}>{tab.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <View style={styles.chips}>
+              <TouchableOpacity
+                style={[styles.chip, roleFilter === null && styles.chipOn]}
+                onPress={() => setRoleFilter(null)}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.chipText, roleFilter === null && styles.chipTextOn]}>Todo rol</Text>
+              </TouchableOpacity>
+              {ROLES.map((r) => (
+                <TouchableOpacity
+                  key={r}
+                  style={[styles.chip, roleFilter === r && styles.chipOn]}
+                  onPress={() => setRoleFilter(roleFilter === r ? null : r)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.chipText, roleFilter === r && styles.chipTextOn]}>{ROLE_LABELS[r]}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
         }
         renderItem={({ item }) => {
           const isSelf = item.id === current?.id;
           const busy = busyId === item.id;
+          // Nunca inició sesión y está inactiva = recién registrada, esperando aprobación. Si ya
+          // entró alguna vez, un admin la desactivó: son dos situaciones distintas y el botón
+          // que corresponde ("Aprobar" vs "Reactivar") también.
+          const isPending = !item.isActive && item.lastLoginAt === null;
           return (
-            <View style={[styles.card, !item.isActive && styles.cardInactive]}>
+            <View style={[styles.card, !item.isActive && styles.cardInactive, isPending && styles.cardPending]}>
               <View style={styles.cardHead}>
                 <View style={styles.flex}>
                   <Text style={styles.name}>
@@ -141,7 +238,17 @@ export default function UsuariosScreen() {
                 </View>
               </View>
 
-              {!item.isActive && <Text style={styles.inactiveTag}>Cuenta desactivada — no puede iniciar sesión</Text>}
+              {isPending && (
+                <View style={styles.pendingTag}>
+                  <Ionicons name="time-outline" size={14} color={Colors.warning} />
+                  <Text style={styles.pendingTagText}>
+                    Pendiente de aprobación — verifica a la persona antes de habilitarla
+                  </Text>
+                </View>
+              )}
+              {!item.isActive && !isPending && (
+                <Text style={styles.inactiveTag}>Cuenta desactivada — no puede iniciar sesión</Text>
+              )}
 
               <View style={styles.actions}>
                 <TouchableOpacity
@@ -161,12 +268,18 @@ export default function UsuariosScreen() {
                   activeOpacity={0.8}
                 >
                   <Ionicons
-                    name={item.isActive ? 'person-remove-outline' : 'person-add-outline'}
+                    name={
+                      item.isActive
+                        ? 'person-remove-outline'
+                        : isPending
+                          ? 'checkmark-circle-outline'
+                          : 'person-add-outline'
+                    }
                     size={16}
                     color={item.isActive ? Colors.danger : Colors.primary}
                   />
                   <Text style={[styles.actionText, item.isActive && { color: Colors.danger }]}>
-                    {item.isActive ? 'Desactivar' : 'Activar'}
+                    {item.isActive ? 'Desactivar' : isPending ? 'Aprobar' : 'Reactivar'}
                   </Text>
                 </TouchableOpacity>
 
@@ -211,8 +324,24 @@ const styles = StyleSheet.create({
   deniedTitle: { fontSize: 18, fontWeight: '700', color: Colors.textPrimary },
   deniedBody: { fontSize: 14, color: Colors.textSecondary, textAlign: 'center' },
   list: { padding: 16, gap: 12 },
-  intro: { fontSize: 12.5, lineHeight: 18, color: Colors.textSecondary, marginBottom: 4 },
+  header: { gap: 10, marginBottom: 4 },
+  intro: { fontSize: 12.5, lineHeight: 18, color: Colors.textSecondary },
   bold: { fontWeight: '700', color: Colors.textPrimary },
+  empty: { fontSize: 13, color: Colors.textSecondary, textAlign: 'center', paddingVertical: 28 },
+  searchBox: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    backgroundColor: Colors.surface, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10,
+    borderWidth: 1, borderColor: '#E5E7EB',
+  },
+  searchInput: { flex: 1, fontSize: 14, color: Colors.textPrimary, outlineStyle: 'none' as never },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chip: {
+    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999,
+    borderWidth: 1, borderColor: '#E5E7EB', backgroundColor: Colors.surface,
+  },
+  chipOn: { backgroundColor: Colors.primary, borderColor: Colors.primary },
+  chipText: { fontSize: 12.5, fontWeight: '600', color: Colors.textSecondary },
+  chipTextOn: { color: '#fff' },
   errorBox: {
     flexDirection: 'row', gap: 8, alignItems: 'center',
     backgroundColor: Colors.danger + '15', padding: 12, margin: 16, borderRadius: 10,
@@ -223,6 +352,10 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: '#E5E7EB',
   },
   cardInactive: { opacity: 0.65 },
+  // Pendiente ≠ desactivada: pide una acción, así que no se atenúa y se marca en ámbar.
+  cardPending: { opacity: 1, borderColor: Colors.warning, backgroundColor: Colors.warning + '0C' },
+  pendingTag: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 },
+  pendingTagText: { flex: 1, fontSize: 11.5, color: Colors.warning, fontWeight: '600' },
   cardHead: { flexDirection: 'row', gap: 10, alignItems: 'flex-start' },
   name: { fontSize: 15, fontWeight: '700', color: Colors.textPrimary },
   selfTag: { fontSize: 12, fontWeight: '400', color: Colors.textSecondary },

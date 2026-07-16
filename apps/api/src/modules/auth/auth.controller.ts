@@ -1,6 +1,6 @@
 import { Body, Controller, HttpCode, Inject, Post, Req } from '@nestjs/common';
 import type { Request } from 'express';
-import { AuthService, type LoginResult } from './auth.service';
+import { AuthService, type LoginResult, type RegisterResult } from './auth.service';
 import { Public } from './decorators/public.decorator';
 import { LoginDto, loginSchema } from './dto/login.dto';
 import { RegisterDto, registerSchema } from './dto/register.dto';
@@ -18,9 +18,11 @@ export class AuthController {
   }
 
   /**
-   * Auto-registro público. La cuenta nace SIEMPRE con rol 'civil' (solo lectura): el rol lo
-   * fija el servidor y el schema es `.strict()`, así que mandar `role` en el body → 400.
-   * Elevar a operador/jefe/admin es potestad del Administrador (PATCH /api/users/:id/role).
+   * Auto-registro público. Dos cosas las fija el servidor y no el cliente:
+   *  - el rol es SIEMPRE 'civil' (solo lectura) — el schema es `.strict()`, así que mandar
+   *    `role` en el body → 400. Elevarlo es potestad del Admin (PATCH /api/users/:id/role).
+   *  - la cuenta queda PENDIENTE de aprobación → no devuelve token; hasta que un admin la
+   *    habilite, el login responde 403.
    */
   @Public()
   @Post('register')
@@ -28,7 +30,7 @@ export class AuthController {
   async register(
     @Body(new ZodValidationPipe(registerSchema)) dto: RegisterDto,
     @Req() request: Request,
-  ): Promise<LoginResult> {
+  ): Promise<RegisterResult> {
     const ip = request.ip ?? request.socket.remoteAddress ?? null;
     return this.authService.register(dto, { ip });
   }

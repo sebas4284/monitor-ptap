@@ -50,7 +50,21 @@
           }
         },
         {
-          "name": "Registro (crea SIEMPRE rol civil)",
+          "name": "Registro (rol civil + PENDIENTE de aprobación)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 y queda pendiente', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test('NO devuelve token: registrarse no da acceso', () => pm.expect(body.token).to.be.undefined);",
+                  "pm.test('status = pending_approval', () => pm.expect(body.status).to.eql('pending_approval'));"
+                ]
+              }
+            }
+          ],
           "request": {
             "auth": { "type": "noauth" },
             "method": "POST",
@@ -60,7 +74,55 @@
               "raw": "{\n  \"name\": \"Persona Nueva\",\n  \"email\": \"nuevo@ptap.co\",\n  \"phone\": \"3001112233\",\n  \"plant\": \"montebello\",\n  \"password\": \"Secreta123!\"\n}"
             },
             "url": { "raw": "{{baseUrl}}/api/auth/register", "host": ["{{baseUrl}}"], "path": ["api", "auth", "register"] },
-            "description": "La cuenta nace SIEMPRE con rol 'civil'. Email duplicado → 409."
+            "description": "La cuenta nace con rol 'civil' y is_active=0: NO hay token y el login responde 403 hasta que un admin la apruebe (PATCH /api/users/{id}/active). Email duplicado → 409."
+          }
+        },
+        {
+          "name": "Login de cuenta pendiente (DEBE dar 403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('cuenta sin aprobar no recibe sesión (403)', () => pm.response.to.have.status(403));",
+                  "pm.test('el mensaje explica que falta la aprobación', () =>",
+                  "  pm.expect(pm.response.json().message).to.match(/pendiente de aprobación/i));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"nuevo@ptap.co\",\n  \"password\": \"Secreta123!\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/auth/login", "host": ["{{baseUrl}}"], "path": ["api", "auth", "login"] },
+            "description": "Ejecutar DESPUÉS de 'Registro'. La contraseña es correcta, pero la cuenta espera aprobación → 403 (no 401)."
+          }
+        },
+        {
+          "name": "Login pendiente + contraseña MALA (DEBE dar 401, no 403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 genérico', () => pm.response.to.have.status(401));",
+                  "pm.test('no revela que el correo existe', () =>",
+                  "  pm.expect(pm.response.json().message).to.not.match(/pendiente|aprobación|desactivada/i));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"nuevo@ptap.co\",\n  \"password\": \"contrasena-incorrecta\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/auth/login", "host": ["{{baseUrl}}"], "path": ["api", "auth", "login"] },
+            "description": "Prueba de seguridad: con la contraseña mala el servidor NO puede decir que la cuenta existe pero está pendiente — eso permitiría enumerar los correos registrados. El estado solo se revela tras verificar la contraseña."
           }
         },
         {
@@ -99,6 +161,66 @@
             "method": "GET",
             "url": { "raw": "{{baseUrl}}/api/users", "host": ["{{baseUrl}}"], "path": ["api", "users"] },
             "description": "Requiere el permiso manage_users (solo admin). Con token de civil/operador/jefe → 403."
+          }
+        },
+        {
+          "name": "Pendientes de aprobación (?isActive=false)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const users = pm.response.json().users;",
+                  "if (users.length > 0) {",
+                  "  pm.collectionVariables.set('userId', users[0].id);",
+                  "  console.log('Pendiente:', users[0].email, '| tel:', users[0].phone);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/users?isActive=false",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "users"],
+              "query": [{ "key": "isActive", "value": "false" }]
+            },
+            "description": "La bandeja del admin: cuentas registradas que esperan aprobación. Guarda el id del primero en {{userId}} para usarlo en 'Aprobar cuenta'."
+          }
+        },
+        {
+          "name": "Buscar usuarios (search + role + isActive)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/users?search=ana&role=civil&isActive=true",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "users"],
+              "query": [
+                { "key": "search", "value": "ana", "description": "Parcial contra nombre, correo o teléfono" },
+                { "key": "role", "value": "civil" },
+                { "key": "isActive", "value": "true" }
+              ]
+            },
+            "description": "El filtro se resuelve en SQL (parametrizado), no en el cliente: el navegador nunca recibe los correos/teléfonos que el filtro excluye. Query inválida (rol inexistente, isActive no booleano, parámetro desconocido) → 400."
+          }
+        },
+        {
+          "name": "Aprobar cuenta pendiente",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"isActive\": true\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/users/{{userId}}/active",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "users", "{{userId}}", "active"]
+            },
+            "description": "La APROBACIÓN: habilita una cuenta recién registrada y es el único camino para que un auto-registro obtenga acceso. Requiere manage_users. Verifica a la persona (teléfono) antes de aprobarla. Queda auditado."
           }
         },
         {

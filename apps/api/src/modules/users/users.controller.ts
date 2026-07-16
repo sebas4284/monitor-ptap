@@ -1,11 +1,18 @@
-import { Body, Controller, Get, Inject, Param, Patch, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Inject, Param, Patch, Query, Req, UseGuards } from '@nestjs/common';
 import type { Role, UserSummary } from '@ptap/shared';
 import { ZodValidationPipe } from '../../infrastructure/validation/zod-validation.pipe';
 import type { AuthenticatedRequest } from '../auth/authenticated-request';
 import { RequirePermission } from '../auth/decorators/require-permission.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionGuard } from '../auth/guards/permission.guard';
-import { updateActiveSchema, updateRoleSchema, type UpdateActiveDto, type UpdateRoleDto } from './user.dto';
+import {
+  listUsersQuerySchema,
+  updateActiveSchema,
+  updateRoleSchema,
+  type ListUsersQueryDto,
+  type UpdateActiveDto,
+  type UpdateRoleDto,
+} from './user.dto';
 import { UsersService, type AdminActor } from './users.service';
 
 /**
@@ -20,10 +27,22 @@ import { UsersService, type AdminActor } from './users.service';
 export class UsersController {
   constructor(@Inject(UsersService) private readonly usersService: UsersService) {}
 
+  /**
+   * `GET /api/users?search=ana&role=civil&isActive=false`. El filtro se resuelve en SQL, no en
+   * el cliente: así el navegador nunca recibe los correos/teléfonos que el filtro excluye.
+   * `?isActive=false` es la vista de "pendientes de aprobación".
+   */
   @Get()
   @RequirePermission('manage_users')
-  async list(): Promise<{ users: UserSummary[] }> {
-    return { users: await this.usersService.list() };
+  async list(@Query(new ZodValidationPipe(listUsersQuerySchema)) query: ListUsersQueryDto): Promise<{
+    users: UserSummary[];
+  }> {
+    const users = await this.usersService.list({
+      search: query.search,
+      role: query.role as Role | undefined,
+      isActive: query.isActive === undefined ? undefined : query.isActive === 'true',
+    });
+    return { users };
   }
 
   @Patch(':id/role')

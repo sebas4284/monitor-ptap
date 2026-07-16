@@ -1,4 +1,4 @@
-import { ConflictException, Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Inject, Injectable, UnauthorizedException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { AuthUser } from '@ptap/shared';
 import { AuditLogService } from '../../infrastructure/audit/audit-log.service';
@@ -24,6 +24,13 @@ interface LoginContext {
  */
 const SELF_REGISTRATION_ROLE = 'civil' as const;
 
+/** Resultado del auto-registro: NO hay token, la cuenta nace pendiente de aprobación. */
+export interface RegisterResult {
+  status: 'pending_approval';
+  email: string;
+  message: string;
+}
+
 /**
  * Login: mismo shape de respuesta { token, user: AuthUser } que ya espera
  * apps/mobile/services/auth.ts — cero cambios en el móvil necesarios.
@@ -40,7 +47,7 @@ export class AuthService {
   async login(email: string, password: string, ctx: LoginContext): Promise<LoginResult> {
     const record = await this.usersRepository.findByEmail(email);
     if (!record) {
-      await this.logLoginFailed(email, ctx, 'usuario no encontrado o inactivo');
+      await this.logLoginFailed(email, ctx, 'usuario no encontrado');
       throw new UnauthorizedException('Credenciales inválidas');
     }
 
@@ -48,6 +55,15 @@ export class AuthService {
     if (!valid) {
       await this.logLoginFailed(email, ctx, 'contraseña incorrecta');
       throw new UnauthorizedException('Credenciales inválidas');
+    }
+
+    // La contraseña ya se verificó: solo a esta altura es seguro revelar que la cuenta existe
+    // pero está pendiente. Al revés (comprobar antes) permitiría enumerar correos registrados.
+    if (!record.isActive) {
+      await this.logLoginFailed(email, ctx, 'cuenta pendiente de aprobación o desactivada');
+      throw new ForbiddenException(
+        'Tu cuenta está pendiente de aprobación por un administrador. Te avisaremos cuando esté lista.',
+      );
     }
 
     await this.usersRepository.touchLastLogin(record.id);
@@ -75,10 +91,14 @@ export class AuthService {
   }
 
   /**
-   * Auto-registro. El rol NO se acepta del cliente: se fuerza a 'civil' aquí (el schema
-   * `.strict()` además rechaza el campo si lo mandan). Devuelve token+user para entrar directo.
+   * Auto-registro. Dos garantías, ambas del lado del servidor:
+   *  1. El rol se fuerza a 'civil' (el schema `.strict()` además rechaza el campo si lo mandan).
+   *  2. La cuenta nace **INACTIVA**: no puede iniciar sesión hasta que un administrador la
+   *     apruebe. Es la defensa contra cuentas falsas/fantasma — verificar el correo no sirve
+   *     (cualquiera crea uno en 30 segundos); lo que frena a un impostor es que un humano lo
+   *     reconozca. Por eso NO se devuelve token aquí.
    */
-  async register(dto: RegisterDto, ctx: LoginContext): Promise<LoginResult> {
+  async register(dto: RegisterDto, ctx: LoginContext): Promise<RegisterResult> {
     const { passwordHash, pepperVersion } = await this.passwordHashing.hashPassword(dto.password);
     const id = randomUUID();
 
@@ -111,28 +131,25 @@ export class AuthService {
       throw err;
     }
 
-    const user: AuthUser = { id, name: dto.name, email: dto.email, role: SELF_REGISTRATION_ROLE, plant: dto.plant };
-    const token = this.jwtService.sign({
-      sub: user.id,
-      email: user.email,
-      name: user.name,
-      role: user.role,
-      plant: user.plant,
-    });
-
     await this.auditLog.record({
       eventType: 'auth.register',
-      userId: user.id,
-      userEmail: user.email,
-      role: user.role,
+      userId: id,
+      userEmail: dto.email,
+      role: SELF_REGISTRATION_ROLE,
       ip: ctx.ip,
       method: 'POST',
       path: '/api/auth/register',
       statusCode: 201,
-      detail: { plant: user.plant },
+      detail: { plant: dto.plant, status: 'pending_approval' },
     });
 
-    return { token, user };
+    return {
+      status: 'pending_approval',
+      email: dto.email,
+      message:
+        'Tu cuenta fue creada y está pendiente de aprobación por un administrador. ' +
+        'Podrás iniciar sesión cuando la habiliten.',
+    };
   }
 
   private async logLoginFailed(email: string, ctx: LoginContext, reason: string): Promise<void> {

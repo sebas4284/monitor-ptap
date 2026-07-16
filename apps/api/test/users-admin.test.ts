@@ -17,7 +17,7 @@ import { JwtAuthGuard } from '../src/modules/auth/guards/jwt-auth.guard';
 import { PermissionGuard } from '../src/modules/auth/guards/permission.guard';
 import { JwtService } from '../src/modules/auth/jwt.service';
 import { UsersController } from '../src/modules/users/users.controller';
-import { UsersRepository } from '../src/modules/users/users.repository';
+import { UsersRepository, type UserListFilter } from '../src/modules/users/users.repository';
 import { UsersService } from '../src/modules/users/users.service';
 
 process.env.JWT_SECRET = process.env.JWT_SECRET ?? 'test-secret-users-admin';
@@ -37,9 +37,22 @@ function fakeRepo() {
     [ADMIN_ID, summary(ADMIN_ID, 'admin')],
     [TARGET_ID, summary(TARGET_ID, 'civil')],
   ]);
+  const filters: UserListFilter[] = [];
   return {
     store,
-    list: async () => [...store.values()],
+    filters,
+    list: async (filter: UserListFilter = {}) => {
+      filters.push(filter); // para verificar que el filtro llega al SQL, no se aplica en el cliente
+      return [...store.values()];
+    },
+    // Lo usa JwtAuthGuard en cada petición. Los tokens de estos tests van con sub `u-<rol>` o
+    // ADMIN_ID; devolver el rol del propio id mantiene coherentes token y "base".
+    findById: async (id: string) => {
+      const known = store.get(id);
+      const role = known?.role ?? id.replace(/^u-/, '');
+      return { id, email: `${role}@ptap.co`, name: role, role, plant: 'montebello',
+        passwordHash: 'x', pepperVersion: 1, isActive: true };
+    },
     findSummaryById: async (id: string) => store.get(id) ?? null,
     updateRole: async (id: string, role: Role) => {
       const u = store.get(id); if (u) store.set(id, { ...u, role });
@@ -47,7 +60,7 @@ function fakeRepo() {
     setActive: async (id: string, isActive: boolean) => {
       const u = store.get(id); if (u) store.set(id, { ...u, isActive });
     },
-  } as unknown as UsersRepository & { store: Map<string, UserSummary> };
+  } as unknown as UsersRepository & { store: Map<string, UserSummary>; filters: UserListFilter[] };
 }
 
 function fakeAudit(): { service: AuditLogService; calls: AuditEntry[] } {
@@ -90,6 +103,46 @@ test('users-admin: GET /api/users → 401 sin token; 403 para civil/operador/jef
     // el listado NUNCA debe exponer secretos
     assert.equal('passwordHash' in res.body.users[0], false);
     assert.equal('pepperVersion' in res.body.users[0], false);
+  } finally {
+    await app.close();
+  }
+});
+
+test('users-admin: los filtros de la query llegan al repositorio (se resuelven en SQL, no en el cliente)', async () => {
+  const repo = fakeRepo();
+  const { app, jwt } = await buildApp(repo, fakeAudit().service);
+  const admin = `Bearer ${tokenFor(jwt, 'admin', ADMIN_ID)}`;
+  try {
+    await request(app.getHttpServer()).get('/api/users').set('Authorization', admin).expect(200);
+    assert.deepEqual(repo.filters[0], { search: undefined, role: undefined, isActive: undefined }, 'sin query = sin filtro');
+
+    // ?isActive=false es la bandeja de "pendientes de aprobación": debe llegar como booleano
+    // false, no como el string "false" (que en JS es truthy y colaría a los activos).
+    await request(app.getHttpServer()).get('/api/users?isActive=false').set('Authorization', admin).expect(200);
+    assert.equal(repo.filters[1].isActive, false);
+
+    await request(app.getHttpServer()).get('/api/users?isActive=true').set('Authorization', admin).expect(200);
+    assert.equal(repo.filters[2].isActive, true);
+
+    await request(app.getHttpServer())
+      .get('/api/users?search=ana&role=civil&isActive=false')
+      .set('Authorization', admin)
+      .expect(200);
+    assert.deepEqual(repo.filters[3], { search: 'ana', role: 'civil', isActive: false });
+  } finally {
+    await app.close();
+  }
+});
+
+test('users-admin: la query se valida — rol inexistente o parámetro desconocido → 400', async () => {
+  const repo = fakeRepo();
+  const { app, jwt } = await buildApp(repo, fakeAudit().service);
+  const admin = `Bearer ${tokenFor(jwt, 'admin', ADMIN_ID)}`;
+  try {
+    await request(app.getHttpServer()).get('/api/users?role=superadmin').set('Authorization', admin).expect(400);
+    await request(app.getHttpServer()).get('/api/users?isActive=quizas').set('Authorization', admin).expect(400);
+    await request(app.getHttpServer()).get('/api/users?limit=99').set('Authorization', admin).expect(400);
+    assert.equal(repo.filters.length, 0, 'una query inválida no debe llegar a la base');
   } finally {
     await app.close();
   }

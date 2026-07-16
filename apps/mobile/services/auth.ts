@@ -32,17 +32,31 @@ export async function apiLogin(email: string, password: string): Promise<{ token
   const res = await postAuth('/api/auth/login', { email, password });
 
   if (res.status === 401) throw new Error('Credenciales inválidas');
+  // 403 = la contraseña ERA correcta, pero la cuenta está pendiente de aprobación o
+  // desactivada. El backend explica cuál: mostrar su mensaje evita mandar a alguien a
+  // reintentar una contraseña que ya es buena.
+  if (res.status === 403) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string };
+    throw new Error(body.message ?? 'Tu cuenta aún no está habilitada.');
+  }
   if (res.status === 429) throw new Error('Demasiados intentos. Espera un momento e intenta de nuevo.');
   if (!res.ok) throw new Error(`No se pudo iniciar sesión (HTTP ${res.status})`);
 
   return (await res.json()) as { token: string; user: AuthUser };
 }
 
+/** Respuesta del auto-registro: la cuenta queda pendiente, NO hay sesión. */
+export interface RegisterResult {
+  status: 'pending_approval';
+  email: string;
+  message: string;
+}
+
 /**
- * Auto-registro. La cuenta nace SIEMPRE con rol `civil` (solo lectura) — el rol lo fija el
- * servidor, aquí NO se manda: la matriz oficial reserva la asignación de roles al
- * Administrador, que después puede elevar al usuario desde la pantalla "Usuarios".
- * Devuelve token+user para entrar directo.
+ * Auto-registro. La cuenta nace con rol `civil` (solo lectura) y **pendiente de aprobación**:
+ * ambas cosas las fija el servidor, aquí no se mandan. No hay token — el usuario no entra
+ * hasta que un Administrador habilite la cuenta desde la pantalla "Usuarios", que es también
+ * donde puede elevarle el rol.
  */
 export async function apiRegister(data: {
   name: string;
@@ -50,7 +64,7 @@ export async function apiRegister(data: {
   phone: string;
   plant: string;
   password: string;
-}): Promise<{ token: string; user: AuthUser }> {
+}): Promise<RegisterResult> {
   // sin `role`: el backend lo rechazaría (schema .strict)
   const res = await postAuth('/api/auth/register', data);
 
@@ -62,5 +76,5 @@ export async function apiRegister(data: {
     throw new Error(msg ?? `No se pudo crear la cuenta (HTTP ${res.status})`);
   }
 
-  return (await res.json()) as { token: string; user: AuthUser };
+  return (await res.json()) as RegisterResult;
 }

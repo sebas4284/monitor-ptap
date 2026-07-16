@@ -1,7 +1,7 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import type { Role, UserSummary } from '@ptap/shared';
 import { AuditLogService } from '../../infrastructure/audit/audit-log.service';
-import { UsersRepository } from './users.repository';
+import { UsersRepository, type UserListFilter } from './users.repository';
 
 /** Quién ejecuta la acción (del JWT + IP), para la trazabilidad. */
 export interface AdminActor {
@@ -28,8 +28,8 @@ export class UsersService {
     @Inject(AuditLogService) private readonly auditLog: AuditLogService,
   ) {}
 
-  async list(): Promise<UserSummary[]> {
-    return this.users.list();
+  async list(filter: UserListFilter = {}): Promise<UserSummary[]> {
+    return this.users.list(filter);
   }
 
   async changeRole(targetId: string, role: Role, actor: AdminActor): Promise<UserSummary> {

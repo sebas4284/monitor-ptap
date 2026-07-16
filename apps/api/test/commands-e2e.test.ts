@@ -19,6 +19,7 @@ import type { PlantSnapshotDto } from '../src/infrastructure/connectivity/pipeli
 import { JwtAuthGuard } from '../src/modules/auth/guards/jwt-auth.guard';
 import { PermissionGuard } from '../src/modules/auth/guards/permission.guard';
 import { JwtService } from '../src/modules/auth/jwt.service';
+import { UsersRepository, type UserRecord } from '../src/modules/users/users.repository';
 import { CommandLogRepository, type StoredCommand } from '../src/modules/commands/command-log.repository';
 import { CommandMappingResolver } from '../src/modules/commands/command-mapping.resolver';
 import { CommandsController } from '../src/modules/commands/commands.controller';
@@ -54,6 +55,17 @@ function fakeAdapter(secure: boolean) {
   };
 }
 
+/** JwtAuthGuard relee al usuario en cada petición; los ids son `u-<rol>` (ver tokenFor). */
+const usersDouble = {
+  findById: async (id: string): Promise<UserRecord | null> => {
+    const role = id.replace(/^u-/, '');
+    return {
+      id, email: `${role}@ptap.co`, name: role, role, plant: 'voragine',
+      passwordHash: 'x', pepperVersion: 1, isActive: true,
+    };
+  },
+} as unknown as UsersRepository;
+
 function fakeRepo(): CommandLogRepository {
   let id = 1;
   return {
@@ -76,6 +88,7 @@ async function buildApp(secure: boolean): Promise<{ app: INestApplication; jwt: 
       { provide: PlantCache, useValue: { get: () => liveSnapshot() } },
       { provide: CommandMappingResolver, useValue: { resolve: () => ({ domainKey: 'valveEV01', write: WRITE }) } },
       { provide: CommandLogRepository, useValue: fakeRepo() },
+      { provide: UsersRepository, useValue: usersDouble },
       { provide: AuditLogService, useValue: { record: async () => undefined } },
     ],
   })
