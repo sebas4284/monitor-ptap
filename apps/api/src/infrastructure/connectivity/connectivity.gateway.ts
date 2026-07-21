@@ -5,7 +5,7 @@ import {
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
-import { Inject, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
+import { Inject, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import type { Server, Socket } from 'socket.io';
 import { Subscription } from 'rxjs';
 import { PlantCache } from './pipeline/plant-cache';
@@ -15,7 +15,12 @@ import { PlantPipelineService } from './pipeline/plant-pipeline.service';
  * Gateway Socket.IO del pipeline de dominio (PASO 3.7). Empuja:
  *   - opc:snapshot  → a la room de la planta, SOLO cuando el snapshot cambia (diff en el pipeline).
  *   - opc:liveness  → broadcast, en cada cambio de estado de liveness (para los badges del tablero).
- * La fuente es el puente crudo (PlantPipelineService), no el poller legado.
+ *
+ * Dependencias OBLIGATORIAS (sin @Optional): viven en este mismo módulo, así que si la
+ * inyección falla es un bug de wiring y Nest debe morir en el arranque — no degradarse en
+ * silencio a un "modo pasivo" que parece funcionar sin emitir nada (hallazgo P3-6 del audit).
+ *
+ * Gap conocido: este gateway NO autentica el handshake (ver docs/SECURITY_FINDING_P0.md §6).
  */
 @WebSocketGateway({ cors: { origin: '*' } })
 export class ConnectivityGateway implements OnModuleInit, OnModuleDestroy {
@@ -26,15 +31,11 @@ export class ConnectivityGateway implements OnModuleInit, OnModuleDestroy {
   private readonly subs: Subscription[] = [];
 
   constructor(
-    @Optional() @Inject(PlantPipelineService) private readonly pipeline?: PlantPipelineService,
-    @Optional() @Inject(PlantCache) private readonly cache?: PlantCache,
+    @Inject(PlantPipelineService) private readonly pipeline: PlantPipelineService,
+    @Inject(PlantCache) private readonly cache: PlantCache,
   ) {}
 
   onModuleInit(): void {
-    if (!this.pipeline) {
-      this.logger.warn('PlantPipelineService no disponible; el gateway queda en modo pasivo.');
-      return;
-    }
     this.subs.push(
       this.pipeline.snapshot$.subscribe((snapshot) => {
         this.server.to(snapshot.plantId).emit('opc:snapshot', snapshot);
@@ -65,7 +66,6 @@ export class ConnectivityGateway implements OnModuleInit, OnModuleDestroy {
     await client.join(plantId);
 
     // Estado actual desde cache (nunca toca el PLC).
-    const snapshot = this.cache?.get(plantId) ?? null;
-    client.emit('opc:snapshot', snapshot);
+    client.emit('opc:snapshot', this.cache.get(plantId));
   }
 }

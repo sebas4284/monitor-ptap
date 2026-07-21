@@ -1,11 +1,11 @@
 import { Module } from '@nestjs/common';
 import { DatabaseModule } from '../database/database.module';
 import { AuditLogService } from './audit-log.service';
-import { AuditInterceptor } from './audit.interceptor';
+import { AuditMiddleware } from './audit.middleware';
 
 @Module({
   imports: [DatabaseModule],
-  providers: [AuditLogService, AuditInterceptor],
-  exports: [AuditLogService, AuditInterceptor],
+  providers: [AuditLogService, AuditMiddleware],
+  exports: [AuditLogService, AuditMiddleware],
 })
 export class AuditModule {}

@@ -11,9 +11,12 @@ capas y los publica a la app móvil/web por REST y Socket.IO.
 > hasta obtener el export L5X del PLC. **Fases 0–4 completas y verificadas** (92/92 tests,
 > typecheck limpio en todo el monorepo, `validate:mapping` OK): JWT+RBAC, seguridad OPC UA
 > (SignAndEncrypt/Basic256Sha256 probado end-to-end contra un servidor local real), audit log,
-> `/api/health/opc`, métricas Prometheus y hardening HTTP. **Fase 5 (comandos de escritura) es
-> el siguiente trabajo, aún no iniciada** (precondición dura: sesión OPC UA autenticada+cifrada,
-> ya disponible desde Fase 4). Detalle en [§0 Estado de fases](#estado-de-fases).
+> `/api/health/opc`, métricas Prometheus y hardening HTTP. **Fase 5 (comandos de escritura):
+> mecanismo completo y probado** (WriteService con precondición dura de sesión cifrada,
+> interlocks, idempotencia durable, read-back con timeout y audit) — pero el mapping de
+> **producción no tiene ninguna señal `writable`** (sin L5X ni documento oficial de la planta),
+> así que todo comando real se rechaza de forma segura hasta que llegue esa documentación.
+> Detalle en [§0 Estado de fases](#estado-de-fases).
 
 ---
 
@@ -45,7 +48,7 @@ capas y los publica a la app móvil/web por REST y Socket.IO.
 | **2** | Parser + sequence + dead letter + cache RAM + Socket.IO con datos reales | ✅ Completa | `plant-pipeline.service.ts`, `/api/opc/dead-letter`; caudal de Montebello confirmado contra el PLC (`docs/FLOW_VALIDATION.md`) |
 | **3** | Mapping Engine + Quality Service + Snapshot Builder + `dtoVersion` | ✅ Completa | `mapping.engine.ts`, `quality.evaluator.ts`, `snapshot.builder.ts` |
 | **4** | JWT/RBAC, seguridad OPC (SignAndEncrypt+certificado), `/health/opc`, métricas Prometheus, audit log en MySQL, helmet/rate-limit | ✅ Completa | `AuthModule` (login, guards), `users`/`audit_log` en MySQL (`db:migrate`/`db:seed-admin`), `apps/api/test/opcua-security-switch.test.ts` (username **y** certificate probados contra un `OPCUAServer` local real), `GET /api/health/opc`, `GET /metrics`, `docs/OPTIX_CLIENT_CERT_TRUST.md` |
-| **5** | Canal de escritura (comandos) con interlocks, idempotencia y feature flag | ❌ No iniciada (depende de Fase 4 — ya completa) | — |
+| **5** | Canal de escritura (comandos) con interlocks, idempotencia y feature flag | ✅ Mecanismo completo y probado (sin señales `writable` en producción hasta el L5X) | `write.service.ts`, `commands.controller.ts` (`POST /api/plants/:id/commands`), `command-log.repository.ts` (idempotencia MySQL), schema `write` spec; `test/write-service.test.ts`, `test/commands-e2e.test.ts`, `test/command-mapping.test.ts` |
 | **6** | Validación operacional: caos, carga, latencia, soak 24–72 h | ❌ No iniciada (depende de 4–5) | — |
 
 Verificado el 2026-07-14: `npm run typecheck` limpio en **todo el monorepo** (`@ptap/api`,
@@ -58,10 +61,13 @@ mismo patrón ya establecido en `connectivity.config.ts`, no una regresión nuev
 
 **Novedades de Fase 4 para desarrolladores:**
 - `POST /api/auth/login` (`{ email, password } → { token, user: AuthUser }`, mismo shape que ya
-  espera `apps/mobile/services/auth.ts`) y `@UseGuards(JwtAuthGuard, MinTierGuard)` +
-  `@MinTier('viewer'|'operator'|'admin')` en `/api/opc/*`, `/api/plants/*`, `/api/snapshots/*`.
-  Los tiers reutilizan el `Role` real de `@ptap/shared` (`civil|operador|jefe|admin`), no un
-  sistema paralelo — ver `ROLE_TIER`/`tierAtLeast()`.
+  espera `apps/mobile/services/auth.ts`) y `@UseGuards(JwtAuthGuard, PermissionGuard)` en
+  `/api/opc/*`, `/api/plants/*`, `/api/users/*`. El RBAC gatea por **permiso granular**
+  (`@RequirePermission('system_config')`, etc.) usando `ROLE_PERMISSIONS`/`hasPermission()` de
+  `@ptap/shared` — la **misma** fuente que consume el móvil para features de UI. Se retiró el
+  antiguo sistema paralelo de tiers (`RoleTier`/`ROLE_TIER`/`tierAtLeast`) porque no podía
+  expresar la matriz oficial (p. ej. `jefe` = todo lo del operador **salvo** `control_valves`).
+  Una ruta sin `@RequirePermission` solo exige un JWT válido (cualquier rol autenticado).
 - `npm run db:migrate -w @ptap/api` crea `users`+`audit_log`; `npm run db:seed-admin -w @ptap/api`
   siembra el primer admin desde `SEED_ADMIN_*` (`.env`).
 - `OpcController` (antes en `ConnectivityModule`) se movió a `OpcObservabilityModule` — así
@@ -74,9 +80,12 @@ mismo patrón ya establecido en `connectivity.config.ts`, no una regresión nuev
 
 > El **mobile app** consume el pipeline real (`services/api.ts`, cero mocks) para sensores/tanques;
 > `mock-data.ts` cubre **a propósito** features que el backend aún no mapea (válvulas, reportes).
-> El login sigue mockeado (`services/auth.ts`) — el backend ya tiene `/api/auth/login` real desde
-> Fase 4, integrarlo en el móvil es trabajo pendiente (fuera del alcance de esta fase, que era
-> backend-only).
+> El **login ya es real**: `services/auth.ts` llama a `POST /api/auth/login`, el rol sale de MySQL
+> (no del email), el JWT viaja en cada petición REST y la sesión persiste (secure-store/
+> localStorage), con un 401 limpiándola automáticamente. **Hay auto-registro**, pero la cuenta nace
+> `civil` y **pendiente**: la habilita un admin (ver §Gestión de usuarios). Las cuentas de demo se
+> siembran ya aprobadas con `npm run db:seed-users -w @ptap/api`. Ojo: el login exige el arranque
+> COMPLETO (`npm run dev:api`); `start:telemetry` no monta `/api/auth/login` ni los guards.
 
 ---
 
@@ -157,7 +166,7 @@ monitor-ptap/
 │   │   │   ├── config/load-env.ts         # Carga .env de la raíz del monorepo
 │   │   │   ├── infrastructure/
 │   │   │   │   ├── database/               # Pool MySQL + migrations/ (users, audit_log)
-│   │   │   │   ├── audit/                  # ★ Fase 4: AuditLogService, interceptor, eventos de conexión
+│   │   │   │   ├── audit/                  # ★ Fase 4: AuditLogService, AuditMiddleware (accesos), eventos de conexión
 │   │   │   │   ├── metrics/                # ★ Fase 4: MetricsService, /metrics, subscriber de métricas
 │   │   │   │   ├── logging/                # ★ Fase 4: JsonLogger (pino), eventos estructurados
 │   │   │   │   ├── validation/             # ★ Fase 4: ZodValidationPipe, schema de plantId
@@ -167,7 +176,7 @@ monitor-ptap/
 │   │   │   │       ├── adapters/simulator/ #   Adaptador simulado (testbed)
 │   │   │   │       ├── bridge/             #   watchdog, heartbeat-monitor, frame-coalescer, state-machine
 │   │   │   │       ├── pipeline/           #   parser/liveness/mapping/quality/snapshot/cache/dead-letter
-│   │   │   │       ├── ports/              #   Contratos (ConnectivityAdapter + legacy deprecados)
+│   │   │   │       ├── ports/              #   ConnectivityAdapter (contrato único del puente)
 │   │   │   │       ├── mapping/            #   Loader de opc_mapping.json
 │   │   │   │       ├── connectivity.config.ts    # TODA la config OPC/liveness desde .env
 │   │   │   │       ├── connectivity.module.ts    # Wiring DI (sin BD — usado por main.ts Y main.telemetry.ts)
@@ -175,7 +184,7 @@ monitor-ptap/
 │   │   │   │       ├── connectivity.gateway.ts   # Socket.IO (opc:snapshot / opc:liveness) — sin auth (gap conocido)
 │   │   │   │       ├── bridge-orchestrator.service.ts  # Ciclo de vida + retry del adaptador
 │   │   │   │       └── opc.controller.ts   # /api/opc/status|info|buffers|dead-letter (RBAC, Fase 4)
-│   │   │   └── modules/                    # Dominios HTTP: plants, snapshots, health (+/opc), auth (★ Fase 4), users (★)
+│   │   │   └── modules/                    # Dominios HTTP: auth, users, plants, health (+/opc), commands (Fase 5)
 │   │   └── test/                          # Suite (node:test + tsx) — 92 tests; requiere tsconfig.test.json (ver §10)
 │   └── mobile/                       # App Expo (Android / iOS / Web)
 │       ├── app/                          # Rutas (expo-router): (auth)/login, (app)/sensores…
@@ -268,7 +277,7 @@ Claves relevantes (todas documentadas en `.env.example`):
 | `JWT_SECRET` | *(vacío, obligatorio)* | Firma de tokens (Fase 4). El backend completo no arranca sin esto. |
 | `SEED_ADMIN_EMAIL`/`PASSWORD`/`NAME`/`PLANT` | *(vacío)* | Solo los lee `npm run db:seed-admin -w @ptap/api` (no el runtime). |
 | `OPC_AUTO_ACCEPT_UNKNOWN_CERTIFICATE` | `false` | `true` solo para bootstrap/desarrollo; nunca en producción contra la planta (ver `docs/OPTIX_CLIENT_CERT_TRUST.md`). |
-| `CORS_ORIGINS` | *(vacío)* | Orígenes permitidos, separados por coma; vacío = CORS deshabilitado en `main.ts`. |
+| `CORS_ORIGINS` | *(vacío)* | Orígenes permitidos, separados por coma; vacío = CORS deshabilitado en `main.ts` (y el arranque lo avisa en el log). **Para la web de Expo pon `http://localhost:8081`**: corre en otro puerto que el backend, así que sin esto el *navegador* bloquea el login. `curl` no lo detecta — no aplica CORS. |
 
 > El móvil apunta por defecto a `http://localhost:4000`. Para un **dispositivo físico**, pon la
 > IP LAN del backend en `apps/mobile/app.json` → `expo.extra.apiBaseUrl`.
@@ -303,7 +312,7 @@ congelados aparecen como `unknown`.
 | **Móvil (solo web)** | `npm run web` *(raíz)* | `expo start --web`. |
 | **Modo simulador** (sin PLC) | `CONNECTIVITY_PROVIDER=simulator npm run start:telemetry -w @ptap/api` | Emula frames y estados del bridge. |
 
-> **`main.ts` vs `main.telemetry.ts`:** `main.ts` monta toda la app (auth, usuarios, reportes…)
+> **`main.ts` vs `main.telemetry.ts`:** `main.ts` monta toda la app (auth, usuarios, comandos…)
 > y por eso exige MySQL. `main.telemetry.ts` monta **solo** el slice de telemetría — todo lo que
 > el móvil necesita para el caudal — y no toca la base de datos. Desde Fase 4, `/api/opc/*` (con
 > RBAC) solo existe en `main.ts`: `main.telemetry.ts` expone únicamente `/api/plants/*` (sin
@@ -319,29 +328,85 @@ Prefijo global: **`/api`** (excepto `/metrics`, fuera del prefijo por convenció
 
 | Método · Ruta | Devuelve |
 |---------------|----------|
-| `POST /api/auth/login` | `{ email, password } → { token, user: AuthUser }` — mismo shape que ya espera `apps/mobile/services/auth.ts`. Rate-limit propio (`LOGIN_RATE_LIMIT_*`). |
+| `POST /api/auth/login` | `{ email, password } → { token, user: AuthUser }` — mismo shape que ya espera `apps/mobile/services/auth.ts`. Rate-limit propio (`LOGIN_RATE_LIMIT_*`). **401** genérico si las credenciales son malas; **403** si son buenas pero la cuenta está pendiente/desactivada. |
+| `POST /api/auth/register` | `{ name, email, phone?, plant, password } → { status: 'pending_approval', email, message }` — alta propia. **Sin token**: la cuenta nace `is_active = 0` y no puede entrar hasta que un admin la apruebe. Nace **SIEMPRE con rol `civil`**: el rol lo fija el servidor y el schema es `.strict()`, así que enviar `role` → **400**. Mismo rate-limit que login. |
 
-El resto de rutas (salvo `/api/health*` y `/metrics`) exige `Authorization: Bearer <token>` +
-rol mínimo (`@MinTier('viewer'|'operator'|'admin')`, reutilizando el `Role` real de
-`@ptap/shared`): sin token → `401`; rol insuficiente → `403`.
+> **El orden del login es la defensa:** la contraseña se verifica **antes** de mirar `is_active`. Con
+> la contraseña mala siempre sale el mismo `401`, exista o no el correo — si el 403 saliera antes,
+> cualquiera podría enumerar los correos registrados probando contraseñas al azar.
 
-### REST (pipeline de dominio) — tier `viewer`
+### Gestión de usuarios (Fase 4) — solo Administrador
+
+La matriz oficial reserva *"Crear, editar y eliminar usuarios"* y *"Asignar roles"* al Admin:
+
+| Método · Ruta | Permiso | Devuelve |
+|---------------|---------|----------|
+| `GET /api/users` | `manage_users` (admin) | Lista de usuarios (`UserSummary`, sin secretos). Filtra en **SQL parametrizado**: `?search=` (nombre/correo/teléfono), `?role=`, `?isActive=` (`false` = pendientes). Query inválida → **400**. |
+| `PATCH /api/users/:id/active` | `manage_users` (admin) | **Aprueba** (`true` sobre una cuenta nueva), activa o desactiva; audita `user.active_changed`. |
+| `PATCH /api/users/:id/role` | `assign_roles` (admin) | Asigna rol; audita `user.role_changed` (quién, a quién, de→a). |
+
+Flujo: **el usuario se registra → queda pendiente → un admin lo verifica (por eso se pide teléfono),
+lo aprueba y, si corresponde, lo eleva** desde la pantalla "Usuarios" del móvil (menú ☰, solo admin;
+pestaña *Pendientes*). Un admin no puede cambiar su propio rol ni desactivarse (evita perder el acceso).
+
+> **Los cambios aplican en la siguiente petición, no al reingresar.** `JwtAuthGuard` relee al usuario
+> en la base en cada petición (`UsersRepository.findById`, que filtra `is_active = 1`) y puebla
+> `request.user` con **la fila, no con el payload del token**. El JWT es una credencial —prueba quién
+> firmó el login—, no una autorización: desactivar una cuenta corta esa sesión en el acto y un rol
+> degradado no sobrevive dentro del token. Cuesta una consulta por clave primaria por petición.
+
+> **Por qué aprobación humana y no verificación por correo:** confirmar un correo solo prueba que
+> alguien tiene acceso a ese buzón, y una cuenta desechable se crea en treinta segundos — contra
+> cuentas fantasma no aporta nada. Lo que frena a un impostor es que una persona lo reconozca. La
+> verificación por correo puede **sumarse** después como filtro de ruido, pero no sustituye esto.
+
+El resto de rutas (salvo `/api/health*` y `/metrics`) exige `Authorization: Bearer <token>`. El
+RBAC gatea por **permiso granular** (`@RequirePermission(...)`, sobre `hasPermission()` de
+`@ptap/shared`): sin token → `401`; sin el permiso requerido → `403`. Una ruta sin
+`@RequirePermission` solo exige un JWT válido (cualquier rol autenticado). Los accesos —
+**permitidos y denegados** — se registran en `audit_log` vía `AuditMiddleware`.
+
+### REST (pipeline de dominio) — cualquier rol autenticado
 
 | Método · Ruta | Devuelve |
 |---------------|----------|
 | `GET /api/plants` | Lista de las 12 plantas con su `liveness` y `bridgeStatus`. |
 | `GET /api/plants/:plantId/snapshot` | `PlantSnapshotDto` desde cache RAM (<50 ms; nunca toca el PLC). |
 
+> **Divergencia conocida con la matriz oficial (decisión de producto pendiente):** la matriz dice
+> que el **Civil** solo debe ver estado básico ("¿hay agua?"), pero hoy estas lecturas están
+> abiertas a todo rol autenticado (incluido `civil`). Restringirlo requiere un endpoint de estado
+> básico y tocar el móvil; se posterga a una fase de frontend.
+
 ### REST (observabilidad del puente) — solo en `main.ts` (app completa)
 
-| Método · Ruta | Tier | Devuelve |
-|---------------|------|----------|
-| `GET /api/opc/status` | viewer | Diagnóstico: bridgeStatus, notificaciones, reconexiones, heartbeat, por planta. |
-| `GET /api/opc/info` | admin | Metadata del servidor OPC UA. |
-| `GET /api/opc/buffers` | admin | Salud por buffer (NodeId resuelto o faulted). |
-| `GET /api/opc/dead-letter` | admin | Señales anómalas descartadas (regla 12), con contadores. |
+| Método · Ruta | Permiso | Devuelve |
+|---------------|---------|----------|
+| `GET /api/opc/status` | (autenticado) | Diagnóstico: bridgeStatus, notificaciones, reconexiones, heartbeat, por planta. |
+| `GET /api/opc/info` | `system_config` (admin) | Metadata del servidor OPC UA. |
+| `GET /api/opc/buffers` | `system_config` (admin) | Salud por buffer (NodeId resuelto o faulted). |
+| `GET /api/opc/dead-letter` | `system_config` (admin) | Señales anómalas descartadas (regla 12), con contadores. |
 | `GET /api/health/opc` | público | Health industrial: `plcReachable`, `bridgeStatus`, `subscriptionAlive`, contadores… `503` si `Stale`/`Faulted`. |
 | `GET /metrics` | público (o `METRICS_AUTH_TOKEN`) | Métricas Prometheus: `opc_notifications_total`, `opc_bridge_status`, `opc_quality_good/bad_total`, `opc_subscription_latency_ms`, `opc_dead_letter_total`, etc. |
+
+### REST (comandos de escritura — Fase 5) — solo en `main.ts` (app completa)
+
+| Método · Ruta | Permiso | Devuelve |
+|---------------|---------|----------|
+| `POST /api/plants/:plantId/commands` | el que declare la señal writable en el mapping (p. ej. `control_valves`; el jefe NO lo tiene) | `{ command, target, idempotencyKey? } → CommandResult` (`status: confirmed\|failed\|rejected`, con `previousValue`/`writtenValue`/`confirmedValue`/`interlockSequence`). |
+
+API de **dominio**, nunca de NodeIds: `target` es el `domainKey` de una señal `writable` del mapping,
+que el WriteService traduce a buffer/bit. **Precondición dura** (regla 9): rechaza todo con
+`WRITES_DISABLED_INSECURE_SESSION` si `OPCUA_WRITES_ENABLED=false` **o** la sesión OPC UA no es
+autenticada+cifrada. Flujo por comando: RBAC (permiso del mapping) → interlock (`bridgeStatus`
+Connected + snapshot fresco) → write → read-back con timeout → `confirmed`/`failed` (+ rollback
+best-effort) → **audit log siempre** (`command.execute`, con valor previo/confirmado y `sequence`
+del interlock). Idempotencia durable en MySQL (`command_log`): un `idempotencyKey` repetido no
+re-ejecuta el comando. **Hoy el mapping de producción no tiene señales `writable`** (sin L5X) →
+todo comando real responde `TARGET_NOT_WRITABLE`. Códigos: 200 confirmado · 502 fallido ·
+401 sin token · 403 permiso/insegura · 404 target no writable · 409 interlock/en-progreso.
+
+Migración: `npm run db:migrate -w @ptap/api` crea `command_log` (además de `users`/`audit_log`).
 
 ### Socket.IO
 
@@ -367,8 +432,9 @@ rol mínimo (`@MinTier('viewer'|'operator'|'admin')`, reutilizando el `Role` rea
 }
 ```
 
-> Rutas **legacy** (deprecadas, ver `docs/DEPRECATION.md`): `GET /api/snapshots/:plantId`,
-> `GET /api/health`.
+> El camino de datos legado anterior al puente (poller `ConnectivityService`, ports
+> `IndustrialReader/Writer/ProtocolAdapter`, `RawFrameCache` y la ruta `GET /api/snapshots/:plantId`)
+> se **eliminó** al completarse el Mapping Engine: hoy hay **un solo camino de datos vivo**.
 
 ---
 
@@ -384,12 +450,14 @@ npm test -w @ptap/api
 npm run test:bridge   -w @ptap/api    # watchdog, heartbeat, coalescer, state machine, config
 npm run test:pipeline -w @ptap/api    # liveness, quality, mapping engine, cache/sequence
 npm run test:mapping  -w @ptap/api    # contrato opc_mapping.json contra el schema
-npm run test:auth     -w @ptap/api    # JwtAuthGuard/MinTierGuard (unit + e2e con supertest)
+npm run test:auth     -w @ptap/api    # JwtAuthGuard/PermissionGuard (unit + e2e con supertest, incl. caso jefe)
 npm run test:health   -w @ptap/api    # computeOpcHealth() — 503 en Stale/Faulted
 npm run test:metrics  -w @ptap/api    # MetricsService expone las métricas Prometheus requeridas
-npm run test:audit    -w @ptap/api    # AuditLogService, interceptor, eventos de conexión
+npm run test:audit    -w @ptap/api    # AuditLogService, AuditMiddleware (200/401/403), eventos de conexión
 npm run test:security -w @ptap/api    # conmutación real a SignAndEncrypt+username/certificate
                                        # contra un OPCUAServer local (no un mock)
+npm run test:commands -w @ptap/api    # Fase 5: WriteService (precondición dura, interlock, idempotencia,
+                                       # read-back), RBAC del endpoint, y schema del write spec
 
 # Mapping (la semántica vive en datos, no en código)
 npm run generate:mapping -w @ptap/api # regenera config/opc_mapping.json (idempotente)
@@ -397,8 +465,15 @@ npm run validate:mapping -w @ptap/api # valida schema + reglas semánticas
 
 # Base de datos (Fase 4 — solo users + audit_log; el resto del dominio sigue pendiente)
 npm run db:migrate     -w @ptap/api   # crea las tablas si no existen (idempotente)
-npm run db:seed-admin  -w @ptap/api   # siembra el primer admin desde SEED_ADMIN_* (.env)
+npm run db:seed-users  -w @ptap/api   # siembra un usuario por rol para probar RBAC (Demo1234!)
+npm run db:seed-admin  -w @ptap/api   # siembra solo el primer admin desde SEED_ADMIN_* (.env)
 ```
+
+> ⚠️ **Las 4 cuentas demo tienen una contraseña pública.** `Demo1234!` está escrita en este README, en
+> `docs/SETUP.md`, en `docs/SETUP_AGENT.md` y en el `.env.example` — es decir, **cualquiera que abra el
+> repo puede entrar como `admin@ptap.co`**. Es aceptable en local, pero **antes de exponer el backend
+> fuera de tu máquina hay que desactivarlas o cambiarles la contraseña** (`PATCH /api/users/:id/active`
+> con `isActive:false` las corta al instante). No son un mecanismo de acceso: son un atajo de demo.
 
 > **Nota de tooling:** los archivos en `test/` no están en el `include` de `tsconfig.json` (por
 > diseño, para no mezclarse con el `build` de `src/`), pero eso hace que `tsx`/esbuild use el
@@ -446,8 +521,8 @@ pichinde, carbonero, sirena, san-antonio, quijote`). Nada de `PTAP Norte` ni `pt
 - **Tipos/roles/permisos compartidos:** agrégalos en `packages/shared/src/index.ts` e impórtalos
   desde `@ptap/shared` en ambos lados.
 - **Config nueva del PLC:** añádela en `connectivity.config.ts` leyéndola de `.env` (regla 8).
-- **Endpoint nuevo que requiera auth:** `@UseGuards(JwtAuthGuard, MinTierGuard)` +
-  `@MinTier('viewer'|'operator'|'admin')`, e importa `AuthModule` en el módulo del controller
+- **Endpoint nuevo que requiera auth:** `@UseGuards(JwtAuthGuard, PermissionGuard)` +
+  `@RequirePermission('<permiso>')` (de `@ptap/shared`), e importa `AuthModule` en el módulo del controller
   (guards resueltos vía DI, no globales — así `main.telemetry.ts` sigue sin requerir MySQL).
 
 ---
@@ -462,7 +537,10 @@ pichinde, carbonero, sirena, san-antonio, quijote`). Nada de `PTAP Norte` ni `pt
 | `docs/MSG_BITS_OBSERVATION.md` | Por qué los bits DN/ER/TO quedan descartados como fuente de estado. |
 | `docs/SECURITY_FINDING_P0.md` | Hallazgo P0: el servidor OPC UA acepta Anonymous + None. Sección 6 tiene el seguimiento de las mitigaciones de Fase 4. |
 | `docs/OPTIX_CLIENT_CERT_TRUST.md` | ★ Fase 4: cómo confiar el certificado de cliente del gateway en FactoryTalk Optix (y el del servidor, en el gateway). |
-| `docs/DEPRECATION.md` | Símbolos legacy agendados para eliminación (Fase 3). |
-| `docs/architecture/` | Métodos y estructura del backend. |
-| `docs/api/openapi.yaml`, `docs/postman/` | Contrato de API. |
+| `docs/SETUP.md` | Puesta en marcha desde cero (MySQL, `.env`, migraciones, usuarios de prueba). Empieza por aquí si acabas de clonar. |
+| `docs/SETUP_AGENT.md` | El mismo montaje como **runbook ejecutable** (pasos + verificación + errores típicos), pensado para que lo siga un agente de IA. |
+| `docs/DATA_CATALOG.md` | Catálogo de señales por planta (generado desde el mapping). |
+| `docs/architecture/` | Documento de arquitectura + métodos/contratos internos del backend. |
+| `docs/api/openapi.yaml`, `docs/postman/` | Contrato de API (todas las rutas, con su permiso). |
+| `docs/audit/` | Auditorías fechadas (evidencia histórica; no se actualizan). |
 | `tools/plc-discovery/` | Ingeniería inversa OPC UA (10 entregables en `docs/plc/`). |

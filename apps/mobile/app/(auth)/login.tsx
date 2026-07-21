@@ -43,8 +43,10 @@ export default function LoginScreen() {
       const { token, user } = await apiLogin(email.trim(), password);
       await login(token, user);
       router.replace(user.role === 'civil' ? '/(app)/estado' : '/(app)/sensores');
-    } catch {
-      alertWeb('Error de acceso', 'Credenciales inválidas. Intenta de nuevo.');
+    } catch (err) {
+      // Mostrar el motivo REAL: un servidor caído o un rate-limit no son una contraseña mala.
+      // Decir siempre "credenciales inválidas" manda a la gente a revisar lo que no falla.
+      alertWeb('Error de acceso', err instanceof Error ? err.message : 'No se pudo iniciar sesión.');
     } finally {
       setIsLoading(false);
     }
@@ -120,7 +122,8 @@ export default function LoginScreen() {
             }
           </TouchableOpacity>
 
-          {/* Outline button */}
+          {/* El alta crea SIEMPRE una cuenta Civil (solo consulta); elevar el rol es
+              potestad de un administrador. Ver app/(auth)/register.tsx. */}
           <TouchableOpacity
             style={styles.btnOutline}
             onPress={() => router.push('/(auth)/register')}
@@ -128,6 +131,7 @@ export default function LoginScreen() {
           >
             <Text style={styles.btnOutlineText}>Crear cuenta nueva</Text>
           </TouchableOpacity>
+          <Text style={styles.hint}>Las cuentas nuevas se crean como Civil (solo consulta).</Text>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -168,6 +172,12 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: Colors.textSecondary,
     marginTop: 6,
+  },
+  hint: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    marginTop: 20,
   },
   label: {
     fontSize: 13,

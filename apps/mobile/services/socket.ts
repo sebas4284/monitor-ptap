@@ -1,15 +1,23 @@
 import { io, type Socket } from 'socket.io-client';
-import { API_BASE_URL, type LivenessChange, type PlantSnapshotDto } from './api';
+import { API_BASE_URL, getAuthToken, type LivenessChange, type PlantSnapshotDto } from './api';
 
 /**
  * Cliente Socket.IO REAL. El backend empuja opc:snapshot (por planta, solo en cambios)
  * y opc:liveness (broadcast). El front NO hace polling: escucha el push.
+ *
+ * El JWT viaja en el handshake por compatibilidad hacia adelante. OJO: hoy el gateway
+ * del backend NO lo valida — autenticar el socket es un gap conocido y documentado
+ * (ver docs/SECURITY_FINDING_P0.md §6). No asumir que este canal está protegido.
  */
 let socket: Socket | null = null;
 
 export function getSocket(): Socket {
   if (!socket) {
-    socket = io(API_BASE_URL, { transports: ['websocket'], reconnection: true });
+    socket = io(API_BASE_URL, {
+      transports: ['websocket'],
+      reconnection: true,
+      auth: { token: getAuthToken() },
+    });
   }
   return socket;
 }

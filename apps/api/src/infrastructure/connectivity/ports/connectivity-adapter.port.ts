@@ -102,6 +102,31 @@ export interface ServerInfo {
   };
 }
 
+/** Fase 5: elemento de un buffer a escribir/leer. El adaptador lo resuelve a NodeId + IndexRange. */
+export interface BufferElementTarget {
+  plantId: string;
+  channel: string; // canal de salida (realOut | intOut | bitOut | msgWrite) para write; cualquiera para read-back
+  sourceBuffer: string; // browseName exacto del buffer
+  index: number;
+}
+
+/**
+ * Fase 5: contexto de seguridad de la sesión, para la PRECONDICIÓN DURA de escritura.
+ * `secure` = sesión autenticada Y cifrada (SignAndEncrypt + identidad no anónima). El
+ * WriteService rechaza toda escritura si !secure, sin excepciones.
+ */
+export interface WriteSecurity {
+  secure: boolean;
+  securityMode: string;
+  identity: string;
+}
+
+export interface BufferElementRead {
+  value: number | boolean | null;
+  quality: OpcQuality;
+  sourceTimestamp: string | null;
+}
+
 /** Firma de la fachada de puente crudo. Push-based; cero polling de datos. */
 export interface ConnectivityAdapter {
   readonly provider: 'simulator' | 'opcua';
@@ -119,4 +144,12 @@ export interface ConnectivityAdapter {
   getDiagnostics(): AdapterDiagnostics; // /api/opc/status
   getServerInfo(): Promise<ServerInfo>; // /api/opc/info
   getBufferHealth(): BufferHealth[];
+
+  // ── Fase 5: canal de escritura (SOLO alcanzable tras la precondición dura del WriteService) ──
+  /** Contexto de seguridad de la sesión (autenticada + cifrada). */
+  getWriteSecurity(): WriteSecurity;
+  /** Escribe UN elemento de un buffer de salida. No valida seguridad/interlock: eso es del WriteService. */
+  writeBufferElement(target: BufferElementTarget, value: number | boolean): Promise<void>;
+  /** Lee UN elemento (read-back de confirmación). */
+  readBufferElement(target: BufferElementTarget): Promise<BufferElementRead>;
 }

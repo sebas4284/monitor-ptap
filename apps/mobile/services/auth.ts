@@ -1,51 +1,80 @@
-import type { Role, AuthUser } from '@ptap/shared';
+import type { AuthUser } from '@ptap/shared';
+import { API_BASE_URL } from './api';
 
 /**
- * Stub de autenticación. El backend de auth (JWT/RBAC) está FUERA DE ALCANCE de esta
- * fase (ver la lista NO-implementar). Se mantiene aparte de services/api.ts para que el
- * cliente REAL de telemetría no contenga stubs. Al cablear auth real, este archivo se
- * reemplaza por llamadas a /api/auth.
+ * Autenticación REAL contra el backend (Fase 4). Cero mocks: el usuario, su rol y la
+ * contraseña viven en MySQL (Argon2id + pepper) y el backend devuelve un JWT firmado.
+ * El rol NO se deduce del email — viene de la base de datos.
+ *
+ * IMPORTANTE: requiere el arranque COMPLETO del backend (`npm run dev:api` → main.ts).
+ * El arranque de telemetría (`start:telemetry`) NO monta /api/auth/login ni los guards.
  */
 
-function mockRole(email: string): Role {
-  const lower = email.toLowerCase();
-  if (lower.startsWith('admin@')) return 'admin';
-  if (lower.startsWith('jefe@')) return 'jefe';
-  if (lower.startsWith('civil@')) return 'civil';
-  return 'operador';
+/**
+ * Un fallo de red (backend apagado, IP equivocada en app.json) NO es una credencial mala:
+ * decirlo así manda a la gente a revisar su contraseña cuando el problema es otro.
+ */
+async function postAuth(path: string, body: unknown): Promise<Response> {
+  try {
+    return await fetch(`${API_BASE_URL}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    throw new Error(
+      `No se pudo conectar con el servidor (${API_BASE_URL}). ¿Está corriendo el backend completo (npm run dev:api)?`,
+    );
+  }
 }
 
-const ROLE_NAMES: Record<Role, string> = {
-  civil: 'Visitante Civil',
-  operador: 'Operador de Planta',
-  jefe: 'Jefe de Planta',
-  admin: 'Administrador',
-};
+export async function apiLogin(email: string, password: string): Promise<{ token: string; user: AuthUser }> {
+  const res = await postAuth('/api/auth/login', { email, password });
 
-const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+  if (res.status === 401) throw new Error('Credenciales inválidas');
+  // 403 = la contraseña ERA correcta, pero la cuenta está pendiente de aprobación o
+  // desactivada. El backend explica cuál: mostrar su mensaje evita mandar a alguien a
+  // reintentar una contraseña que ya es buena.
+  if (res.status === 403) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string };
+    throw new Error(body.message ?? 'Tu cuenta aún no está habilitada.');
+  }
+  if (res.status === 429) throw new Error('Demasiados intentos. Espera un momento e intenta de nuevo.');
+  if (!res.ok) throw new Error(`No se pudo iniciar sesión (HTTP ${res.status})`);
 
-export async function apiLogin(email: string, _password: string): Promise<{ token: string; user: AuthUser }> {
-  await delay(400);
-  if (!email) throw new Error('Credenciales inválidas');
-  const role = mockRole(email);
-  const user: AuthUser = {
-    id: `user-${Date.now()}`,
-    name: ROLE_NAMES[role],
-    email,
-    role,
-    plant: 'montebello', // slug canónico
-  };
-  return { token: `ptap-jwt-${Date.now()}`, user };
+  return (await res.json()) as { token: string; user: AuthUser };
 }
 
+/** Respuesta del auto-registro: la cuenta queda pendiente, NO hay sesión. */
+export interface RegisterResult {
+  status: 'pending_approval';
+  email: string;
+  message: string;
+}
+
+/**
+ * Auto-registro. La cuenta nace con rol `civil` (solo lectura) y **pendiente de aprobación**:
+ * ambas cosas las fija el servidor, aquí no se mandan. No hay token — el usuario no entra
+ * hasta que un Administrador habilite la cuenta desde la pantalla "Usuarios", que es también
+ * donde puede elevarle el rol.
+ */
 export async function apiRegister(data: {
   name: string;
   email: string;
   phone: string;
   plant: string;
-  role: Role;
   password: string;
-}): Promise<void> {
-  await delay(400);
-  if (!data.email || !data.password) throw new Error('Datos incompletos');
+}): Promise<RegisterResult> {
+  // sin `role`: el backend lo rechazaría (schema .strict)
+  const res = await postAuth('/api/auth/register', data);
+
+  if (res.status === 409) throw new Error('Ese correo ya está registrado');
+  if (res.status === 429) throw new Error('Demasiados intentos. Espera un momento e intenta de nuevo.');
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string | string[] };
+    const msg = Array.isArray(body.message) ? body.message.join(', ') : body.message;
+    throw new Error(msg ?? `No se pudo crear la cuenta (HTTP ${res.status})`);
+  }
+
+  return (await res.json()) as RegisterResult;
 }

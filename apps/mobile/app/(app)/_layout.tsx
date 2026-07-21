@@ -22,12 +22,22 @@ function MenuModal({
   onClose: () => void;
   user: AuthUser | null;
 }) {
-  const { logout } = useAuth();
+  const { logout, hasPermission } = useAuth();
 
   async function handleLogout() {
     onClose();
     await logout();
     router.replace('/(auth)/login');
+  }
+
+  function goToUsers() {
+    onClose();
+    router.push('/(app)/usuarios');
+  }
+
+  function goToSettings() {
+    onClose();
+    router.push('/(app)/ajustes');
   }
 
   const roleColor = user ? ROLE_COLORS[user.role] : Colors.primary;
@@ -49,15 +59,27 @@ function MenuModal({
             <Text style={styles.drawerSubtitle}>{user?.plant ?? 'Sistema de Monitoreo'}</Text>
           </View>
 
-          <TouchableOpacity style={styles.drawerItem}>
-            <Ionicons name="notifications-outline" size={20} color={Colors.textPrimary} />
-            <Text style={styles.drawerItemText}>Notificaciones</Text>
+          {/* Solo Admin: la matriz oficial reserva la gestión de usuarios al Administrador.
+              Ocultarlo es comodidad de UI — el backend igual responde 403 a los demás. */}
+          {hasPermission('manage_users') && (
+            <TouchableOpacity style={styles.drawerItem} onPress={goToUsers}>
+              <Ionicons name="people-outline" size={20} color={Colors.textPrimary} />
+              <Text style={styles.drawerItemText}>Usuarios</Text>
+            </TouchableOpacity>
+          )}
+
+          <TouchableOpacity style={styles.drawerItem} onPress={goToSettings}>
+            <Ionicons name="settings-outline" size={20} color={Colors.textPrimary} />
+            <Text style={styles.drawerItemText}>Ajustes</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.drawerItem}>
-            <Ionicons name="settings-outline" size={20} color={Colors.textPrimary} />
-            <Text style={styles.drawerItemText}>Configuración</Text>
-          </TouchableOpacity>
+          {/* Aún no implementado: se marca como tal en vez de dejar un botón muerto que
+              parezca roto en una demo. Las notificaciones/alertas son la Semana 6 del plan. */}
+          <View style={[styles.drawerItem, styles.drawerItemDisabled]}>
+            <Ionicons name="notifications-outline" size={20} color={Colors.textSecondary} />
+            <Text style={[styles.drawerItemText, { color: Colors.textSecondary }]}>Notificaciones</Text>
+            <Text style={styles.soonTag}>Próximamente</Text>
+          </View>
 
           <View style={styles.drawerDivider} />
 
@@ -186,6 +208,24 @@ export default function AppLayout() {
             headerTitle: 'Estado General',
           }}
         />
+        {/* Fuera del tab bar: se entra desde el menú, y solo si el rol tiene manage_users. */}
+        <Tabs.Screen
+          name="usuarios"
+          options={{
+            href: null,
+            ...HEADER_OPTS,
+            headerTitle: 'Usuarios',
+          }}
+        />
+        {/* Fuera del tab bar: se entra desde el menú. Disponible para todos los roles. */}
+        <Tabs.Screen
+          name="ajustes"
+          options={{
+            href: null,
+            ...HEADER_OPTS,
+            headerTitle: 'Ajustes',
+          }}
+        />
       </Tabs>
     </>
   );
@@ -250,6 +290,18 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: Colors.textPrimary,
     fontWeight: '500',
+  },
+  drawerItemDisabled: { opacity: 0.55 },
+  soonTag: {
+    marginLeft: 'auto',
+    fontSize: 10,
+    fontWeight: '700',
+    color: Colors.textSecondary,
+    backgroundColor: '#E5E7EB',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    overflow: 'hidden',
   },
   drawerDivider: {
     height: 1,

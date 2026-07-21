@@ -3,6 +3,7 @@ import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 import type { AuthUser, Permission } from '@ptap/shared';
 import { hasPermission as checkPermission } from '@ptap/shared';
+import { setAuthToken, setOnUnauthorized } from '../services/api';
 
 const TOKEN_KEY = 'ptap_auth_token';
 const USER_KEY = 'ptap_auth_user';
@@ -38,6 +39,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  // Restaura la sesión persistida y deja el cliente REST listo con ese token.
   useEffect(() => {
     Promise.all([
       storage.getItem(TOKEN_KEY),
@@ -45,9 +47,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     ])
       .then(([storedToken, storedUser]) => {
         setToken(storedToken ?? null);
+        setAuthToken(storedToken ?? null); // el JWT restaurado viaja en las peticiones
         setUser(storedUser ? (JSON.parse(storedUser) as AuthUser) : null);
       })
       .finally(() => setIsLoading(false));
+  }, []);
+
+  // Un 401 del backend (token vencido/revocado) limpia la sesión persistida.
+  useEffect(() => {
+    setOnUnauthorized(() => {
+      void logout();
+    });
+    return () => setOnUnauthorized(null);
   }, []);
 
   async function login(newToken: string, newUser: AuthUser) {
@@ -55,6 +66,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       storage.setItem(TOKEN_KEY, newToken),
       storage.setItem(USER_KEY, JSON.stringify(newUser)),
     ]);
+    setAuthToken(newToken);
     setToken(newToken);
     setUser(newUser);
   }
@@ -64,6 +76,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       storage.deleteItem(TOKEN_KEY),
       storage.deleteItem(USER_KEY),
     ]);
+    setAuthToken(null);
     setToken(null);
     setUser(null);
   }
