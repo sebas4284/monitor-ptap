@@ -45,3 +45,6 @@ pki/
 # generated native folders
 /ios
 /android
+
+# Subagent-driven-development scratch state
+.superpowers/
