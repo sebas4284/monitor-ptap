@@ -97,7 +97,7 @@ test('audit-log: detail se trunca cuando excede AUDIT_LOG_DETAIL_MAX_BYTES', asy
   }
 });
 
-test('connection-events-subscriber: registra opc.bridge_status_change en cada transición', async () => {
+test('connection-events-subscriber: graba la línea base de arranque Y cada transición', async () => {
   const { pool, calls } = fakePool();
   const auditLog = new AuditLogService(pool);
 
@@ -106,16 +106,25 @@ test('connection-events-subscriber: registra opc.bridge_status_change en cada tr
     onStatusChange: (listener: (status: BridgeStatus, reason: string) => void) => {
       capturedListener = listener;
     },
+    // El puente ya está en Connecting al registrarnos (la transición inicial no nos llegó).
+    getBridgeStatus: () => 'Connecting' as BridgeStatus,
   } as unknown as ConnectivityAdapter;
 
   const subscriber = new ConnectionEventsSubscriber(adapter, auditLog);
   subscriber.onModuleInit();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  // La línea base captura el 'Connecting' de arranque, que antes se perdía → sin ella, durante
+  // un corte (el puente se queda en Connecting) NO se registraría nada.
+  assert.equal(calls.length, 1, 'debe grabar el estado de arranque aunque no haya transición nueva');
+  assert.match(calls[0].params[8] as string, /"status":"Connecting"/);
+
+  // Y además cada transición posterior.
   assert.ok(capturedListener);
   await (capturedListener as (status: BridgeStatus, reason: string) => void)('Faulted', 'namespace no resuelto');
   await new Promise((resolve) => setImmediate(resolve));
 
-  assert.equal(calls.length, 1);
-  const [eventType, , , , , , , , detail] = calls[0].params;
-  assert.equal(eventType, 'opc.bridge_status_change');
-  assert.match(detail as string, /"status":"Faulted"/);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].params[0], 'opc.bridge_status_change');
+  assert.match(calls[1].params[8] as string, /"status":"Faulted"/);
 });

@@ -50,23 +50,31 @@ test('quality: StatusCode != Good → BAD_QUALITY', () => {
   assert.equal(evaluateQuality({ value: 10, quality: 'Bad', min: 0, max: 1000, livenessState: 'live' }).reason, 'BAD_QUALITY');
 });
 
-test('quality: liveness stale/unknown → BRIDGE_STALE (dato puede ser viejo)', () => {
-  assert.equal(evaluateQuality({ value: 10, quality: 'Good', min: 0, max: 1000, livenessState: 'stale' }).reason, 'BRIDGE_STALE');
-  assert.equal(evaluateQuality({ value: 10, quality: 'Good', min: 0, max: 1000, livenessState: 'unknown' }).reason, 'BRIDGE_STALE');
+test('quality: liveness frozen → BRIDGE_STALE (perdimos la fuente)', () => {
+  assert.equal(evaluateQuality({ value: 10, quality: 'Good', min: 0, max: 1000, livenessState: 'frozen' }).reason, 'BRIDGE_STALE');
 });
 
-// ── LivenessTracker (PASO 3.3) ───────────────────────────────────────────────
-
-test('liveness: sin frames → unknown', () => {
-  const lt = new LivenessTracker(10, 300);
-  assert.equal(lt.get('voragine').state, 'unknown');
+// El fix de fondo: una planta en régimen estable estaba viendo DESAPARECER sus lecturas.
+test('quality: liveness stable NO invalida — proceso quieto es operación normal', () => {
+  const v = evaluateQuality({ value: 10, quality: 'Good', min: 0, max: 1000, livenessState: 'stable' });
+  assert.equal(v.usable, true);
+  assert.equal(v.reason, undefined);
 });
 
-test('liveness: primer frame NO es un cambio → sigue unknown (sitio congelado)', () => {
+// ── LivenessTracker (PASO 3.3) — 3 estados: live / stable / frozen ───────────
+
+test('liveness: sesión sana y sin frames → stable (conectados, aún sin movimiento)', () => {
   const lt = new LivenessTracker(10, 300);
-  const changed = lt.ingest(frame('voragine', [buf('REAL_IN_VORAGINE', 'realIn', [7.6, 395811])]));
-  assert.equal(changed, false);
-  assert.equal(lt.get('voragine').state, 'unknown');
+  assert.equal(lt.get('voragine', true).state, 'stable');
+});
+
+test('liveness: sin sesión → frozen, pase lo que pase con los valores', () => {
+  const lt = new LivenessTracker(10, 300);
+  assert.equal(lt.get('voragine', false).state, 'frozen');
+  // incluso con un cambio recentísimo: sin fuente viva el dato no está respaldado
+  lt.ingest(frame('voragine', [buf('B', 'realIn', [1])]));
+  lt.ingest(frame('voragine', [buf('B', 'realIn', [2])]));
+  assert.equal(lt.get('voragine', false).state, 'frozen');
 });
 
 test('liveness: segundo frame con valor distinto → cambio → live', () => {
@@ -74,27 +82,22 @@ test('liveness: segundo frame con valor distinto → cambio → live', () => {
   lt.ingest(frame('montebello', [buf('REAL_IN_MONTEBELLO', 'realIn', [14.1])]));
   const changed = lt.ingest(frame('montebello', [buf('REAL_IN_MONTEBELLO', 'realIn', [14.2])]));
   assert.equal(changed, true);
-  assert.equal(lt.get('montebello').state, 'live');
+  assert.equal(lt.get('montebello', true).state, 'live');
 });
 
-test('liveness: cambio viejo → idle y luego stale por edad', () => {
+// EL CASO QUE MOTIVÓ EL CAMBIO: valores quietos hace rato, pero la sesión responde.
+// Antes esto era 'stale' (rojo, "congelado") y además invalidaba las señales.
+test('liveness: cambio viejo con sesión sana → stable, NO congelado', () => {
   const lt = new LivenessTracker(10, 300);
-  const old = new Date(Date.now() - 60_000).toISOString(); // hace 60 s
+  const old = new Date(Date.now() - 60_000).toISOString();
   lt.ingest(frame('m', [buf('B', 'realIn', [1], old)]));
-  lt.ingest(frame('m', [buf('B', 'realIn', [2], old)])); // cambio con ts de hace 60 s
-  assert.equal(lt.get('m').state, 'idle'); // >10s, <300s
-  const veryOld = new Date(Date.now() - 400_000).toISOString();
-  lt.ingest(frame('m', [buf('B', 'realIn', [3], veryOld)]));
-  assert.equal(lt.get('m').state, 'stale'); // >300s
-});
+  lt.ingest(frame('m', [buf('B', 'realIn', [2], old)]));
+  assert.equal(lt.get('m', true).state, 'stable');
 
-test('liveness: windowSec por planta desde el mapping', () => {
-  const lt = new LivenessTracker(2, 300); // liveSec 2s
-  lt.configurePlant('slow', 5); // ventana corta específica del sitio
-  const old = new Date(Date.now() - 8_000).toISOString();
-  lt.ingest(frame('slow', [buf('B', 'realIn', [1], old)]));
-  lt.ingest(frame('slow', [buf('B', 'realIn', [2], old)]));
-  assert.equal(lt.get('slow').state, 'stale'); // 8s > windowSec 5s (default 300s la dejaría idle)
+  const veryOld = new Date(Date.now() - 400_000).toISOString(); // más de la ventana de 300 s
+  lt.ingest(frame('m', [buf('B', 'realIn', [3], veryOld)]));
+  assert.equal(lt.get('m', true).state, 'stable', 'con la sesión viva, el tiempo por sí solo no congela');
+  assert.equal(lt.get('m', false).state, 'frozen', 'lo que congela es perder la sesión');
 });
 
 // ── MappingEngine (PASO 3.4) ─────────────────────────────────────────────────

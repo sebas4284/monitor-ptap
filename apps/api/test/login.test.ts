@@ -78,14 +78,16 @@ async function buildApp(repo: UsersRepository, audit: AuditLogService): Promise<
   return app;
 }
 
-test('login: cuenta activa + contraseña correcta → 200 con JWT', async () => {
+// 201 y no 200: `@Post('login')` no declara `@HttpCode`, así que Nest usa el 201 por defecto
+// de POST. Verificado también contra la API real.
+test('login: cuenta activa + contraseña correcta → 201 con JWT', async () => {
   const repo = await fakeRepo(true);
   const app = await buildApp(repo, fakeAudit().service);
   try {
     const res = await request(app.getHttpServer())
       .post('/api/auth/login')
       .send({ email: EMAIL, password: PASSWORD })
-      .expect(200);
+      .expect(201);
     assert.equal(res.body.token.split('.').length, 3, 'debe ser un JWT');
     assert.equal(res.body.user.role, 'civil');
     assert.deepEqual(repo.touched, ['u-1'], 'debe registrar el último acceso');

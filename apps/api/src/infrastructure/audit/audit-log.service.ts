@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import type { Pool } from 'mysql2/promise';
+import type { Pool, RowDataPacket } from 'mysql2/promise';
 import { MYSQL_POOL } from '../database/database.tokens';
 
 export interface AuditEntry {
@@ -12,6 +12,19 @@ export interface AuditEntry {
   path: string | null;
   statusCode: number | null;
   detail?: Record<string, unknown>;
+}
+
+/** Un evento leído de la auditoría (para diagnóstico; solo los campos que interesan). */
+export interface AuditEventRow {
+  at: string;
+  eventType: string;
+  detail: Record<string, unknown> | null;
+}
+
+interface RawAuditRow extends RowDataPacket {
+  at: Date;
+  event_type: string;
+  detail: string | null;
 }
 
 function detailMaxBytes(): number {
@@ -58,5 +71,24 @@ export class AuditLogService {
     } catch (err) {
       this.logger.error(`No se pudo registrar evento de auditoría "${entry.eventType}": ${err instanceof Error ? err.message : err}`);
     }
+  }
+
+  /**
+   * Lee los últimos eventos de un tipo (para el diagnóstico de conexión del admin). Solo
+   * lectura; el `detail` se devuelve ya parseado. A diferencia de `record()`, esto SÍ puede
+   * lanzar: el llamador es un endpoint que debe fallar con 500 si la BD no responde, no
+   * tragarse el error en silencio.
+   */
+  async listByEventType(eventType: string, limit: number): Promise<AuditEventRow[]> {
+    const safeLimit = Math.min(Math.max(1, Math.trunc(limit)), 500);
+    const [rows] = await this.pool.query<RawAuditRow[]>(
+      `SELECT at, event_type, detail FROM audit_log WHERE event_type = ? ORDER BY id DESC LIMIT ?`,
+      [eventType, safeLimit],
+    );
+    return rows.map((r) => ({
+      at: new Date(r.at).toISOString(),
+      eventType: r.event_type,
+      detail: r.detail ? (JSON.parse(r.detail) as Record<string, unknown>) : null,
+    }));
   }
 }

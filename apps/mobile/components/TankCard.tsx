@@ -5,6 +5,9 @@ import Colors from '../constants/colors';
 
 interface Props {
   tank: TankView;
+  /** true = la planta está congelada (sin conexión con el PLC): el nivel mostrado es el último
+   *  conocido, no en vivo — se marca con su hora en vez de aparentar frescura. */
+  stale?: boolean;
 }
 
 function waterColor(pct: number): string {
@@ -13,7 +16,14 @@ function waterColor(pct: number): string {
   return '#81D4FA';
 }
 
-export function TankCard({ tank }: Props) {
+function horaDe(iso: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+export function TankCard({ tank, stale = false }: Props) {
   // percentage llega null hasta que la planta confirme la capacidad real del tanque;
   // en ese caso NO se dibuja % de llenado (sería inventado), solo nivel y volumen reales.
   const pct = tank.percentage !== null ? Math.min(100, Math.max(0, tank.percentage)) : null;
@@ -86,6 +96,11 @@ export function TankCard({ tank }: Props) {
         <InfoRow label="Llenado" value={pct !== null ? `${Math.round(pct)}%` : 'Por confirmar'} />
         {(tank.levelOpMin !== null || tank.levelOpMax !== null) && (
           <InfoRow label="Rango" value={levelRangeText(tank)} />
+        )}
+        {stale && hasLevel && (
+          <Text style={styles.staleNote}>
+            {horaDe(tank.ts) ? `última lectura ${horaDe(tank.ts)} · sin actualizar` : 'sin actualizar'}
+          </Text>
         )}
       </View>
     </View>
@@ -207,4 +222,5 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: Colors.textPrimary,
   },
+  staleNote: { fontSize: 10, color: Colors.textSecondary, fontStyle: 'italic', marginTop: 4 },
 });

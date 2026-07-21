@@ -1,0 +1,57 @@
+import type { BridgeStatus } from '../ports/connectivity-adapter.port';
+import type { LivenessDto, PlantSnapshotDto } from './plant-snapshot.dto';
+
+/**
+ * Vista MÍNIMA de una planta para el rol Civil: exactamente las dos preguntas que la matriz
+ * oficial le concede ("¿el sistema funciona?" y "¿hay agua disponible?"), y nada más.
+ *
+ * Es una whitelist deliberada, no un snapshot recortado: aquí NO viaja `signals`, así que el
+ * dispositivo del Civil nunca recibe caudales, presiones ni estados de válvula. Añadir campos
+ * a este DTO es una decisión de producto (¿puede el Civil ver esto?), no un detalle técnico.
+ */
+export interface PlantBasicStatusDto {
+  plantId: string;
+  displayName: string;
+  bridgeStatus: BridgeStatus;
+  liveness: LivenessDto;
+  /** null = la planta no tiene señales de tanque mapeadas (no se puede afirmar ni negar). */
+  waterAvailable: boolean | null;
+}
+
+/**
+ * Cota (m) bajo la cual un tanque se considera prácticamente vacío. Umbral operativo
+ * provisional: sin la capacidad real confirmada del tanque no se puede juzgar "nivel bajo"
+ * en porcentaje. Vivía en la pantalla del Civil; al derivarse el veredicto aquí, este es
+ * ahora su único lugar.
+ */
+const EMPTY_LEVEL_M = 0.2;
+
+/** Nivel de tanque PROPIO de la planta (`tank1Level`, `tank2Level`, …). Los tanques de otras
+ *  plantas retransmitidos usan claves con nombre propio (`sanAntonioTankLevel`), así que este
+ *  patrón los excluye por construcción: no deciden el agua de la planta portadora. */
+const OWN_TANK_LEVEL = /^tank\d+Level$/;
+
+/**
+ * Hay agua si TODOS los tanques propios con lectura numérica superan la cota de vacío.
+ * Sin lecturas de tanque devuelve null — el Civil verá "sin datos", nunca un falso "hay agua".
+ */
+function waterAvailability(snapshot: PlantSnapshotDto): boolean | null {
+  const levels = Object.entries(snapshot.signals)
+    .filter(([domainKey]) => OWN_TANK_LEVEL.test(domainKey))
+    .map(([, signal]) => signal.value)
+    .filter((value): value is number => typeof value === 'number');
+
+  if (levels.length === 0) return null;
+  return levels.every((levelM) => levelM > EMPTY_LEVEL_M);
+}
+
+/** Proyecta el snapshot de dominio a la vista básica. El snapshot completo NUNCA sale de aquí. */
+export function toBasicStatus(snapshot: PlantSnapshotDto): PlantBasicStatusDto {
+  return {
+    plantId: snapshot.plantId,
+    displayName: snapshot.displayName,
+    bridgeStatus: snapshot.bridgeStatus,
+    liveness: snapshot.liveness,
+    waterAvailable: waterAvailability(snapshot),
+  };
+}

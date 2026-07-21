@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
+import { useAuth } from './AuthContext';
 
 /** Las 12 plantas canónicas (slug = identidad única del sistema; ver opc_mapping.json). */
 export interface PlantOption {
@@ -21,21 +22,52 @@ export const PLANTS: PlantOption[] = [
   { id: 'quijote', name: 'El Quijote' },
 ];
 
-/** Montebello es la única con caudal real mapeado hoy → arranca seleccionada. */
+/** Planta mostrada antes de saber quién ha iniciado sesión (las pantallas viven tras el login). */
 const DEFAULT_PLANT = PLANTS.find((p) => p.id === 'montebello') ?? PLANTS[0];
+
+/**
+ * Planta del usuario. Si su slug no está en el catálogo, se devuelve tal cual en vez de caer a
+ * otra planta: es preferible mostrar un nombre feo (o un 404 honesto) que enseñarle en silencio
+ * los datos de una planta que no es la suya.
+ */
+function plantOf(plantSlug: string | undefined): PlantOption {
+  if (!plantSlug) return DEFAULT_PLANT;
+  return PLANTS.find((p) => p.id === plantSlug) ?? { id: plantSlug, name: plantSlug };
+}
 
 interface PlantContextType {
   selectedPlant: PlantOption;
   setSelectedPlant: (plant: PlantOption) => void;
+  /** true si el usuario puede cambiar de planta (permiso `view_all_plants`; hoy solo Admin). */
+  canSwitchPlant: boolean;
 }
 
 const PlantContext = createContext<PlantContextType | null>(null);
 
+/**
+ * La planta NO es una preferencia libre de la interfaz: es el ámbito de la cuenta. Cada usuario
+ * está vinculado a una planta (`user.plant`) y el backend rechaza con 403 cualquier otra, salvo
+ * que tenga `view_all_plants` (Admin). Aquí se refleja esa misma regla para que la interfaz no
+ * ofrezca algo que el servidor va a negar.
+ */
 export function PlantProvider({ children }: { children: React.ReactNode }) {
-  const [selectedPlant, setSelectedPlant] = useState<PlantOption>(DEFAULT_PLANT);
+  const { user, hasPermission } = useAuth();
+  const canSwitchPlant = hasPermission('view_all_plants');
+  const [selectedPlant, setSelectedPlant] = useState<PlantOption>(() => plantOf(user?.plant));
+
+  // Al iniciar/cambiar de sesión, la planta vuelve a la de la cuenta. Para quien no puede
+  // cambiarla, este es el único origen posible del valor.
+  useEffect(() => {
+    setSelectedPlant(plantOf(user?.plant));
+  }, [user?.plant]);
+
+  function selectPlant(plant: PlantOption) {
+    if (!canSwitchPlant) return; // el selector ni siquiera se muestra; esto es la red de seguridad
+    setSelectedPlant(plant);
+  }
 
   return (
-    <PlantContext.Provider value={{ selectedPlant, setSelectedPlant }}>
+    <PlantContext.Provider value={{ selectedPlant, setSelectedPlant: selectPlant, canSwitchPlant }}>
       {children}
     </PlantContext.Provider>
   );

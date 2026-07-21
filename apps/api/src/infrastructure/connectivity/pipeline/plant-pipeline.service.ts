@@ -68,10 +68,11 @@ export class PlantPipelineService implements OnModuleInit, OnModuleDestroy {
   /** Lista de plantas con su liveness actual (para GET /api/plants), incluso sin snapshot aún. */
   listPlants(): Array<{ plantId: string; displayName: string; liveness: ReturnType<LivenessTracker['get']>; bridgeStatus: string }> {
     const bridgeStatus = this.adapter.getBridgeStatus();
+    const healthy = bridgeStatus === 'Connected';
     return this.mapping.plants.map((p) => ({
       plantId: p.plantId,
       displayName: p.displayName,
-      liveness: this.liveness.get(p.plantId),
+      liveness: this.liveness.get(p.plantId, healthy),
       bridgeStatus,
     }));
   }
@@ -83,10 +84,21 @@ export class PlantPipelineService implements OnModuleInit, OnModuleDestroy {
     this.rebuildAndMaybeEmit(frame.plantId);
   }
 
+  /**
+   * ¿La sesión con el PLC está viva? Solo `Connected` lo garantiza: en `Connecting`/`Recovering`
+   * el puente aún no tiene (o perdió) la suscripción, y en `Stale`/`Disconnected`/`Faulted`
+   * directamente no hay fuente. Es lo que distingue una planta quieta (stable) de una planta
+   * que dejamos de ver (frozen).
+   */
+  private isSourceHealthy(): boolean {
+    return this.adapter.getBridgeStatus() === 'Connected';
+  }
+
   /** Re-evalúa liveness de todas las plantas conocidas; emite si el estado cambió. */
   private sweepLiveness(): void {
+    const healthy = this.isSourceHealthy();
     for (const p of this.mapping.plants) {
-      const state = this.liveness.get(p.plantId).state;
+      const state = this.liveness.get(p.plantId, healthy).state;
       if (state !== this.lastLivenessState.get(p.plantId)) {
         this.rebuildAndMaybeEmit(p.plantId);
       }
@@ -96,9 +108,9 @@ export class PlantPipelineService implements OnModuleInit, OnModuleDestroy {
   private rebuildAndMaybeEmit(plantId: string): void {
     const plant = this.mapping.plants.find((p) => p.plantId === plantId);
     if (!plant) return;
-    const liveness = this.liveness.get(plantId);
-    const extracted = this.engine.extract(plantId, this.ensureBuffers(plantId), this.deadLetter);
     const bridgeStatus = this.adapter.getBridgeStatus();
+    const liveness = this.liveness.get(plantId, bridgeStatus === 'Connected');
+    const extracted = this.engine.extract(plantId, this.ensureBuffers(plantId), this.deadLetter);
 
     const candidate = buildSnapshot({
       plantId,

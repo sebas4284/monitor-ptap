@@ -2,8 +2,16 @@ import { ScrollView, TouchableOpacity, Text, View } from 'react-native';
 import { usePlant, PLANTS } from '../context/PlantContext';
 import Colors from '../constants/colors';
 
+/**
+ * Selector de planta. Solo aparece para quien puede cambiar de planta (permiso
+ * `view_all_plants`, hoy solo Admin): un operador está vinculado a UNA planta, así que
+ * ofrecerle las demás sería enseñarle puertas que el backend cierra con 403. Las pantallas
+ * muestran el nombre de la planta en su propia cabecera, así que no se pierde información.
+ */
 export function PlantSelector() {
-  const { selectedPlant, setSelectedPlant } = usePlant();
+  const { selectedPlant, setSelectedPlant, canSwitchPlant } = usePlant();
+
+  if (!canSwitchPlant) return null;
 
   return (
     <View style={{ backgroundColor: Colors.bg, borderBottomWidth: 1, borderBottomColor: '#E5E7EB' }}>

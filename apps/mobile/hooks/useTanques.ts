@@ -13,6 +13,7 @@ export function useTanques() {
   const { selectedPlant } = usePlant();
   const query = useSnapshot(selectedPlant.id);
   const tanks: TankView[] = useMemo(() => tanksFromSnapshot(query.data), [query.data]);
-  const livenessState: LivenessState = query.data?.liveness.state ?? 'unknown';
+  // Sin snapshot todavía no hay fuente que respalde nada → 'frozen' (nunca aparentar frescura).
+  const livenessState: LivenessState = query.data?.liveness.state ?? 'frozen';
   return { ...query, tanks, livenessState };
 }

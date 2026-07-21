@@ -40,7 +40,11 @@ export function setOnUnauthorized(cb: (() => void) | null): void {
 
 // ── Contrato del DTO (espejo de PlantSnapshotDto del backend) ────────────────────
 
-export type LivenessState = 'live' | 'idle' | 'stale' | 'unknown';
+/**
+ * Frescura de datos (espejo del backend). `stable` = sesión sana con valores quietos, que es
+ * OPERACIÓN NORMAL; `frozen` = perdimos la fuente y el dato ya no es fiable.
+ */
+export type LivenessState = 'live' | 'stable' | 'frozen';
 export type Confidence = 'confirmed' | 'inferred' | 'estimated';
 export type OpcQuality = 'Good' | 'Bad' | 'Uncertain';
 export type UnusableReason = 'BAD_QUALITY' | 'INVALID_NUMBER' | 'BRIDGE_STALE';
@@ -79,6 +83,20 @@ export interface PlantSnapshotDto {
   liveness: LivenessDto;
   signals: Record<string, SignalDto>;
   pending?: boolean;
+}
+
+/**
+ * Vista MÍNIMA de la planta para el rol Civil (espejo de PlantBasicStatusDto del backend).
+ * No trae `signals` a propósito: la matriz oficial solo concede al Civil "¿el sistema
+ * funciona?" y "¿hay agua?", así que los datos detallados ni siquiera llegan al dispositivo.
+ */
+export interface PlantBasicStatusDto {
+  plantId: string;
+  displayName: string;
+  bridgeStatus: string;
+  liveness: LivenessDto;
+  /** null = la planta no tiene señales de tanque mapeadas. */
+  waterAvailable: boolean | null;
 }
 
 export interface PlantListItem {
@@ -144,7 +162,31 @@ export async function fetchPlants(): Promise<PlantListItem[]> {
   return body.plants;
 }
 
-/** Snapshot de dominio de una planta desde cache RAM (GET /api/plants/:id/snapshot). */
+/**
+ * Snapshot de dominio DETALLADO (GET /api/plants/:id/snapshot). Exige el permiso
+ * `view_dashboard`: con un token de rol Civil el backend responde 403 — usa fetchBasicStatus.
+ */
 export async function fetchSnapshot(plantId: string): Promise<PlantSnapshotDto> {
   return getJson<PlantSnapshotDto>(`/api/plants/${plantId}/snapshot`);
+}
+
+/** Estado básico de una planta (GET /api/plants/:id/status). Permiso: `view_basic_status`. */
+export async function fetchBasicStatus(plantId: string): Promise<PlantBasicStatusDto> {
+  return getJson<PlantBasicStatusDto>(`/api/plants/${plantId}/status`);
+}
+
+/**
+ * Un evento de conexión del puente (GET /api/diagnostics/connection-events, solo admin).
+ * `detail` es lo que grabó ConnectionEventsSubscriber: `{ status, reason }`.
+ */
+export interface ConnectionEvent {
+  at: string;
+  eventType: string;
+  detail: { status?: string; reason?: string } | null;
+}
+
+/** Historial de transiciones del puente para el diagnóstico del admin. Requiere `system_config`. */
+export async function fetchConnectionEvents(): Promise<ConnectionEvent[]> {
+  const body = await getJson<{ events: ConnectionEvent[] }>('/api/diagnostics/connection-events');
+  return body.events;
 }

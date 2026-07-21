@@ -180,8 +180,18 @@ test('write-service: interlock bridge != Connected → rechazado, sin escribir',
   assert.equal(adapter.writes.length, 0);
 });
 
-test('write-service: interlock snapshot no fresco (stale) → rechazado', async () => {
-  const { service, adapter } = build({ secure: true, bridge: 'Connected', snapshot: snap('stale') });
+// El interlock sigue exigiendo `live`: para accionar equipo no basta con que la sesión esté
+// viva, hay que estar VIENDO moverse el dato. `stable` y `frozen` bloquean por igual — misma
+// postura de seguridad que antes (cuando bloqueaban idle/stale/unknown).
+test('write-service: interlock snapshot congelado → rechazado', async () => {
+  const { service, adapter } = build({ secure: true, bridge: 'Connected', snapshot: snap('frozen') });
+  const r = await service.execute('voragine', { command: 'openValve', target: 'valveEV01' }, OPERADOR);
+  assert.ok(r.reason?.startsWith(REJECT.INTERLOCK_FAILED));
+  assert.equal(adapter.writes.length, 0);
+});
+
+test('write-service: interlock snapshot estable (sin movimiento) → rechazado', async () => {
+  const { service, adapter } = build({ secure: true, bridge: 'Connected', snapshot: snap('stable') });
   const r = await service.execute('voragine', { command: 'openValve', target: 'valveEV01' }, OPERADOR);
   assert.ok(r.reason?.startsWith(REJECT.INTERLOCK_FAILED));
   assert.equal(adapter.writes.length, 0);

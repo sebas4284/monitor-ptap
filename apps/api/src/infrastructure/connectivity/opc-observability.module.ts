@@ -7,6 +7,7 @@ import { StructuredEventsSubscriber } from '../logging/structured-events.subscri
 import { MetricsModule } from '../metrics/metrics.module';
 import { OpcMetricsSubscriber } from '../metrics/opc-metrics.subscriber';
 import { ConnectivityModule } from './connectivity.module';
+import { DiagnosticsController } from './diagnostics.controller';
 import { OpcController } from './opc.controller';
 
 /**
@@ -17,7 +18,7 @@ import { OpcController } from './opc.controller';
  */
 @Module({
   imports: [ConnectivityModule, AuthModule, AuditModule, MetricsModule, LoggingModule],
-  controllers: [OpcController],
+  controllers: [OpcController, DiagnosticsController],
   providers: [ConnectionEventsSubscriber, OpcMetricsSubscriber, StructuredEventsSubscriber],
 })
 export class OpcObservabilityModule {}

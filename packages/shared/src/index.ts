@@ -1,7 +1,14 @@
 export type Role = 'civil' | 'operador' | 'jefe' | 'admin';
 
 export type Permission =
+  /** Estado básico de la planta: "¿opera?" y "¿hay agua?". Lo tienen TODOS los roles —
+   *  es lo único que la matriz oficial concede al Civil. */
+  | 'view_basic_status'
   | 'view_dashboard'
+  /** Consultar plantas DISTINTAS a la del propio usuario. Cada cuenta está vinculada a una
+   *  planta (`user.plant`); sin este permiso, pedir otra devuelve 403. Solo el Admin, que por
+   *  la matriz oficial tiene control total, supervisa las 12. */
+  | 'view_all_plants'
   | 'control_valves'
   | 'acknowledge_alarms'
   | 'adjust_setpoints'
@@ -37,6 +44,36 @@ export interface UserSummary {
 }
 
 export type ConnectionStatus = 'connected' | 'disconnected' | 'mock';
+
+/**
+ * De dónde viene un corte de datos, en el lenguaje del producto (no de OPC UA):
+ *   ok            → todo fluye.
+ *   ip            → el DISPOSITIVO no alcanza al servidor (su propia red/internet). Lo detecta
+ *                   el cliente cuando la petición falla, no el backend.
+ *   route         → el SERVIDOR no alcanza al PLC (la ruta de red intermedia: VPN, firewall,
+ *                   IP cambiada). Es un problema de infraestructura que solo el admin debe ver
+ *                   y escalar; a un operador no le aporta y lo alarmaría en vano.
+ *   master_no_data→ el servidor SÍ tuvo sesión con el PLC pero el maestro dejó de enviar datos.
+ */
+export type ConnectionFault = 'ok' | 'ip' | 'route' | 'master_no_data';
+
+/**
+ * Clasifica un corte a partir del estado del puente. NO cubre 'ip': esa se decide en el
+ * cliente (si la API responde, no es un problema de IP del usuario), así que esta función
+ * asume que el backend fue alcanzable.
+ *
+ * - `Connected`  → 'ok': hay sesión y datos.
+ * - `Stale`      → 'master_no_data': hubo sesión y el dato paró → el maestro dejó de enviar.
+ * - resto (`Connecting`/`Disconnected`/`Recovering`/`Faulted`) → 'route': no se pudo
+ *   establecer o sostener la sesión con el PLC. `Faulted` se incluye a propósito: es un fallo
+ *   técnico (p. ej. namespace que ya no resuelve) que el admin debe escalar, no algo que deba
+ *   alarmar a un operador.
+ */
+export function classifyBridge(bridgeStatus: string): Exclude<ConnectionFault, 'ip'> {
+  if (bridgeStatus === 'Connected') return 'ok';
+  if (bridgeStatus === 'Stale') return 'master_no_data';
+  return 'route';
+}
 
 export interface Sensor {
   id: string;
@@ -83,8 +120,11 @@ export interface PlantDefinition {
 export const ROLES: Role[] = ['civil', 'operador', 'jefe', 'admin'];
 
 const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
-  civil: [],
+  // El Civil solo observa el estado básico: es exactamente lo que la matriz oficial le
+  // concede ("ver si el sistema funciona" y "ver si hay agua"), y nada más.
+  civil: ['view_basic_status'],
   operador: [
+    'view_basic_status',
     'view_dashboard',
     'control_valves',
     'acknowledge_alarms',
@@ -92,13 +132,16 @@ const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'view_event_logs',
   ],
   jefe: [
+    'view_basic_status',
     'view_dashboard',
     'acknowledge_alarms',
     'adjust_setpoints',
     'view_event_logs',
   ],
   admin: [
+    'view_basic_status',
     'view_dashboard',
+    'view_all_plants',
     'control_valves',
     'acknowledge_alarms',
     'adjust_setpoints',
@@ -117,7 +160,9 @@ export function hasPermission(role: Role, permission: Permission): boolean {
 
 /** Todos los permisos, en el orden de la matriz oficial (para renderizarla en la UI). */
 export const PERMISSIONS: Permission[] = [
+  'view_basic_status',
   'view_dashboard',
+  'view_all_plants',
   'acknowledge_alarms',
   'adjust_setpoints',
   'view_event_logs',
@@ -131,7 +176,9 @@ export const PERMISSIONS: Permission[] = [
 
 /** Texto de cada permiso, tal como aparece en la matriz oficial del cronograma. */
 export const PERMISSION_LABELS: Record<Permission, string> = {
+  view_basic_status: 'Ver si el sistema funciona y si hay agua disponible',
   view_dashboard: 'Ver el panel principal y los datos en tiempo real',
+  view_all_plants: 'Consultar todas las plantas, no solo la propia',
   acknowledge_alarms: 'Reconocer y silenciar alarmas activas',
   adjust_setpoints: 'Ajustar parámetros o setpoints de operación',
   view_event_logs: 'Ver los registros de eventos del sistema',

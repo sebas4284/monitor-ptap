@@ -5,7 +5,6 @@ import { useElectrovalvulas } from '../../hooks/useElectrovalvulas';
 import { usePlant } from '../../context/PlantContext';
 import { useAuth } from '../../context/AuthContext';
 import { ValveItem } from '../../components/ValveItem';
-import { LiveBadge } from '../../components/LiveBadge';
 import { PlantSelector } from '../../components/PlantSelector';
 import Colors from '../../constants/colors';
 
@@ -72,7 +71,10 @@ export default function ElectrovalvulasScreen() {
         )}
       </ScrollView>
 
-      <LiveBadge state="unknown" />
+      {/* Sin badge de frescura a propósito: las válvulas son todavía datos de ejemplo
+          (services/mock-data.ts). Cualquier etiqueta aquí mentiría — "EN VIVO" sobre datos
+          inventados, o "SIN CONEXIÓN" cuando el enlace no tiene nada que ver. Vuelve cuando
+          la pantalla consuma el canal real de comandos. */}
     </SafeAreaView>
   );
 }

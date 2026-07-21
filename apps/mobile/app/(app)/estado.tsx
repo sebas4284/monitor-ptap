@@ -1,35 +1,64 @@
 import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useSnapshot } from '../../hooks/useSnapshot';
-import { tanksFromSnapshot } from '../../services/tanks';
+import { useBasicStatus } from '../../hooks/useBasicStatus';
 import { PLANTS } from '../../context/PlantContext';
 import { useAuth } from '../../context/AuthContext';
 import Colors from '../../constants/colors';
+import type { LivenessState } from '../../services/api';
 
-// Bajo esta cota (m) un tanque se considera prácticamente vacío. Umbral operativo
-// provisional: sin la capacidad real del tanque no se puede juzgar "nivel bajo" en %.
-const EMPTY_LEVEL_M = 0.2;
+/**
+ * Veredicto de "¿el sistema está funcionando?" para la vista Civil — la única pregunta que
+ * el Civil necesita responder según la matriz oficial. Combina el estado del PUENTE con la
+ * FRESCURA de datos (liveness), porque un puente Connected que ya no recibe datos no está
+ * realmente "operativo": está congelado. La paleta es la misma que LiveBadge (coherencia).
+ *
+ * `bridgeStatus` llega como string en el DTO del móvil; el `default` cubre cualquier valor
+ * inesperado sin romper la pantalla.
+ */
+function systemHealth(
+  bridgeStatus: string | undefined,
+  liveness: LivenessState,
+): { icon: keyof typeof Ionicons.glyphMap; color: string; title: string; desc: string } {
+  // `frozen` manda sobre todo: si perdimos la fuente, da igual lo que diga el resto.
+  if (liveness === 'frozen') {
+    return { icon: 'close-circle', color: Colors.danger, title: 'Sin conexión con la planta', desc: 'No se están recibiendo datos en este momento. Reintentando automáticamente.' };
+  }
+
+  switch (bridgeStatus) {
+    // Con la sesión sana, `live` y `stable` son AMBOS funcionamiento normal: una planta en
+    // régimen estable (tanque a nivel constante) no es una avería y no debe alarmar al Civil.
+    case 'Connected':
+      return { icon: 'checkmark-circle', color: Colors.success, title: 'Sistema operativo', desc: 'La planta está en funcionamiento y enviando datos.' };
+    case 'Recovering':
+    case 'Stale':
+    case 'Connecting':
+      return { icon: 'alert-circle', color: Colors.warning, title: 'Sistema con intermitencias', desc: 'La conexión con la planta es inestable en este momento.' };
+    case 'Disconnected':
+    case 'Faulted':
+      return { icon: 'close-circle', color: Colors.danger, title: 'Sistema fuera de línea', desc: 'No hay conexión con la planta en este momento.' };
+    default:
+      return { icon: 'help-circle-outline', color: Colors.neutral, title: 'Estado no disponible', desc: 'Aún no se reciben datos de la planta.' };
+  }
+}
 
 export default function EstadoScreen() {
   const { user } = useAuth();
   const plantId = user?.plant ?? 'montebello';
   const plantName = PLANTS.find((p) => p.id === plantId)?.name ?? plantId;
 
-  const { data: snapshot } = useSnapshot(plantId);
-  const tanks = tanksFromSnapshot(snapshot);
-  // Los tanques externos (de otras plantas, retransmitidos) no deciden el agua de esta.
-  const withLevel = tanks.filter((t) => !t.external && t.levelM !== null);
+  // Estado BÁSICO (no el snapshot detallado): la matriz oficial concede al Civil solo
+  // "¿el sistema funciona?" y "¿hay agua?". El veredicto del agua lo deriva el backend, que
+  // es quien tiene las lecturas de tanque — aquí nunca llegan valores crudos del PLC.
+  const { data: status } = useBasicStatus(plantId);
+  const system = systemHealth(status?.bridgeStatus, status?.liveness.state ?? 'frozen');
 
-  const hasData = withLevel.length > 0;
-  const waterOk = hasData && withLevel.every((t) => t.levelM! > EMPTY_LEVEL_M);
-  const levelsDesc = withLevel.map((t) => `${t.name}: ${t.levelM!.toFixed(1)} m`).join(' · ');
-
-  const water = hasData
-    ? waterOk
-      ? { icon: 'water' as const, color: Colors.primaryLight, title: 'Agua disponible', desc: levelsDesc }
-      : { icon: 'water-outline' as const, color: Colors.warning, title: 'Nivel bajo de agua', desc: levelsDesc }
-    : { icon: 'help-circle-outline' as const, color: Colors.neutral, title: 'Sin datos de tanques', desc: 'Esta planta aún no tiene señales de tanque mapeadas.' };
+  const water =
+    status?.waterAvailable === true
+      ? { icon: 'water' as const, color: Colors.primaryLight, title: 'Agua disponible', desc: 'Los tanques de la planta tienen nivel suficiente.' }
+      : status?.waterAvailable === false
+        ? { icon: 'water-outline' as const, color: Colors.warning, title: 'Nivel bajo de agua', desc: 'Los tanques están por debajo del nivel mínimo.' }
+        : { icon: 'help-circle-outline' as const, color: Colors.neutral, title: 'Sin datos de tanques', desc: 'Esta planta aún no tiene señales de tanque mapeadas.' };
 
   return (
     <SafeAreaView style={styles.safe} edges={['bottom']}>
@@ -38,11 +67,11 @@ export default function EstadoScreen() {
         <Text style={styles.subheading}>{plantName}</Text>
 
         <View style={styles.card}>
-          <View style={[styles.iconCircle, { backgroundColor: Colors.success + '20' }]}>
-            <Ionicons name="checkmark-circle" size={52} color={Colors.success} />
+          <View style={[styles.iconCircle, { backgroundColor: system.color + '20' }]}>
+            <Ionicons name={system.icon} size={52} color={system.color} />
           </View>
-          <Text style={styles.statusTitle}>Sistema operativo</Text>
-          <Text style={styles.statusDesc}>La planta se encuentra en funcionamiento normal</Text>
+          <Text style={styles.statusTitle}>{system.title}</Text>
+          <Text style={styles.statusDesc}>{system.desc}</Text>
         </View>
 
         <View style={styles.card}>

@@ -6,6 +6,7 @@ import { usePlant } from '../../context/PlantContext';
 import { SignalCard } from '../../components/SignalCard';
 import { LiveBadge } from '../../components/LiveBadge';
 import { PlantSelector } from '../../components/PlantSelector';
+import { ConnectionBanner } from '../../components/ConnectionBanner';
 import Colors from '../../constants/colors';
 import type { SignalDto } from '../../services/api';
 import { isTankSignal } from '../../services/tanks';
@@ -33,7 +34,7 @@ const ICONS: Record<string, string> = {
 
 export default function SensoresScreen() {
   const { selectedPlant } = usePlant();
-  const { data: snapshot, isLoading, refetch, isRefetching } = useSnapshot(selectedPlant.id);
+  const { data: snapshot, isLoading, isError, refetch, isRefetching } = useSnapshot(selectedPlant.id);
   const time = useTime();
 
   const timeStr = time.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -41,11 +42,12 @@ export default function SensoresScreen() {
   const signals: [string, SignalDto][] = snapshot
     ? Object.entries(snapshot.signals).filter(([domainKey]) => !isTankSignal(domainKey))
     : [];
-  const livenessState = snapshot?.liveness.state ?? 'unknown';
+  const livenessState = snapshot?.liveness.state ?? 'frozen';
 
   return (
     <SafeAreaView style={styles.safe} edges={['bottom']}>
       <PlantSelector />
+      <ConnectionBanner apiReachable={!isError} bridgeStatus={snapshot?.bridgeStatus} />
 
       <ScrollView
         contentContainerStyle={styles.content}
@@ -68,13 +70,18 @@ export default function SensoresScreen() {
         ) : signals.length === 0 ? (
           <View style={styles.info}>
             <Text style={styles.infoText}>Esta planta no tiene señales mapeadas todavía.</Text>
-            <Text style={styles.infoSub}>Sin export L5X, solo Montebello expone caudal (inferido).</Text>
+            <Text style={styles.infoSub}>San Antonio y El Quijote son sitios mínimos: sus tanques llegan retransmitidos en el buffer de Soledad.</Text>
           </View>
         ) : (
           <View style={styles.grid}>
             {signals.map(([domainKey, signal]) => (
               <View key={domainKey} style={styles.cell}>
-                <SignalCard signal={signal} name={domainKey} icon={ICONS[domainKey] ?? 'analytics-outline'} />
+                <SignalCard
+                  signal={signal}
+                  name={domainKey}
+                  icon={ICONS[domainKey] ?? 'analytics-outline'}
+                  stale={livenessState === 'frozen'}
+                />
               </View>
             ))}
           </View>

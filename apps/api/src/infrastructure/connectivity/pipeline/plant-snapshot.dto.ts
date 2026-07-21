@@ -6,8 +6,20 @@ import type { BridgeStatus, OpcQuality } from '../ports/connectivity-adapter.por
  * El frontend NUNCA recibe arrays crudos (regla 4): solo estas señales de dominio.
  */
 
-/** Liveness por frescura de datos (4 estados; `unknown` es obligatorio, regla de honestidad). */
-export type LivenessState = 'live' | 'idle' | 'stale' | 'unknown';
+/**
+ * Frescura de datos de la planta. TRES estados, y la diferencia entre los dos últimos es la
+ * salud de la SESIÓN, no el reloj:
+ *   live    → llegó un cambio de valor hace poco.
+ *   stable  → la sesión está sana pero los valores no se mueven. Es NORMAL: un tanque a nivel
+ *             constante o una presión sostenida no son una avería. Sus datos son VÁLIDOS.
+ *   frozen  → perdimos la fuente (puente caído/reconectando). No sabemos qué pasa en la planta,
+ *             así que los datos dejan de ser fiables.
+ *
+ * Antes había 4 estados y `stale` se decidía solo por tiempo sin cambios: una planta operando
+ * en régimen estable se marcaba congelada Y sus señales se invalidaban. El heartbeat del puente
+ * es lo que permite distinguir "no se mueve" de "no llega".
+ */
+export type LivenessState = 'live' | 'stable' | 'frozen';
 
 /** Razón por la que una señal no es usable (QualityService). */
 export type UnusableReason = 'BAD_QUALITY' | 'INVALID_NUMBER' | 'BRIDGE_STALE';

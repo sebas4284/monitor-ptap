@@ -3,10 +3,15 @@ import { Ionicons } from '@expo/vector-icons';
 import Colors from '../constants/colors';
 import type { SignalDto, UnusableReason } from '../services/api';
 
+/**
+ * Por qué no hay número, dicho para un operador y no para un integrador. "calidad OPC no buena"
+ * sonaba a fallo del programa cuando casi siempre significa que el PLC no está entregando el
+ * dato; el banner de la pantalla da el contexto de conexión.
+ */
 const REASON_TEXT: Record<UnusableReason, string> = {
-  BAD_QUALITY: 'calidad OPC no buena',
-  INVALID_NUMBER: 'valor inválido',
-  BRIDGE_STALE: 'sin datos frescos',
+  BAD_QUALITY: 'el PLC no está entregando esta lectura',
+  INVALID_NUMBER: 'el PLC entregó un valor inválido',
+  BRIDGE_STALE: 'sin conexión con el PLC',
 };
 
 /**
@@ -19,10 +24,33 @@ const REASON_TEXT: Record<UnusableReason, string> = {
  * (congelado, fuera de escala, etc.) es del frontend en diálogo con el cliente, no de
  * esta capa. "sin dato" solo cuando literalmente no hay número (value null).
  */
-export function SignalCard({ signal, name, icon }: { signal: SignalDto; name: string; icon: string }) {
+function horaDe(iso: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+/**
+ * `stale` = la planta está congelada (sin conexión con el PLC). Con `stale`, si HAY un último
+ * valor se muestra atenuado y con su hora ("última lectura HH:MM") en vez de vaciarse: el dato
+ * viejo sigue siendo útil mientras no engañe sobre su frescura. Sin valor previo → "sin dato".
+ */
+export function SignalCard({
+  signal,
+  name,
+  icon,
+  stale = false,
+}: {
+  signal: SignalDto;
+  name: string;
+  icon: string;
+  stale?: boolean;
+}) {
   const isInferred = signal.confidence !== 'confirmed';
   const numeric = typeof signal.value === 'number';
   const hasRange = typeof signal.opMin === 'number' || typeof signal.opMax === 'number';
+  const lastSeen = stale && numeric ? horaDe(signal.ts) : null;
 
   return (
     <View style={styles.card}>
@@ -39,10 +67,17 @@ export function SignalCard({ signal, name, icon }: { signal: SignalDto; name: st
       </View>
 
       {numeric ? (
-        <Text style={styles.value}>
-          {(signal.value as number).toFixed(2)}
-          <Text style={styles.unit}> {signal.unit ?? ''}</Text>
-        </Text>
+        <>
+          <Text style={[styles.value, stale && styles.valueStale]}>
+            {(signal.value as number).toFixed(2)}
+            <Text style={styles.unit}> {signal.unit ?? ''}</Text>
+          </Text>
+          {stale && (
+            <Text style={styles.staleNote}>
+              {lastSeen ? `última lectura ${lastSeen} · sin actualizar` : 'sin actualizar'}
+            </Text>
+          )}
+        </>
       ) : (
         <View style={styles.noData}>
           <Text style={styles.noDataValue}>sin dato</Text>
@@ -102,6 +137,9 @@ const styles = StyleSheet.create({
   inferredText: { fontSize: 9, fontWeight: '700', color: Colors.warning, letterSpacing: 0.5 },
   value: { fontSize: 28, fontWeight: '800', color: Colors.primary, marginBottom: 6 },
   valueWarning: { color: Colors.warning },
+  // Dato viejo: atenuado, para que se lea como "última lectura conocida", no como valor en vivo.
+  valueStale: { color: Colors.textSecondary, marginBottom: 2 },
+  staleNote: { fontSize: 11, color: Colors.textSecondary, fontStyle: 'italic', marginBottom: 6 },
   unit: { fontSize: 14, fontWeight: '400', color: Colors.textSecondary },
   rangeRow: { flexDirection: 'row', gap: 16, marginBottom: 4 },
   rangeText: { fontSize: 12, fontWeight: '600', color: Colors.textSecondary },

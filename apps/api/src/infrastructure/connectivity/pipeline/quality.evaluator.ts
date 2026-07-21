@@ -40,7 +40,10 @@ export function evaluateQuality(input: QualityInput): QualityVerdict {
     if (input.max !== null && input.value > input.max) outOfRange = true;
   }
 
-  if (input.livenessState === 'stale' || input.livenessState === 'unknown') {
+  // Solo `frozen` invalida: ahí perdimos la sesión y el valor ya no está respaldado por nadie.
+  // `stable` (sesión sana, proceso quieto) es operación NORMAL y su dato es plenamente válido —
+  // invalidarlo hacía desaparecer las lecturas de una planta que estaba funcionando bien.
+  if (input.livenessState === 'frozen') {
     return { usable: false, reason: 'BRIDGE_STALE', outOfRange };
   }
 

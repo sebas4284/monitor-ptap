@@ -11,6 +11,7 @@ import {
 } from '@ptap/shared';
 import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../services/api';
+import { ConnectionDiagnostics } from '../../components/ConnectionDiagnostics';
 import Colors from '../../constants/colors';
 
 /**
@@ -119,6 +120,14 @@ export default function AjustesScreen() {
               </View>
               <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
             </TouchableOpacity>
+          </>
+        )}
+
+        {/* ── Diagnóstico de conexión (solo admin: `system_config`) ── */}
+        {hasPermission('system_config') && (
+          <>
+            <Text style={styles.sectionTitle}>Estado de conexión con el PLC</Text>
+            <ConnectionDiagnostics />
           </>
         )}
 

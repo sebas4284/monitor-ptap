@@ -4,16 +4,16 @@ import type { LivenessState } from '../services/api';
 
 const LIVENESS: Record<LivenessState, { color: string; label: string }> = {
   live: { color: Colors.success, label: 'EN VIVO' },
-  idle: { color: Colors.warning, label: 'SIN CAMBIOS RECIENTES' },
-  stale: { color: Colors.danger, label: 'DATOS CONGELADOS' },
-  unknown: { color: Colors.neutral, label: 'SIN HISTORIAL' },
+  stable: { color: Colors.primaryLight, label: 'ESTABLE' },
+  frozen: { color: Colors.danger, label: 'CONGELADO · SIN CONEXIÓN' },
 };
 
 /**
- * Badge de liveness REAL (ya no cosmético). El color y el texto reflejan el estado de
- * frescura de datos de la planta: verde=datos frescos, ámbar=sin cambios recientes,
- * rojo=congelado, gris=todavía no sabemos. Un verde significa datos frescos, no que el
- * componente exista.
+ * Badge de frescura REAL (ya no cosmético). Tres estados y solo UNO es una alarma:
+ *   verde  EN VIVO   → los valores se están moviendo.
+ *   azul   ESTABLE   → la sesión está sana y el proceso quieto. Normal, NO es un fallo:
+ *                      un tanque a nivel constante se ve así durante horas.
+ *   rojo   CONGELADO → perdimos la conexión con el PLC; lo que se muestre ya no es fiable.
  */
 export function LiveBadge({ state }: { state: LivenessState }) {
   const { color, label } = LIVENESS[state];

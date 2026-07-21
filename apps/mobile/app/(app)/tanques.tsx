@@ -6,6 +6,7 @@ import { usePlant } from '../../context/PlantContext';
 import { TankCard } from '../../components/TankCard';
 import { LiveBadge } from '../../components/LiveBadge';
 import { PlantSelector } from '../../components/PlantSelector';
+import { ConnectionBanner } from '../../components/ConnectionBanner';
 import Colors from '../../constants/colors';
 import type { TankView } from '../../services/tanks';
 
@@ -17,12 +18,13 @@ function chunkPairs(tanks: TankView[]): TankView[][] {
 }
 
 export default function TanquesScreen() {
-  const { tanks, isLoading, refetch, isRefetching, livenessState } = useTanques();
+  const { tanks, isLoading, isError, data, refetch, isRefetching, livenessState } = useTanques();
   const { selectedPlant } = usePlant();
 
   return (
     <SafeAreaView style={styles.safe} edges={['bottom']}>
       <PlantSelector />
+      <ConnectionBanner apiReachable={!isError} bridgeStatus={data?.bridgeStatus} />
 
       <ScrollView
         contentContainerStyle={styles.content}
@@ -56,7 +58,7 @@ export default function TanquesScreen() {
         ) : (
           chunkPairs(tanks).map((row) => (
             <View key={row[0].id} style={styles.row}>
-              {row.map((t) => <TankCard key={t.id} tank={t} />)}
+              {row.map((t) => <TankCard key={t.id} tank={t} stale={livenessState === 'frozen'} />)}
               {row.length === 1 && <View style={styles.cellFiller} />}
             </View>
           ))
