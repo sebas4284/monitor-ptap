@@ -151,15 +151,12 @@ export default function AppLayout() {
         }}
       >
         <Tabs.Screen
-          name="sensores"
+          name="tablero"
           options={{
             ...HEADER_OPTS,
-            tabBarLabel: 'Sensores',
+            tabBarLabel: 'Tablero',
             tabBarIcon: ({ color, size, focused }) => (
-              <View>
-                <Ionicons name={focused ? 'pulse' : 'pulse-outline'} size={size} color={color} />
-                <TabBadge count={1} />
-              </View>
+              <Ionicons name={focused ? 'grid' : 'grid-outline'} size={size} color={color} />
             ),
           }}
         />
@@ -173,16 +170,6 @@ export default function AppLayout() {
                 <Ionicons name={focused ? 'toggle' : 'toggle-outline'} size={size} color={color} />
                 <TabBadge count={2} />
               </View>
-            ),
-          }}
-        />
-        <Tabs.Screen
-          name="tanques"
-          options={{
-            ...HEADER_OPTS,
-            tabBarLabel: 'Tanques',
-            tabBarIcon: ({ color, size, focused }) => (
-              <Ionicons name={focused ? 'water' : 'water-outline'} size={size} color={color} />
             ),
           }}
         />
