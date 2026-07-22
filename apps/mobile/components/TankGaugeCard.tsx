@@ -8,7 +8,7 @@ interface Props {
 }
 
 function waterColor(pct: number): string {
-  if (pct >= 70) return Colors.success;
+  if (pct > 70) return Colors.success;
   if (pct >= 25) return Colors.warning;
   return Colors.danger;
 }
