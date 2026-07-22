@@ -73,7 +73,7 @@ export default function TableroScreen() {
         ) : !hasContent ? (
           <View style={styles.info}>
             <Text style={styles.infoText}>Esta planta no tiene señales mapeadas todavía.</Text>
-            <Text style={styles.infoSub}>Sin export L5X, solo Montebello expone caudal (inferido).</Text>
+            <Text style={styles.infoSub}>Sin export L5X, solo Montebello expone caudal.</Text>
           </View>
         ) : (
           <>

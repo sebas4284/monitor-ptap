@@ -5,6 +5,8 @@ import { cardKindFor, directionFor } from './signal-kind';
 test('cardKindFor: caudal (Flow) usa la tarjeta flow', () => {
   assert.equal(cardKindFor('inletFlow1'), 'flow');
   assert.equal(cardKindFor('outletFlow2'), 'flow');
+  // Case-insensitivity: FLOW in any case should match
+  assert.equal(cardKindFor('someFLOWkey'), 'flow');
 });
 
 test('cardKindFor: todo lo que no es caudal usa gauge', () => {

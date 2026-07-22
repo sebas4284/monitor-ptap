@@ -38,7 +38,7 @@ interface ExternalTankDef {
 /**
  * Tanques de OTRAS plantas retransmitidos en el buffer de la planta portadora (Soledad
  * concentra los sitios mínimos; pendiente de rectificar con el operador — ver notas de
- * opc_mapping.json). Se muestran en la pantalla Tanques de la portadora con nombre
+ * opc_mapping.json). Se muestran en el tablero de la portadora con nombre
  * explícito y NO participan del estado de agua de esa planta (external: true).
  */
 const EXTERNAL_TANKS: Record<string, ExternalTankDef[]> = {
@@ -49,8 +49,8 @@ const EXTERNAL_TANKS: Record<string, ExternalTankDef[]> = {
 };
 
 /**
- * true si el domainKey lo consume la pantalla Tanques (tanque propio tank<N>Level/Volume
- * o tanque externo declarado). La pantalla Sensores usa esto para NO duplicar la señal.
+ * true si el domainKey lo consume el tablero (tanque propio tank<N>Level/Volume
+ * o tanque externo declarado). El tablero usa esto para NO duplicar la señal.
  */
 export function isTankSignal(domainKey: string): boolean {
   if (OWN_TANK_KEY.test(domainKey)) return true;
