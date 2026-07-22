@@ -6,7 +6,7 @@ export function PlantSelector() {
   const { selectedPlant, setSelectedPlant } = usePlant();
 
   return (
-    <View style={{ backgroundColor: Colors.bg, borderBottomWidth: 1, borderBottomColor: '#E5E7EB' }}>
+    <View style={{ backgroundColor: Colors.bg, borderBottomWidth: 1, borderBottomColor: Colors.divider }}>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}

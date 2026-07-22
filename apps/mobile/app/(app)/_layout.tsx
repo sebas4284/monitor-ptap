@@ -143,7 +143,7 @@ export default function AppLayout() {
             ? { display: 'none' }
             : {
                 backgroundColor: Colors.bg,
-                borderTopColor: '#E5E7EB',
+                borderTopColor: Colors.divider,
                 elevation: 0,
                 shadowOpacity: 0,
               },
@@ -305,7 +305,7 @@ const styles = StyleSheet.create({
   },
   drawerDivider: {
     height: 1,
-    backgroundColor: '#E5E7EB',
+    backgroundColor: Colors.divider,
     marginHorizontal: 20,
     marginVertical: 8,
   },
