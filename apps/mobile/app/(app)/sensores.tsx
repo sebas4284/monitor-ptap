@@ -68,9 +68,21 @@ export default function SensoresScreen() {
             <Text style={styles.infoText}>Cargando señales…</Text>
           </View>
         ) : signals.length === 0 ? (
+          // Dos vacíos DISTINTOS: sin conexión y sin respaldo local aún (pending), o una planta
+          // que de verdad no tiene señales en el mapping. Antes ambos decían "no mapeada" y
+          // durante un corte eso desinformaba.
           <View style={styles.info}>
-            <Text style={styles.infoText}>Esta planta no tiene señales mapeadas todavía.</Text>
-            <Text style={styles.infoSub}>San Antonio y El Quijote son sitios mínimos: sus tanques llegan retransmitidos en el buffer de Soledad.</Text>
+            {snapshot?.pending ? (
+              <>
+                <Text style={styles.infoText}>Sin datos del PLC por ahora (sin conexión con la planta).</Text>
+                <Text style={styles.infoSub}>Cuando lleguen lecturas, este dispositivo recordará las últimas y las mostrará aunque la conexión vuelva a caerse.</Text>
+              </>
+            ) : (
+              <>
+                <Text style={styles.infoText}>Esta planta no tiene señales mapeadas todavía.</Text>
+                <Text style={styles.infoSub}>San Antonio y El Quijote son sitios mínimos: sus tanques llegan retransmitidos en el buffer de Soledad.</Text>
+              </>
+            )}
           </View>
         ) : (
           <View style={styles.grid}>

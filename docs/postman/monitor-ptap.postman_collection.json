@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Monitor PTAP API",
-    "description": "Colección de la API real de @ptap/api (actualizada 2026-07-16). Contrato completo: docs/api/openapi.yaml.\n\nCÓMO USARLA\n1. Levanta el backend COMPLETO: `npm run dev:api` (requiere MySQL). El arranque de telemetría (`start:telemetry`) NO tiene auth ni /api/auth/login.\n2. Ejecuta primero **Auth → Login**: guarda el JWT en la variable {{token}} automáticamente; el resto de requests lo usan.\n3. Usuarios de prueba (`npm run db:seed-users -w @ptap/api`), contraseña `Demo1234!`:\n   civil@ptap.co · operador@ptap.co · jefe@ptap.co · admin@ptap.co\n\nAUTORIZACIÓN: por permisos granulares. Sin token → 401; sin el permiso → 403.\nPruébalo: haz login como `civil` y ejecuta *Usuarios → Listar* (403) u *OPC → Info* (403); repite como `admin` (200).",
+    "description": "Colección de la API real de @ptap/api (actualizada 2026-07-22). Contrato completo: docs/api/openapi.yaml.\n\nCÓMO USARLA\n1. Levanta el backend COMPLETO: `npm run dev:api` (requiere MySQL). El arranque de telemetría (`start:telemetry`) NO tiene auth ni /api/auth/login.\n2. Pon en la variable {{seedPassword}} la contraseña con la que sembraste (SEED_USERS_PASSWORD — ya no existe el default público Demo1234!).\n3. Ejecuta primero **Auth → Login**: guarda el JWT en la variable {{token}} automáticamente; el resto de requests lo usan.\n4. Usuarios de prueba (`npm run db:seed-users -w @ptap/api`):\n   civil@ptap.co · operador@ptap.co · jefe@ptap.co · admin@ptap.co\n\nAUTORIZACIÓN: por permisos granulares. Sin token → 401; sin el permiso → 403.\nADEMÁS, alcance POR PLANTA: cada cuenta ve solo su planta (user.plant); pedir otra → 403, salvo admin (view_all_plants).\nPruébalo: haz login como `civil` y ejecuta *Plantas → Snapshot* (403, usa Estado básico) o *Usuarios → Listar* (403); repite como `admin` (200).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -12,7 +12,8 @@
     { "key": "baseUrl", "value": "http://localhost:4000", "type": "string" },
     { "key": "token", "value": "", "type": "string" },
     { "key": "plantId", "value": "montebello", "type": "string" },
-    { "key": "userId", "value": "", "type": "string" }
+    { "key": "userId", "value": "", "type": "string" },
+    { "key": "seedPassword", "value": "", "type": "string" }
   ],
   "item": [
     {
@@ -43,7 +44,7 @@
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"admin@ptap.co\",\n  \"password\": \"Demo1234!\"\n}"
+              "raw": "{\n  \"email\": \"admin@ptap.co\",\n  \"password\": \"{{seedPassword}}\"\n}"
             },
             "url": { "raw": "{{baseUrl}}/api/auth/login", "host": ["{{baseUrl}}"], "path": ["api", "auth", "login"] },
             "description": "Devuelve { token, user }. El rol sale de MySQL, no del email."
@@ -74,7 +75,32 @@
               "raw": "{\n  \"name\": \"Persona Nueva\",\n  \"email\": \"nuevo@ptap.co\",\n  \"phone\": \"3001112233\",\n  \"plant\": \"montebello\",\n  \"password\": \"Secreta123!\"\n}"
             },
             "url": { "raw": "{{baseUrl}}/api/auth/register", "host": ["{{baseUrl}}"], "path": ["api", "auth", "register"] },
-            "description": "La cuenta nace con rol 'civil' y is_active=0: NO hay token y el login responde 403 hasta que un admin la apruebe (PATCH /api/users/{id}/active). Email duplicado → 409."
+            "description": "Tres barreras anti-bot: (1) validación estricta (contraseña con mayúscula+minúscula+dígito, email sin desechables, planta REAL del mapping, nombre sin URLs, honeypot 'website' vacío); (2) verifica el correo por enlace (transporte console/dev: el enlace sale en el LOG del backend); (3) la cuenta nace inactiva y un admin la aprueba (y NO puede activar sin correo verificado). NO hay token. Email duplicado → 409; validación fallida → 400."
+          }
+        },
+        {
+          "name": "Verificar correo (abrir el enlace del LOG)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/verify-email?token=PEGA_EL_TOKEN_DEL_LOG",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "auth", "verify-email"],
+              "query": [{ "key": "token", "value": "PEGA_EL_TOKEN_DEL_LOG" }]
+            },
+            "description": "Con EMAIL_TRANSPORT=console, el registro imprime en el log del backend un enlace `/api/auth/verify-email?token=...`. Pega ese token aquí (o abre el enlace en el navegador). Devuelve una PÁGINA HTML: verificado, o enlace inválido/vencido (genérico). Verificar NO activa la cuenta — la aprueba el admin."
+          }
+        },
+        {
+          "name": "Reenviar verificación (respuesta genérica)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"nuevo@ptap.co\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/auth/resend-verification", "host": ["{{baseUrl}}"], "path": ["api", "auth", "resend-verification"] },
+            "description": "Respuesta SIEMPRE genérica (200), exista o no el correo y esté o no verificado: revelar la diferencia permitiría enumerar cuentas. Rate-limitado. Solo reemite si la cuenta existe y no está verificada."
           }
         },
         {
@@ -265,6 +291,18 @@
           }
         },
         {
+          "name": "Estado básico de una planta (Civil incluido)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/plants/{{plantId}}/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "plants", "{{plantId}}", "status"]
+            },
+            "description": "Requiere view_basic_status (lo tienen TODOS los roles — es lo único que la matriz concede al Civil). DTO mínimo por whitelist, SIN signals: nunca viajan caudales/presiones al Civil. waterAvailable: null = sin señales de tanque mapeadas. Sujeto al alcance por planta: pedir una planta ajena → 403 (salvo admin)."
+          }
+        },
+        {
           "name": "Snapshot de una planta",
           "request": {
             "method": "GET",
@@ -273,7 +311,48 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "plants", "{{plantId}}", "snapshot"]
             },
-            "description": "Desde cache RAM (<50 ms); nunca toca el PLC bajo demanda."
+            "description": "Desde cache RAM (<50 ms); nunca toca el PLC bajo demanda. Requiere view_dashboard: con token de Civil → 403 (debe usar Estado básico). Sujeto al alcance por planta: pedir una planta ajena → 403 (salvo admin)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Diagnóstico (admin)",
+      "item": [
+        {
+          "name": "Historial de transiciones del puente",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/diagnostics/connection-events",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "diagnostics", "connection-events"]
+            },
+            "description": "Requiere system_config (solo admin). Últimos 100 eventos opc.bridge_status_change del audit_log (incluida la línea base del arranque). Fuente de la sección 'Estado de conexión' de Ajustes y del informe .txt exportable para escalar un fallo de RUTA (PLC-01)."
+          }
+        },
+        {
+          "name": "Prueba de ruta EN VIVO (servidor → PLC)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/diagnostics/route-check",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "diagnostics", "route-check"]
+            },
+            "description": "Requiere system_config (solo admin). Tres sondas crudas en el momento: TCP servidor→internet (8.8.8.8:53), ping ICMP al host del PLC, y TCP al puerto OPC. Veredicto por evidencia: SRV-07 = el servidor sin internet (proveedor del servidor); PLC-12 = ping OK + TCP muerto (host VIVO, puerto FILTRADO por cortafuegos); PLC-01 = todo sin respuesta (ruta o planta); PLC-11 = conexión rechazada (host vivo, servicio OPC caído); '—' = red bien. Incluye la IP pública del servidor (whois → proveedor) y reconexiones del puente. Tarda ≤ ~5 s. La prueba queda GRABADA en el registro de 20 h (source='manual') sin alterar el calendario de las automáticas. Responde 200 aunque la ruta esté caída: el resultado ES el diagnóstico."
+          }
+        },
+        {
+          "name": "Registro interno 20 h de la ruta",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/diagnostics/route-history",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "diagnostics", "route-history"]
+            },
+            "description": "Requiere system_config (solo admin). Prueba automática OCULTA cada hora EN PUNTO (una manual a las 5:30 no corre la de las 6:00) + las manuales del botón, persistidas en audit_log (opc.route_probe, source auto|manual). Devuelve el resumen de las últimas 20 h — muestras, % con el PLC alcanzable, inicio del corte VIGENTE — y cada muestra. La ventana corre sola: cada hora nueva expulsa a la más vieja. En la app este registro solo se muestra tras ejecutar la prueba."
           }
         }
       ]
@@ -362,7 +441,7 @@
             "auth": { "type": "noauth" },
             "method": "GET",
             "url": { "raw": "{{baseUrl}}/api/health/opc", "host": ["{{baseUrl}}"], "path": ["api", "health", "opc"] },
-            "description": "Público a propósito (liveness/readiness para orquestadores). Devuelve 503 si el bridge está Stale o Faulted."
+            "description": "Público a propósito (liveness/readiness para orquestadores y uptime-monitors). 200 SOLO con bridge Connected; 503 en cualquier otro estado (incluido Connecting, el caso real de un corte del enlace al PLC). Ver docs/INCIDENTE_CONEXION_PLC.md §8 para las reglas de alerta."
           }
         },
         {
@@ -379,7 +458,7 @@
     {
       "name": "Socket.IO (referencia — no ejecutable en Postman v2.1)",
       "item": [],
-      "description": "El cliente emite `opc:subscribe` { plantId } y recibe:\n- `opc:snapshot` (por planta, SOLO cuando el snapshot cambia)\n- `opc:liveness` (broadcast, en cambios de frescura)\n\n`sequence` es monótono por planta: si llega N+2 sin ver N+1, hubo un hueco → resincronizar por REST.\n\nGap conocido: el gateway NO autentica el handshake (docs/SECURITY_FINDING_P0.md §6)."
+      "description": "El handshake EXIGE un JWT válido en auth.token (SRV-04, resuelto 2026-07-21): sin él, el servidor corta la conexión antes de aceptar suscripciones. (Excepción: main.telemetry.ts fija SOCKET_AUTH_REQUIRED=false.)\n\nEl cliente emite `opc:subscribe` { plantId } y recibe:\n- `opc:snapshot` (por planta, SOLO cuando el snapshot cambia)\n- `opc:liveness` (broadcast, en cambios de frescura)\n\n`sequence` es monótono por planta: si llega N+2 sin ver N+1, hubo un hueco → resincronizar por REST."
     }
   ]
 }

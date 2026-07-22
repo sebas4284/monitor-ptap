@@ -89,7 +89,10 @@ export class MappingEngine {
         sig.domainKey,
         `índice ${sig.index} fuera de ${buffer.browseName}[${buffer.values.length}]`,
       );
-      return { ...base, value: null, quality: buffer.quality, sourceTimestamp: buffer.sourceTimestamp, structurallyBroken: true };
+      // quality: 'Bad' (no la del buffer): una señal con índice fuera de rango está rota, y aunque
+      // el buffer haya llegado Good, esta señal NO lo está. Igual que la rama BUFFER_MISSING —
+      // defensa en profundidad para que jamás salga usable:true (ver quality.evaluator).
+      return { ...base, value: null, quality: 'Bad', sourceTimestamp: buffer.sourceTimestamp, structurallyBroken: true };
     }
 
     const raw = buffer.values[sig.index];

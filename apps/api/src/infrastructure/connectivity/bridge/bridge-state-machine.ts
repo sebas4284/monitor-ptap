@@ -15,7 +15,9 @@ const ALLOWED: Record<BridgeStatus, BridgeStatus[]> = {
   Recovering: ['Connected', 'Disconnected', 'Faulted'],
   Stale: ['Connected', 'Recovering', 'Disconnected', 'Faulted'],
   Disconnected: ['Connecting', 'Recovering', 'Faulted'],
-  Faulted: ['Connecting'], // solo se sale de Faulted reintentando el arranque
+  // De Faulted se sale reintentando el arranque (Connecting), o vía stop() → Disconnected, que
+  // es como el orquestador recupera un Faulted post-arranque (stop()+start() con backoff).
+  Faulted: ['Connecting', 'Disconnected'],
 };
 
 /**

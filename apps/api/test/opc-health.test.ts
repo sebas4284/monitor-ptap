@@ -1,6 +1,8 @@
 /**
- * computeOpcHealth() (Fase 4, criterio de aceptación): /health/opc → 503 en Stale/Faulted.
- * Función pura, testeada con fixtures de AdapterDiagnostics para cada BridgeStatus.
+ * computeOpcHealth() (Fase 4 + fix de monitoreo): /health/opc → 200 SOLO cuando el puente está
+ * `Connected`; 503 en cualquier otro estado (incluido `Connecting`, el caso real de un corte del
+ * enlace al PLC). Antes solo `Stale`/`Faulted` daban 503, dejando un corte atascado en `Connecting`
+ * como 200 "sano" e invisible para un uptime-monitor. Función pura, un fixture por cada BridgeStatus.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -34,11 +36,18 @@ function diagnostics(bridgeStatus: BridgeStatus, overrides: Partial<AdapterDiagn
 const STATUSES: BridgeStatus[] = ['Connecting', 'Connected', 'Recovering', 'Stale', 'Disconnected', 'Faulted'];
 
 for (const status of STATUSES) {
-  test(`opc-health: bridgeStatus=${status} → httpStatus ${status === 'Stale' || status === 'Faulted' ? 503 : 200}`, () => {
+  const expected = status === 'Connected' ? 200 : 503;
+  test(`opc-health: bridgeStatus=${status} → httpStatus ${expected}`, () => {
     const { httpStatus } = computeOpcHealth(diagnostics(status), 0);
-    assert.equal(httpStatus, status === 'Stale' || status === 'Faulted' ? 503 : 200);
+    assert.equal(httpStatus, expected);
   });
 }
+
+test('opc-health: Connecting (corte real, enlace no arriba) → 503, ya NO 200', () => {
+  // Regresión del hueco de monitoreo: un corte deja al puente reintentando en `Connecting`;
+  // el health debe reportarlo degradado para que un monitor externo lo detecte.
+  assert.equal(computeOpcHealth(diagnostics('Connecting'), 0).httpStatus, 503);
+});
 
 test('opc-health: plcReachable true en Connected y Stale, false en el resto', () => {
   assert.equal(computeOpcHealth(diagnostics('Connected'), 0).report.plcReachable, true);

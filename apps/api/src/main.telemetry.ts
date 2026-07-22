@@ -8,6 +8,11 @@ import { PlantPipelineService } from './infrastructure/connectivity/pipeline/pla
 import { LoggingModule } from './infrastructure/logging/logging.module';
 import { JsonLogger } from './infrastructure/logging/json-logger.service';
 
+// Demo sin login ni BD: el gateway Socket.IO NO exige JWT en el handshake (en el servidor completo
+// sí — SRV-04). Se fija al arranque del proceso, antes de bootstrap(); el gateway lo lee en cada
+// conexión. (El gateway solo se instancia dentro de bootstrap → esto corre antes, a tiempo.)
+process.env.SOCKET_AUTH_REQUIRED = 'false';
+
 /**
  * Controlador SIN guards a propósito: main.telemetry.ts es el arranque de demo sin BD
  * (ver comentario del módulo abajo) y no debe requerir AuthModule/MySQL. Duplica los dos

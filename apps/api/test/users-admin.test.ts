@@ -25,10 +25,10 @@ process.env.JWT_SECRET = process.env.JWT_SECRET ?? 'test-secret-users-admin';
 const ADMIN_ID = 'admin-id';
 const TARGET_ID = 'target-id';
 
-function summary(id: string, role: Role, isActive = true): UserSummary {
+function summary(id: string, role: Role, isActive = true, emailVerified = true): UserSummary {
   return {
     id, email: `${role}@ptap.co`, name: role, phone: null, role, plant: 'montebello',
-    isActive, lastLoginAt: null, createdAt: null,
+    isActive, emailVerified, lastLoginAt: null, createdAt: null,
   };
 }
 
@@ -244,6 +244,92 @@ test('users-admin: el admin puede desactivar a OTRO usuario y queda auditado', a
       .expect(200);
     assert.equal(repo.store.get(TARGET_ID)?.isActive, false);
     assert.ok(audit.calls.some((c) => c.eventType === 'user.active_changed'));
+  } finally {
+    await app.close();
+  }
+});
+
+test('users-admin: NO se puede ACTIVAR una cuenta con el correo sin verificar → 400', async () => {
+  const repo = fakeRepo();
+  // Cuenta pendiente Y sin verificar el correo (el caso anti-bot).
+  const PENDING = 'pending-id';
+  repo.store.set(PENDING, summary(PENDING, 'civil', false, false));
+  const { app, jwt } = await buildApp(repo, fakeAudit().service);
+  try {
+    await request(app.getHttpServer())
+      .patch(`/api/users/${PENDING}/active`)
+      .set('Authorization', `Bearer ${tokenFor(jwt, 'admin', ADMIN_ID)}`)
+      .send({ isActive: true })
+      .expect(400);
+    assert.equal(repo.store.get(PENDING)?.isActive, false, 'sigue inactiva');
+  } finally {
+    await app.close();
+  }
+});
+
+test('users-admin: se PUEDE activar una cuenta pendiente con el correo YA verificado → 200', async () => {
+  const repo = fakeRepo();
+  const PENDING = 'pending-ok-id';
+  repo.store.set(PENDING, summary(PENDING, 'civil', false, true)); // verificada
+  const { app, jwt } = await buildApp(repo, fakeAudit().service);
+  try {
+    await request(app.getHttpServer())
+      .patch(`/api/users/${PENDING}/active`)
+      .set('Authorization', `Bearer ${tokenFor(jwt, 'admin', ADMIN_ID)}`)
+      .send({ isActive: true })
+      .expect(200);
+    assert.equal(repo.store.get(PENDING)?.isActive, true);
+  } finally {
+    await app.close();
+  }
+});
+
+// ── Los administradores son mutuamente intocables ──────────────────────────────
+const OTHER_ADMIN_ID = 'other-admin-id';
+
+test('users-admin: un admin NO puede DESACTIVAR a otro admin → 403', async () => {
+  const repo = fakeRepo();
+  repo.store.set(OTHER_ADMIN_ID, summary(OTHER_ADMIN_ID, 'admin'));
+  const { app, jwt } = await buildApp(repo, fakeAudit().service);
+  try {
+    await request(app.getHttpServer())
+      .patch(`/api/users/${OTHER_ADMIN_ID}/active`)
+      .set('Authorization', `Bearer ${tokenFor(jwt, 'admin', ADMIN_ID)}`)
+      .send({ isActive: false })
+      .expect(403);
+    assert.equal(repo.store.get(OTHER_ADMIN_ID)?.isActive, true, 'sigue activo');
+  } finally {
+    await app.close();
+  }
+});
+
+test('users-admin: un admin NO puede DEGRADAR a otro admin → 403', async () => {
+  const repo = fakeRepo();
+  repo.store.set(OTHER_ADMIN_ID, summary(OTHER_ADMIN_ID, 'admin'));
+  const { app, jwt } = await buildApp(repo, fakeAudit().service);
+  try {
+    await request(app.getHttpServer())
+      .patch(`/api/users/${OTHER_ADMIN_ID}/role`)
+      .set('Authorization', `Bearer ${tokenFor(jwt, 'admin', ADMIN_ID)}`)
+      .send({ role: 'civil' })
+      .expect(403);
+    assert.equal(repo.store.get(OTHER_ADMIN_ID)?.role, 'admin', 'sigue admin');
+  } finally {
+    await app.close();
+  }
+});
+
+test('users-admin: SÍ se puede PROMOVER a un no-admin a admin (el objetivo aún no es admin) → 200', async () => {
+  const repo = fakeRepo();
+  const { app, jwt } = await buildApp(repo, fakeAudit().service);
+  try {
+    // TARGET_ID es 'civil' en el store base → promoverlo a admin debe funcionar.
+    await request(app.getHttpServer())
+      .patch(`/api/users/${TARGET_ID}/role`)
+      .set('Authorization', `Bearer ${tokenFor(jwt, 'admin', ADMIN_ID)}`)
+      .send({ role: 'admin' })
+      .expect(200);
+    assert.equal(repo.store.get(TARGET_ID)?.role, 'admin');
   } finally {
     await app.close();
   }

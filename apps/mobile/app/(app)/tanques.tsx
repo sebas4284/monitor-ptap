@@ -47,12 +47,15 @@ export default function TanquesScreen() {
             <Text style={styles.loadingText}>Cargando tanques…</Text>
           </View>
         ) : tanks.length === 0 ? (
+          // Igual que en Sensores: distinguir "sin conexión y sin respaldo aún" (pending) de
+          // una planta que de verdad no tiene tanques en el mapping.
           <View style={styles.emptyWrap}>
-            <Ionicons name="file-tray-outline" size={36} color={Colors.textSecondary} />
-            <Text style={styles.emptyTitle}>Sin señales de tanque</Text>
+            <Ionicons name={data?.pending ? 'cloud-offline-outline' : 'file-tray-outline'} size={36} color={Colors.textSecondary} />
+            <Text style={styles.emptyTitle}>{data?.pending ? 'Sin datos del PLC por ahora' : 'Sin señales de tanque'}</Text>
             <Text style={styles.emptyText}>
-              Esta planta aún no tiene tanques mapeados en el PLC. Aparecerán aquí
-              cuando sus señales entren al mapping.
+              {data?.pending
+                ? 'No hay conexión con la planta y este dispositivo aún no tiene lecturas guardadas. Cuando lleguen, se recordarán las últimas.'
+                : 'Esta planta aún no tiene tanques mapeados en el PLC. Aparecerán aquí cuando sus señales entren al mapping.'}
             </Text>
           </View>
         ) : (

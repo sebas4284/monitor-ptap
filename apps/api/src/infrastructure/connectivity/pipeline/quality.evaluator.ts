@@ -30,6 +30,11 @@ export interface QualityInput {
 export function evaluateQuality(input: QualityInput): QualityVerdict {
   if (input.quality !== 'Good') return { usable: false, reason: 'BAD_QUALITY' };
 
+  // Una señal estructuralmente rota (índice fuera de rango, buffer ausente) llega con value=null:
+  // sin esta rama salía usable:true con value:null, indistinguible de una lectura válida. El
+  // consumidor NUNCA debe tener que verificar `value !== null` además de `usable`.
+  if (input.value === null) return { usable: false, reason: 'INVALID_NUMBER' };
+
   if (typeof input.value === 'number' && !Number.isFinite(input.value)) {
     return { usable: false, reason: 'INVALID_NUMBER' };
   }

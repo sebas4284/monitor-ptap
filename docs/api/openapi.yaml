@@ -1,4 +1,4 @@
-# Contrato OpenAPI de la API real de @ptap/api — actualizado 2026-07-16 desde el código (apps/api/src).
+# Contrato OpenAPI de la API real de @ptap/api — actualizado 2026-07-22 desde el código (apps/api/src).
 # El proyecto NO usa @nestjs/swagger; este archivo es el contrato estático de referencia.
 # Mantenerlo sincronizado a mano al agregar endpoints (o introducir @nestjs/swagger en una fase futura).
 #
@@ -10,7 +10,7 @@ info:
   title: Monitor PTAP API
   version: 1.0.0
   description: >
-    Backend NestJS del monorepo monitor-ptap: gateway OPC UA de 13 PTAP.
+    Backend NestJS del monorepo monitor-ptap: gateway OPC UA de 12 PTAP.
     Prefijo global /api (excepto /metrics, fuera del prefijo por convención de Prometheus).
     Puerto 4000 (variable PORT).
 
@@ -18,9 +18,15 @@ info:
     roles lineales: sin token → 401; sin el permiso requerido → 403. Roles:
     civil (vista básica) | operador (datos + válvulas) | jefe (datos, sin válvulas) | admin (total).
 
-    Tiempo real por Socket.IO: el cliente emite 'opc:subscribe' { plantId }; el servidor emite
-    'opc:snapshot' (por planta, solo en cambios) y 'opc:liveness' (broadcast).
-    NOTA: el gateway Socket.IO aún NO autentica el handshake (ver docs/SECURITY_FINDING_P0.md §6).
+    ALCANCE POR PLANTA: cada cuenta está vinculada a UNA planta (user.plant). Pedir una planta
+    distinta devuelve 403, salvo con el permiso view_all_plants (solo admin). Aplica a toda ruta
+    con {plantId} (PlantScopeGuard).
+
+    Tiempo real por Socket.IO: el handshake EXIGE un JWT válido en auth.token (SRV-04) — sin él,
+    el servidor corta la conexión antes de aceptar suscripciones. (Excepción: el arranque de demo
+    main.telemetry.ts fija SOCKET_AUTH_REQUIRED=false.) El cliente emite 'opc:subscribe'
+    { plantId }; el servidor emite 'opc:snapshot' (por planta, solo en cambios) y 'opc:liveness'
+    (broadcast).
 servers:
   - url: http://localhost:4000
     description: Backend local (dev)
@@ -32,6 +38,8 @@ tags:
     description: Administración de usuarios — exclusiva del Administrador
   - name: plants
     description: Telemetría de dominio desde cache RAM
+  - name: diagnostics
+    description: Historial de conexión del puente — exclusivo del Administrador
   - name: commands
     description: Canal de escritura al PLC (Fase 5)
   - name: opc
@@ -86,14 +94,14 @@ paths:
       tags: [auth]
       security: []
       description: >
-        Dos cosas las fija el servidor y no el cliente:
-        (1) el rol es SIEMPRE 'civil' (solo consulta) — el schema es .strict(), así que enviar
-        'role' en el body devuelve 400; elevarlo es potestad del Admin (PATCH /api/users/{id}/role).
-        (2) la cuenta nace INACTIVA (is_active=0) y NO se devuelve token: hasta que un
-        administrador la apruebe (PATCH /api/users/{id}/active), el login responde 403. Es la
-        defensa contra cuentas falsas o fantasma — verificar el correo no aporta nada frente a
-        un impostor con una cuenta desechable; lo que frena es que un humano lo reconozca (de
-        ahí que se pida el teléfono).
+        Tres barreras anti-bot. (1) VALIDACIÓN estricta (.strict()): rol lo fija el servidor
+        siempre en 'civil' (enviar 'role' → 400); contraseña con mayúscula+minúscula+dígito;
+        email normalizado y sin dominios desechables; planta debe existir en el mapping; nombre
+        sin URLs; teléfono con formato válido; campo honeypot 'website' que debe ir vacío.
+        (2) VERIFICACIÓN de correo: se envía un enlace (token de un solo uso); el transporte por
+        defecto es console/dev (escribe el enlace al log) — EMAIL_TRANSPORT. (3) La cuenta nace
+        INACTIVA y NO se devuelve token: un admin debe aprobarla, y NO puede activar una cuenta
+        sin correo verificado (PATCH /api/users/{id}/active → 400).
       requestBody:
         required: true
         content:
@@ -103,11 +111,12 @@ paths:
               required: [name, email, plant, password]
               additionalProperties: false
               properties:
-                name: { type: string, minLength: 2, maxLength: 120 }
-                email: { type: string, format: email }
-                phone: { type: string, minLength: 5, maxLength: 32 }
-                plant: { type: string, description: Slug canónico de la planta, example: montebello }
-                password: { type: string, minLength: 8 }
+                name: { type: string, minLength: 2, maxLength: 120, description: Sin URLs ni caracteres de control }
+                email: { type: string, format: email, description: Normalizado (trim+minúsculas); sin dominios desechables }
+                phone: { type: string, description: 'Opcional; si viene, ≥7 dígitos (0-9 + - ( ) espacio)' }
+                plant: { type: string, description: Slug canónico de una planta REAL del mapping, example: montebello }
+                password: { type: string, minLength: 8, description: Al menos una mayúscula, una minúscula y un dígito }
+                website: { type: string, maxLength: 0, description: 'Honeypot anti-bot: debe ir vacío/ausente' }
       responses:
         '201':
           description: Cuenta creada y pendiente de aprobación. NO incluye token.
@@ -120,8 +129,63 @@ paths:
                   status: { type: string, enum: [pending_approval] }
                   email: { type: string, format: email }
                   message: { type: string }
-        '400': { description: Body inválido (incluye el caso de enviar 'role') }
+        '400': { description: 'Body inválido: role, contraseña débil, correo desechable, planta inexistente, honeypot lleno, etc. (AUT-11)' }
         '409': { description: Ese correo ya está registrado }
+        '429': { description: Demasiados intentos (rate-limit) }
+
+  /api/auth/verify-email:
+    get:
+      summary: Verificar el correo (se abre desde el enlace del correo)
+      operationId: verifyEmail
+      tags: [auth]
+      security: []
+      description: >
+        Público. Se abre EN EL NAVEGADOR desde el enlace del correo, así que responde una PÁGINA
+        HTML (no JSON): éxito, o "enlace no válido/vencido" (genérico, anti-enumeración). El token
+        es de un solo uso y con expiración (EMAIL_VERIFICATION_TTL_HOURS). Verificar el correo NO
+        activa la cuenta: un admin aún debe aprobarla.
+      parameters:
+        - name: token
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: Página HTML (verificado o enlace inválido — ambos 200)
+          content:
+            text/html:
+              schema: { type: string }
+
+  /api/auth/resend-verification:
+    post:
+      summary: Reenviar el correo de verificación
+      operationId: resendVerification
+      tags: [auth]
+      security: []
+      description: >
+        Público y rate-limitado. Respuesta SIEMPRE genérica (200), exista o no el correo y esté o
+        no verificado: revelar la diferencia permitiría enumerar cuentas. Solo reemite si la cuenta
+        existe y no está verificada; invalida los tokens previos (solo el último sirve).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              additionalProperties: false
+              properties:
+                email: { type: string, format: email }
+      responses:
+        '200':
+          description: Respuesta genérica (no confirma si el correo existe)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [ok] }
+                  message: { type: string }
         '429': { description: Demasiados intentos (rate-limit) }
 
   # ── USERS (solo Admin) ──────────────────────────────────────────────────────
@@ -173,7 +237,8 @@ paths:
       tags: [users]
       description: >
         Requiere el permiso `assign_roles` (solo admin). Audita el cambio (quién, a quién, de→a).
-        Guard rail: un admin NO puede cambiar su propio rol (400).
+        Guard rails: un admin NO puede cambiar su propio rol (400); ni DEGRADAR a otro admin (403,
+        AUT-14 — los admins son mutuamente intocables). SÍ puede PROMOVER a admin a un no-admin.
         El rol nuevo aplica en la SIGUIENTE petición del usuario, sin que tenga que volver a entrar:
         el guard relee su fila en la base en cada petición, así que el rol del token no manda.
       parameters: [{ $ref: '#/components/parameters/UserId' }]
@@ -195,7 +260,7 @@ paths:
               schema: { $ref: '#/components/schemas/UserSummary' }
         '400': { description: Rol inválido, o intento de cambiar el propio rol }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
+        '403': { description: Sin permiso `assign_roles`, o intento de degradar a otro admin (AUT-14) }
         '404': { description: Usuario no encontrado }
 
   /api/users/{id}/active:
@@ -209,7 +274,9 @@ paths:
         APROBACIÓN que la habilita — es el único camino para que un auto-registro obtenga acceso.
         `isActive: false` corta la sesión en curso en la SIGUIENTE petición (401), sin esperar a que
         caduque su token: el guard relee la fila en la base y `findById` filtra `is_active = 1`.
-        Guard rail: un admin NO puede desactivarse a sí mismo (400).
+        Guard rails: un admin NO puede desactivarse a sí mismo (400); NO puede DESACTIVAR a otro
+        admin (403, AUT-14 — los admins son mutuamente intocables); y NO se puede ACTIVAR una
+        cuenta cuyo correo aún no fue verificado (400, AUT-12).
       parameters: [{ $ref: '#/components/parameters/UserId' }]
       requestBody:
         required: true
@@ -227,9 +294,9 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/UserSummary' }
-        '400': { description: Intento de desactivarse a sí mismo }
+        '400': { description: Intento de desactivarse a sí mismo, o activar una cuenta con el correo sin verificar (AUT-12) }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
+        '403': { description: Sin permiso `manage_users`, o intento de desactivar a otro admin (AUT-14) }
         '404': { description: Usuario no encontrado }
 
   # ── PLANTS (telemetría) ─────────────────────────────────────────────────────
@@ -238,7 +305,10 @@ paths:
       summary: Lista de plantas con su liveness
       operationId: listPlants
       tags: [plants]
-      description: Solo exige JWT válido (cualquier rol autenticado). En main.telemetry.ts va sin auth.
+      description: >
+        Solo exige JWT válido (cualquier rol autenticado). No lleva {plantId}, así que el
+        PlantScopeGuard la deja pasar: lista nombres/liveness, no datos detallados.
+        En main.telemetry.ts va sin auth.
       responses:
         '200':
           description: Plantas conocidas por el mapping
@@ -258,12 +328,39 @@ paths:
                         bridgeStatus: { $ref: '#/components/schemas/BridgeStatus' }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
+  /api/plants/{plantId}/status:
+    get:
+      summary: Estado BÁSICO de una planta ("¿opera?" y "¿hay agua?")
+      operationId: getPlantBasicStatus
+      tags: [plants]
+      description: >
+        Requiere `view_basic_status` — el ÚNICO permiso que la matriz oficial concede al Civil,
+        y que todos los roles tienen. Devuelve un DTO mínimo por WHITELIST, sin `signals`: el
+        dispositivo del Civil nunca recibe caudales, presiones ni estados de válvula.
+        `waterAvailable: null` = la planta no tiene señales de tanque mapeadas (no se afirma ni
+        se niega). Si aún no hay snapshot en cache, responde con el estado conocido del puente
+        (nunca un 404 ciego). Sujeto al alcance por planta (PlantScopeGuard).
+      parameters: [{ $ref: '#/components/parameters/PlantId' }]
+      responses:
+        '200':
+          description: Estado básico
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlantBasicStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ForbiddenPlantScope' }
+        '404': { description: Planta desconocida (no está en el mapping) }
+
   /api/plants/{plantId}/snapshot:
     get:
       summary: Snapshot de dominio de una planta (cache RAM)
       operationId: getPlantSnapshot
       tags: [plants]
-      description: Responde desde cache RAM (<50 ms); NUNCA toca el PLC bajo demanda.
+      description: >
+        Responde desde cache RAM (<50 ms); NUNCA toca el PLC bajo demanda.
+        Requiere `view_dashboard`: un token de rol Civil recibe 403 (debe usar /status).
+        Sujeto además al alcance por planta (PlantScopeGuard). Si aún no hay snapshot en cache,
+        responde `pending: true` con `signals` vacío y el estado conocido del puente.
       parameters: [{ $ref: '#/components/parameters/PlantId' }]
       responses:
         '200':
@@ -272,6 +369,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/PlantSnapshot' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ForbiddenPlantScope' }
         '404': { description: Planta desconocida (no está en el mapping) }
 
   # ── COMMANDS (Fase 5) ───────────────────────────────────────────────────────
@@ -320,6 +418,101 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CommandResult' }
+
+  # ── DIAGNOSTICS (solo Admin; solo main.ts) ──────────────────────────────────
+  /api/diagnostics/connection-events:
+    get:
+      summary: Historial de transiciones del puente OPC UA
+      operationId: getConnectionEvents
+      tags: [diagnostics]
+      description: >
+        Requiere `system_config` (solo admin). Lee del audit_log los eventos
+        `opc.bridge_status_change` que ConnectionEventsSubscriber graba en cada transición
+        (incluida la línea base al arrancar). Últimos 100. Es la fuente de la sección
+        "Estado de conexión" de Ajustes y del informe .txt exportable con el que el admin
+        escala un fallo de RUTA (PLC-01) a un técnico — los demás roles no ven esta ruta.
+      responses:
+        '200':
+          description: Eventos, del más reciente al más antiguo
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events:
+                    type: array
+                    items: { $ref: '#/components/schemas/ConnectionEvent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/diagnostics/route-check:
+    get:
+      summary: Prueba de ruta EN VIVO servidor → PLC
+      operationId: runRouteCheck
+      tags: [diagnostics]
+      description: >
+        Requiere `system_config` (solo admin). Ejecuta tres sondas crudas (sin OPC UA) en el
+        momento de la petición — TCP servidor→internet (8.8.8.8:53), ping ICMP al host del PLC,
+        y TCP al host:puerto del PLC — con VEREDICTO por evidencia de dónde está la falla:
+        sin internet en el servidor = SRV-07 (proveedor del servidor); ping OK + TCP timeout =
+        PLC-12 (host VIVO, puerto filtrado por cortafuegos); todo sin respuesta = PLC-01 (ruta
+        intermedia o planta); conexión rechazada = PLC-11 (host vivo, servicio OPC caído);
+        puerto acepta = red bien (mirar la sesión OPC). Incluye la IP pública del servidor
+        (identifica al proveedor vía whois) y el contexto del puente (estado, reconexiones).
+        Tarda ≤ ~5 s. La prueba queda GRABADA en el registro interno (detail.source='manual'):
+        entra a la ventana de 20 h como cualquier muestra. No altera el calendario de las
+        automáticas (siguen cayendo cada hora en punto).
+        Automatiza el Test-NetConnection del incidente 2026-07-21/22.
+      responses:
+        '200':
+          description: Sondas + veredicto (200 aunque la ruta esté caída — el resultado ES el diagnóstico)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteCheckReport' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/diagnostics/route-history:
+    get:
+      summary: Registro interno de la ruta al PLC (últimas 20 h)
+      operationId: getRouteHistory
+      tags: [diagnostics]
+      description: >
+        Requiere `system_config` (solo admin). El servidor toma una prueba automática OCULTA
+        cada hora EN PUNTO (alineada al reloj — una manual a las 5:30 no corre la de las 6:00),
+        con catch-up al arrancar si falta la última hora; persiste en audit_log
+        (opc.route_probe, detail.source='auto'|'manual'). Devuelve el resumen de la ventana de
+        20 h (muestras, % con el PLC alcanzable, inicio del corte VIGENTE) y cada muestra. La
+        ventana corre sola: cada hora nueva expulsa de la vista a la más vieja. En la app este
+        registro solo se muestra tras ejecutar la prueba manual. Kill-switch:
+        ROUTE_PROBE_ENABLED=false.
+      responses:
+        '200':
+          description: Resumen + muestras (más reciente primero)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  summary:
+                    type: object
+                    properties:
+                      windowHours: { type: integer, example: 20 }
+                      samples: { type: integer }
+                      plcOk: { type: integer }
+                      uptimePct: { type: number, example: 0 }
+                      oldestAt: { type: string, format: date-time, nullable: true }
+                      newestAt: { type: string, format: date-time, nullable: true }
+                      downSince:
+                        type: string
+                        format: date-time
+                        nullable: true
+                        description: Inicio de la racha de fallo vigente (null si la última muestra fue OK).
+                  samples:
+                    type: array
+                    items: { $ref: '#/components/schemas/ConnectionEvent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   # ── OPC (observabilidad; solo main.ts) ──────────────────────────────────────
   /api/opc/status:
@@ -409,15 +602,20 @@ paths:
       operationId: getOpcHealth
       tags: [health]
       security: []
-      description: Público a propósito — un healthcheck no debe requerir JWT. 503 en Stale/Faulted.
+      description: >
+        Público a propósito — un healthcheck no debe requerir JWT. 200 SOLO cuando el puente
+        está Connected (sesión viva validada por heartbeat); 503 en cualquier otro estado,
+        incluido Connecting (el caso real de un corte del enlace al PLC). El estado es
+        INSTANTÁNEO: el "alertar tras N minutos" es la regla del monitor externo
+        (ver docs/INCIDENTE_CONEXION_PLC.md §8), no de este endpoint.
       responses:
         '200':
-          description: Puente sano
+          description: Puente Connected (sano)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/OpcHealth' }
         '503':
-          description: bridgeStatus Stale o Faulted
+          description: bridgeStatus distinto de Connected (Connecting/Recovering/Stale/Disconnected/Faulted)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/OpcHealth' }
@@ -471,6 +669,11 @@ components:
       description: >
         El rol no tiene el permiso requerido. El rol se toma de la BASE en cada petición, no del token:
         si un admin acaba de degradar a este usuario, aplica ya.
+    ForbiddenPlantScope:
+      description: >
+        Dos causas posibles: (a) el rol no tiene el permiso requerido por la ruta, o (b) la
+        planta pedida NO es la vinculada a la cuenta (user.plant) y el usuario no tiene
+        `view_all_plants` — cada cuenta ve solo su planta; únicamente el Admin supervisa las 12.
     AuthResult:
       description: Token JWT + usuario
       content:
@@ -506,6 +709,7 @@ components:
         role: { $ref: '#/components/schemas/Role' }
         plant: { type: string }
         isActive: { type: boolean }
+        emailVerified: { type: boolean, description: 'El admin NO puede activar una cuenta con esto en false (AUT-12).' }
         lastLoginAt: { type: string, format: date-time, nullable: true }
         createdAt: { type: string, format: date-time, nullable: true }
 
@@ -515,9 +719,13 @@ components:
 
     Liveness:
       type: object
-      description: Frescura de datos POR PLANTA (no es el estado del socket).
+      description: >
+        Frescura de datos POR PLANTA (no es el estado del socket). TRES estados:
+        live = llegó un cambio hace poco; stable = sesión sana con valores quietos
+        (operación NORMAL, datos válidos); frozen = perdimos la fuente y los datos
+        dejan de ser fiables.
       properties:
-        state: { type: string, enum: [live, idle, stale, unknown] }
+        state: { type: string, enum: [live, stable, frozen] }
         lastChangeAt: { type: string, format: date-time, nullable: true }
         windowSec: { type: integer, example: 300 }
 
@@ -534,8 +742,10 @@ components:
         usable: { type: boolean }
         reason:
           type: string
-          enum: [BAD_QUALITY, INVALID_NUMBER, OUT_OF_RANGE, BRIDGE_STALE]
-          description: Presente solo si usable=false
+          enum: [BAD_QUALITY, INVALID_NUMBER, BRIDGE_STALE]
+          description: >
+            Presente solo si usable=false. (Fuera de rango NO invalida: viaja aparte en
+            el booleano `outOfRange`.)
         outOfRange:
           type: boolean
           description: Fuera de la validez física [min,max]. Es un AVISO; el valor se sigue mostrando.
@@ -560,6 +770,77 @@ components:
           type: object
           additionalProperties: { $ref: '#/components/schemas/Signal' }
         pending: { type: boolean, description: true si aún no hay snapshot en cache para esa planta }
+
+    PlantBasicStatus:
+      type: object
+      description: >
+        Vista MÍNIMA para el rol Civil (whitelist deliberada, no un snapshot recortado):
+        nunca incluye `signals`. Tipo compartido en @ptap/shared (PlantBasicStatusDto).
+      properties:
+        plantId: { type: string }
+        displayName: { type: string }
+        bridgeStatus: { $ref: '#/components/schemas/BridgeStatus' }
+        liveness: { $ref: '#/components/schemas/Liveness' }
+        waterAvailable:
+          type: boolean
+          nullable: true
+          description: null = sin señales de tanque mapeadas (no se afirma ni se niega).
+
+    ConnectionEvent:
+      type: object
+      description: Transición del puente registrada en audit_log por ConnectionEventsSubscriber.
+      properties:
+        at: { type: string, format: date-time }
+        eventType: { type: string, example: opc.bridge_status_change }
+        detail:
+          type: object
+          nullable: true
+          properties:
+            status: { $ref: '#/components/schemas/BridgeStatus' }
+            reason: { type: string }
+
+    RouteCheckReport:
+      type: object
+      description: Resultado de la prueba de ruta en vivo (diagnóstico por evidencia, no por suposición).
+      properties:
+        at: { type: string, format: date-time }
+        target:
+          type: object
+          properties:
+            endpoint: { type: string, example: opc.tcp://181.204.165.66:59100 }
+            host: { type: string, example: 181.204.165.66 }
+            port: { type: integer, example: 59100 }
+        serverPublicIp:
+          type: string
+          nullable: true
+          description: IP pública del servidor (identifica a su proveedor vía whois). null si no hay salida.
+        probes:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string, enum: [internet, ping, plc] }
+              target: { type: string, example: '8.8.8.8:53' }
+              outcome:
+                type: string
+                enum: [ok, timeout, refused, error]
+                description: >
+                  timeout = paquetes sin respuesta (descartados); refused = host vivo, nada
+                  escucha. En la sonda ping, ok = el host está VIVO (eco ICMP recibido).
+              ms: { type: integer }
+              detail: { type: string, nullable: true, description: Código de socket si outcome=error (p. ej. ENOTFOUND) }
+        verdict:
+          type: object
+          properties:
+            code: { type: string, description: 'Código del catálogo: SRV-07 | PLC-01 | PLC-11 | PLC-12 | — (ruta OK)' }
+            where: { type: string, enum: [servidor, ruta-o-planta, plc-servicio, ninguno] }
+            message: { type: string }
+        bridge:
+          type: object
+          properties:
+            status: { $ref: '#/components/schemas/BridgeStatus' }
+            reconnectCount: { type: integer }
+            lastNotificationAt: { type: string, format: date-time, nullable: true }
 
     OpcHealth:
       type: object

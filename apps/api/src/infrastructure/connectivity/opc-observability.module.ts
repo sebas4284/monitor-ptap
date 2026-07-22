@@ -9,6 +9,8 @@ import { OpcMetricsSubscriber } from '../metrics/opc-metrics.subscriber';
 import { ConnectivityModule } from './connectivity.module';
 import { DiagnosticsController } from './diagnostics.controller';
 import { OpcController } from './opc.controller';
+import { RouteCheckService } from './route-check.service';
+import { RouteProbeSampler } from './route-probe.sampler';
 
 /**
  * Observabilidad Fase 4 del puente OPC UA: /api/opc/* con RBAC, audit log de conexión,
@@ -19,6 +21,6 @@ import { OpcController } from './opc.controller';
 @Module({
   imports: [ConnectivityModule, AuthModule, AuditModule, MetricsModule, LoggingModule],
   controllers: [OpcController, DiagnosticsController],
-  providers: [ConnectionEventsSubscriber, OpcMetricsSubscriber, StructuredEventsSubscriber],
+  providers: [ConnectionEventsSubscriber, OpcMetricsSubscriber, StructuredEventsSubscriber, RouteCheckService, RouteProbeSampler],
 })
 export class OpcObservabilityModule {}

@@ -19,6 +19,8 @@ import { JwtService } from '../src/modules/auth/jwt.service';
 import { UsersRepository, type UserRecord } from '../src/modules/users/users.repository';
 import { AuditLogService, type AuditEventRow } from '../src/infrastructure/audit/audit-log.service';
 import { DiagnosticsController } from '../src/infrastructure/connectivity/diagnostics.controller';
+import type { RouteCheckReport } from '../src/infrastructure/connectivity/route-check.service';
+import { RouteProbeSampler } from '../src/infrastructure/connectivity/route-probe.sampler';
 
 process.env.JWT_SECRET = process.env.JWT_SECRET ?? 'test-secret-diagnostics';
 
@@ -51,9 +53,33 @@ const EVENTS: AuditEventRow[] = [
   { at: '2026-07-21T15:47:00.000Z', eventType: 'opc.bridge_status_change', detail: { status: 'Connecting', reason: 'timeout TCP' } },
 ];
 
+/** Muestras del sampler (más reciente primero) para /route-history. */
+const PROBE_ROWS: AuditEventRow[] = [
+  { at: new Date().toISOString(), eventType: 'opc.route_probe', detail: { code: 'PLC-12', bridge: 'Connecting' } },
+  { at: new Date(Date.now() - 300_000).toISOString(), eventType: 'opc.route_probe', detail: { code: '—', bridge: 'Connected' } },
+];
+
 const auditDouble = {
-  listByEventType: async () => EVENTS,
+  listByEventType: async (eventType: string) => (eventType === 'opc.route_probe' ? PROBE_ROWS : EVENTS),
 } as unknown as AuditLogService;
+
+const ROUTE_REPORT: RouteCheckReport = {
+  at: '2026-07-22T13:00:00.000Z',
+  target: { endpoint: 'opc.tcp://181.204.165.66:59100', host: '181.204.165.66', port: 59100 },
+  serverPublicIp: '190.0.0.1',
+  probes: [
+    { name: 'internet', target: '8.8.8.8:53', outcome: 'ok', ms: 20, detail: null },
+    { name: 'ping', target: '181.204.165.66', outcome: 'ok', ms: 21, detail: null },
+    { name: 'plc', target: '181.204.165.66:59100', outcome: 'timeout', ms: 5000, detail: null },
+  ],
+  verdict: { code: 'PLC-12', where: 'ruta-o-planta', message: 'x' },
+  bridge: { status: 'Connecting', reconnectCount: 3, lastNotificationAt: null },
+};
+
+// Doble del sampler: el endpoint manual usa manualCheck() (que además GRABA la muestra).
+const samplerDouble = {
+  manualCheck: async () => ROUTE_REPORT,
+} as unknown as RouteProbeSampler;
 
 async function buildApp(): Promise<{ app: INestApplication; jwt: JwtService }> {
   const moduleRef = await Test.createTestingModule({
@@ -64,6 +90,7 @@ async function buildApp(): Promise<{ app: INestApplication; jwt: JwtService }> {
       JwtService,
       { provide: UsersRepository, useValue: usersDouble },
       { provide: AuditLogService, useValue: auditDouble },
+      { provide: RouteProbeSampler, useValue: samplerDouble },
     ],
   }).compile();
   const app = moduleRef.createNestApplication();
@@ -108,6 +135,47 @@ test('diagnostics: admin → 200 con el historial de eventos', async () => {
       .expect(200);
     assert.equal(res.body.events.length, 1);
     assert.equal(res.body.events[0].detail.status, 'Connecting');
+  } finally {
+    await app.close();
+  }
+});
+
+test('diagnostics/route-check: operador → 403; admin → 200 con sondas y veredicto', async () => {
+  const { app, jwt } = await buildApp();
+  try {
+    await request(app.getHttpServer())
+      .get('/api/diagnostics/route-check')
+      .set('Authorization', `Bearer ${tokenFor(jwt, 'operador')}`)
+      .expect(403);
+
+    const res = await request(app.getHttpServer())
+      .get('/api/diagnostics/route-check')
+      .set('Authorization', `Bearer ${tokenFor(jwt, 'admin')}`)
+      .expect(200);
+    assert.equal(res.body.probes.length, 3); // internet + ping + plc
+    assert.equal(res.body.verdict.code, 'PLC-12');
+    assert.equal(res.body.target.port, 59100);
+  } finally {
+    await app.close();
+  }
+});
+
+test('diagnostics/route-history: civil → 403; admin → 200 con resumen del registro continuo', async () => {
+  const { app, jwt } = await buildApp();
+  try {
+    await request(app.getHttpServer())
+      .get('/api/diagnostics/route-history')
+      .set('Authorization', `Bearer ${tokenFor(jwt, 'civil')}`)
+      .expect(403);
+
+    const res = await request(app.getHttpServer())
+      .get('/api/diagnostics/route-history')
+      .set('Authorization', `Bearer ${tokenFor(jwt, 'admin')}`)
+      .expect(200);
+    assert.equal(res.body.summary.samples, 2);
+    assert.equal(res.body.summary.plcOk, 1);
+    // La muestra más reciente falló → hay corte vigente desde esa muestra.
+    assert.equal(res.body.summary.downSince, PROBE_ROWS[0].at);
   } finally {
     await app.close();
   }

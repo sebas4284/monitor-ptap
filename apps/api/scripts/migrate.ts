@@ -17,7 +17,10 @@ const MIGRATIONS_DIR = join(__dirname, '..', 'src', 'infrastructure', 'database'
 
 async function runCli(): Promise<void> {
   const config = readDatabaseConfig();
-  const pool = createPool({ ...config, waitForConnections: true, connectionLimit: 5 });
+  // multipleStatements SOLO aquí (runner de migraciones): permite que un .sql tenga varias
+  // sentencias (p. ej. ALTER + UPDATE + CREATE). NO se habilita en el pool del runtime, donde
+  // ampliaría el radio de una inyección SQL — este script no recibe entrada de usuario.
+  const pool = createPool({ ...config, multipleStatements: true, waitForConnections: true, connectionLimit: 5 });
 
   try {
     await pool.query(

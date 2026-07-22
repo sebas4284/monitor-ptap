@@ -111,7 +111,10 @@ npm run db:seed-users -w @ptap/api
 npm run db:seed-admin -w @ptap/api
 ```
 
-`db:seed-users` crea estas cuentas (contraseña común desde `SEED_USERS_PASSWORD`, default `Demo1234!`):
+`db:seed-users` crea estas cuentas. La contraseña común viene de `SEED_USERS_PASSWORD` y es
+**obligatoria** — ya no existe el default público `Demo1234!` (higiene de seguridad: estaba escrito
+en el repo). Antes de exponer el backend fuera de desarrollo, corta las cuentas demo con
+`npm run db:disable-demo-users -w @ptap/api` (reversible vía `PATCH /api/users/:id/active`).
 
 | Email | Rol | Qué puede hacer |
 |---|---|---|
@@ -230,10 +233,10 @@ Con `npm run dev:api` + `npm run web -w @ptap/mobile`, entra con cada usuario y 
 rol cambia lo que ve la app. Para comprobar el RBAC del backend directamente:
 
 ```bash
-# token de un rol
+# token de un rol (usa la contraseña que definiste en SEED_USERS_PASSWORD al sembrar)
 TOKEN=$(curl -s -X POST http://localhost:4000/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"civil@ptap.co","password":"Demo1234!"}' | jq -r .token)
+  -d '{"email":"civil@ptap.co","password":"<SEED_USERS_PASSWORD>"}' | jq -r .token)
 
 curl -i http://localhost:4000/api/opc/info                          # 401 sin token
 curl -i -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/opc/info   # 403 (civil no es admin)

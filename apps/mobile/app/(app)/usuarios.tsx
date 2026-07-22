@@ -215,6 +215,9 @@ export default function UsuariosScreen() {
         }
         renderItem={({ item }) => {
           const isSelf = item.id === current?.id;
+          // Otro administrador: los admins son mutuamente intocables (el backend lo rechaza).
+          const isOtherAdmin = item.role === 'admin' && !isSelf;
+          const locked = isSelf || isOtherAdmin; // acciones deshabilitadas
           const busy = busyId === item.id;
           // Nunca inició sesión y está inactiva = recién registrada, esperando aprobación. Si ya
           // entró alguna vez, un admin la desactivó: son dos situaciones distintas y el botón
@@ -246,14 +249,25 @@ export default function UsuariosScreen() {
                   </Text>
                 </View>
               )}
+              {/* Correo verificado: el backend NO deja activar una cuenta sin verificar. */}
+              <View style={styles.verifyTag}>
+                <Ionicons
+                  name={item.emailVerified ? 'mail-open-outline' : 'mail-unread-outline'}
+                  size={13}
+                  color={item.emailVerified ? Colors.success : Colors.danger}
+                />
+                <Text style={[styles.verifyTagText, { color: item.emailVerified ? Colors.success : Colors.danger }]}>
+                  {item.emailVerified ? 'Correo verificado' : 'Correo sin verificar — no se puede activar'}
+                </Text>
+              </View>
               {!item.isActive && !isPending && (
                 <Text style={styles.inactiveTag}>Cuenta desactivada — no puede iniciar sesión</Text>
               )}
 
               <View style={styles.actions}>
                 <TouchableOpacity
-                  style={[styles.action, (busy || isSelf) && styles.actionDisabled]}
-                  disabled={busy || isSelf}
+                  style={[styles.action, (busy || locked) && styles.actionDisabled]}
+                  disabled={busy || locked}
                   onPress={() => setExpandedId(expandedId === item.id ? null : item.id)}
                   activeOpacity={0.8}
                 >
@@ -262,8 +276,8 @@ export default function UsuariosScreen() {
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={[styles.action, (busy || isSelf) && styles.actionDisabled]}
-                  disabled={busy || isSelf}
+                  style={[styles.action, (busy || locked) && styles.actionDisabled]}
+                  disabled={busy || locked}
                   onPress={() => void toggleActive(item)}
                   activeOpacity={0.8}
                 >
@@ -289,6 +303,11 @@ export default function UsuariosScreen() {
               {isSelf && (
                 <Text style={styles.selfHint}>
                   No puedes cambiar tu propio rol ni desactivarte (evita perder el acceso de administrador).
+                </Text>
+              )}
+              {isOtherAdmin && (
+                <Text style={styles.selfHint}>
+                  No puedes modificar a otro administrador. La gestión de administradores se hace fuera de la app.
                 </Text>
               )}
 
@@ -356,6 +375,8 @@ const styles = StyleSheet.create({
   cardPending: { opacity: 1, borderColor: Colors.warning, backgroundColor: Colors.warning + '0C' },
   pendingTag: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 },
   pendingTagText: { flex: 1, fontSize: 11.5, color: Colors.warning, fontWeight: '600' },
+  verifyTag: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 6 },
+  verifyTagText: { fontSize: 11, fontWeight: '600' },
   cardHead: { flexDirection: 'row', gap: 10, alignItems: 'flex-start' },
   name: { fontSize: 15, fontWeight: '700', color: Colors.textPrimary },
   selfTag: { fontSize: 12, fontWeight: '400', color: Colors.textSecondary },

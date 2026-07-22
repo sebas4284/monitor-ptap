@@ -2,9 +2,11 @@ import { ConflictException, ForbiddenException, Inject, Injectable, Unauthorized
 import { randomUUID } from 'node:crypto';
 import type { AuthUser } from '@ptap/shared';
 import { AuditLogService } from '../../infrastructure/audit/audit-log.service';
+import { EmailService } from '../email/email.service';
 import { DUPLICATE_ENTRY, UsersRepository } from '../users/users.repository';
 import { toAuthUser } from '../users/user.mapper';
 import type { RegisterDto } from './dto/register.dto';
+import { EmailVerificationRepository } from './email-verification.repository';
 import { JwtService } from './jwt.service';
 import { PasswordHashingService } from './password-hashing.service';
 
@@ -31,6 +33,11 @@ export interface RegisterResult {
   message: string;
 }
 
+/** Base pública para los enlaces del correo (la URL por la que se llega al backend). */
+function appPublicUrl(): string {
+  return (process.env.APP_PUBLIC_URL ?? `http://localhost:${process.env.PORT ?? 4000}`).replace(/\/+$/, '');
+}
+
 /**
  * Login: mismo shape de respuesta { token, user: AuthUser } que ya espera
  * apps/mobile/services/auth.ts — cero cambios en el móvil necesarios.
@@ -42,6 +49,8 @@ export class AuthService {
     @Inject(PasswordHashingService) private readonly passwordHashing: PasswordHashingService,
     @Inject(JwtService) private readonly jwtService: JwtService,
     @Inject(AuditLogService) private readonly auditLog: AuditLogService,
+    @Inject(EmailVerificationRepository) private readonly emailVerification: EmailVerificationRepository,
+    @Inject(EmailService) private readonly email: EmailService,
   ) {}
 
   async login(email: string, password: string, ctx: LoginContext): Promise<LoginResult> {
@@ -91,12 +100,12 @@ export class AuthService {
   }
 
   /**
-   * Auto-registro. Dos garantías, ambas del lado del servidor:
+   * Auto-registro. TRES barreras, todas del lado del servidor:
    *  1. El rol se fuerza a 'civil' (el schema `.strict()` además rechaza el campo si lo mandan).
-   *  2. La cuenta nace **INACTIVA**: no puede iniciar sesión hasta que un administrador la
-   *     apruebe. Es la defensa contra cuentas falsas/fantasma — verificar el correo no sirve
-   *     (cualquiera crea uno en 30 segundos); lo que frena a un impostor es que un humano lo
-   *     reconozca. Por eso NO se devuelve token aquí.
+   *  2. Se envía un correo de VERIFICACIÓN: la cuenta debe probar que el correo es real/propio
+   *     (frena bots con correos inventados). Sin verificar, un admin no la puede activar.
+   *  3. La cuenta nace **INACTIVA**: aunque verifique el correo, un administrador debe aprobarla
+   *     (filtro humano contra impostores). Por eso NO se devuelve token aquí.
    */
   async register(dto: RegisterDto, ctx: LoginContext): Promise<RegisterResult> {
     const { passwordHash, pepperVersion } = await this.passwordHashing.hashPassword(dto.password);
@@ -131,6 +140,16 @@ export class AuthService {
       throw err;
     }
 
+    // Emitir el token de verificación y "enviar" el correo. Un fallo del envío NO cae el registro
+    // (la cuenta ya existe; el usuario puede pedir reenvío) — solo se anota.
+    let emailSent = false;
+    try {
+      await this.sendVerification(id, dto.email);
+      emailSent = true;
+    } catch {
+      /* el reenvío queda disponible; se refleja en el audit */
+    }
+
     await this.auditLog.record({
       eventType: 'auth.register',
       userId: id,
@@ -140,16 +159,56 @@ export class AuthService {
       method: 'POST',
       path: '/api/auth/register',
       statusCode: 201,
-      detail: { plant: dto.plant, status: 'pending_approval' },
+      detail: { plant: dto.plant, status: 'pending_approval', emailSent },
     });
 
     return {
       status: 'pending_approval',
       email: dto.email,
       message:
-        'Tu cuenta fue creada y está pendiente de aprobación por un administrador. ' +
-        'Podrás iniciar sesión cuando la habiliten.',
+        'Tu cuenta fue creada. Te enviamos un correo para verificar tu cuenta: ábrelo para ' +
+        'confirmar. Después, un administrador la aprobará antes de que puedas iniciar sesión.',
     };
+  }
+
+  /** Emite un token nuevo y "envía" el enlace de verificación. */
+  private async sendVerification(userId: string, email: string): Promise<void> {
+    const { raw } = await this.emailVerification.issue(userId);
+    const link = `${appPublicUrl()}/api/auth/verify-email?token=${raw}`;
+    await this.email.sendVerificationEmail(email, link);
+  }
+
+  /**
+   * Verifica el correo a partir del token del enlace. Genérico ante token inválido/vencido/usado
+   * (no revela nada). Idempotente: un token ya consumido devuelve `verified:false`.
+   */
+  async verifyEmail(token: string): Promise<{ verified: boolean }> {
+    const userId = await this.emailVerification.consume(token);
+    if (!userId) return { verified: false };
+    await this.usersRepository.setEmailVerified(userId);
+    await this.auditLog.record({
+      eventType: 'auth.email_verified',
+      userId,
+      userEmail: null,
+      role: null,
+      ip: null,
+      method: 'GET',
+      path: '/api/auth/verify-email',
+      statusCode: 200,
+    });
+    return { verified: true };
+  }
+
+  /**
+   * Reenvía el correo de verificación. SIEMPRE responde igual (void), exista o no el correo y esté
+   * o no verificado — así no se puede enumerar qué correos están registrados. Solo hace trabajo si
+   * la cuenta existe y aún no está verificada; invalida tokens previos para que solo el último sirva.
+   */
+  async resendVerification(email: string): Promise<void> {
+    const record = await this.usersRepository.findByEmail(email);
+    if (!record || record.emailVerified) return;
+    await this.emailVerification.invalidateForUser(record.id);
+    await this.sendVerification(record.id, record.email);
   }
 
   private async logLoginFailed(email: string, ctx: LoginContext, reason: string): Promise<void> {

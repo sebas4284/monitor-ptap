@@ -143,6 +143,9 @@ JWT_EXPIRES_IN=8h
 CORS_ORIGINS=http://localhost:8081
 
 # ── Usuarios de prueba (paso 5) ──
+# OBLIGATORIA para sembrar (ya no hay default). Este valor es de ejemplo y SOLO para un entorno
+# local: antes de exponer el backend, las cuentas demo se cortan con
+# `npm run db:disable-demo-users -w @ptap/api`.
 SEED_USERS_PASSWORD=Demo1234!
 ```
 
@@ -173,7 +176,8 @@ npm run db:migrate    -w @ptap/api    # crea users, audit_log, command_log (idem
 npm run db:seed-users -w @ptap/api    # un usuario por rol (idempotente)
 ```
 
-Crea estas cuentas, todas con `SEED_USERS_PASSWORD` (default `Demo1234!`):
+Crea estas cuentas, todas con la contraseña de `SEED_USERS_PASSWORD` (obligatoria — sin ella el
+script aborta; ya no existe el default público):
 
 | Email | Rol | Acceso |
 |---|---|---|

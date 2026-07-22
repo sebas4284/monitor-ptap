@@ -64,9 +64,16 @@ export async function apiRegister(data: {
   phone: string;
   plant: string;
   password: string;
+  /** Honeypot anti-bot: un humano lo deja vacío; el backend rechaza si llega con contenido. */
+  website?: string;
 }): Promise<RegisterResult> {
-  // sin `role`: el backend lo rechazaría (schema .strict)
-  const res = await postAuth('/api/auth/register', data);
+  // sin `role`: el backend lo rechazaría (schema .strict). El teléfono vacío se OMITE (el backend
+  // valida formato cuando viene); enviar '' fallaría la validación.
+  const { phone, website, ...rest } = data;
+  const payload: Record<string, string> = { ...rest };
+  if (phone.trim()) payload.phone = phone.trim();
+  if (website) payload.website = website; // solo viaja si un bot lo llenó (para que el backend lo cace)
+  const res = await postAuth('/api/auth/register', payload);
 
   if (res.status === 409) throw new Error('Ese correo ya está registrado');
   if (res.status === 429) throw new Error('Demasiados intentos. Espera un momento e intenta de nuevo.');

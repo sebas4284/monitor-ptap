@@ -4,9 +4,13 @@
  * existe, no lo toca. No forma parte del runtime — paso explícito (`npm run db:seed-users`),
  * igual que `db:migrate`/`db:seed-admin`.
  *
- * Contraseña común desde SEED_USERS_PASSWORD (default Demo1234!). Todos en la planta
- * `montebello`. Los emails NO codifican el rol para el backend (el rol real vive en la BD);
- * son solo etiquetas legibles para la demo.
+ * Contraseña común desde SEED_USERS_PASSWORD — OBLIGATORIA, sin default. Antes existía el
+ * default público `Demo1234!`: cualquiera que leyera el repo conocía las credenciales de las
+ * 4 cuentas. Ahora quien siembra elige la contraseña de forma explícita, y antes de exponer
+ * el backend las cuentas demo se cortan con `npm run db:disable-demo-users`.
+ *
+ * Todos en la planta `montebello`. Los emails NO codifican el rol para el backend (el rol
+ * real vive en la BD); son solo etiquetas legibles para la demo.
  */
 import '../src/config/load-env';
 import { randomUUID } from 'node:crypto';
@@ -25,7 +29,14 @@ const DEMO_USERS: Array<{ email: string; name: string; role: Role }> = [
 const PLANT = 'montebello';
 
 async function runCli(): Promise<void> {
-  const password = process.env.SEED_USERS_PASSWORD ?? 'Demo1234!';
+  const password = process.env.SEED_USERS_PASSWORD;
+  if (!password) {
+    console.error(
+      '✗ Falta SEED_USERS_PASSWORD. Ya no hay contraseña por defecto (era pública en el repo):\n' +
+        '  SEED_USERS_PASSWORD="<tu contraseña>" npm run db:seed-users',
+    );
+    process.exit(1);
+  }
   const config = readDatabaseConfig();
   const pool = createPool({ ...config, waitForConnections: true, connectionLimit: 5 });
   const hashing = new PasswordHashingService();

@@ -52,6 +52,15 @@ export function SignalCard({
   const hasRange = typeof signal.opMin === 'number' || typeof signal.opMax === 'number';
   const lastSeen = stale && numeric ? horaDe(signal.ts) : null;
 
+  // Color de ALERTA del valor (la misma lógica que services/alerts.ts): con datos frescos, un
+  // valor fuera del rango físico = rojo; fuera del operativo = ámbar. Congelado no alarma (viejo).
+  const v = signal.value;
+  const outOfOp =
+    typeof v === 'number' &&
+    ((typeof signal.opMin === 'number' && v < signal.opMin) ||
+      (typeof signal.opMax === 'number' && v > signal.opMax));
+  const alertColor = stale ? null : signal.outOfRange ? Colors.danger : outOfOp ? Colors.warning : null;
+
   return (
     <View style={styles.card}>
       <View style={styles.header}>
@@ -68,7 +77,7 @@ export function SignalCard({
 
       {numeric ? (
         <>
-          <Text style={[styles.value, stale && styles.valueStale]}>
+          <Text style={[styles.value, stale && styles.valueStale, alertColor ? { color: alertColor } : null]}>
             {(signal.value as number).toFixed(2)}
             <Text style={styles.unit}> {signal.unit ?? ''}</Text>
           </Text>

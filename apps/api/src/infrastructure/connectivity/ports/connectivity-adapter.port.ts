@@ -9,15 +9,10 @@
  * La traducción cruda → dominio ocurre aguas arriba (Mapping Engine, Fase 3).
  */
 
-export type BridgeStatus =
-  | 'Connecting'
-  | 'Connected'
-  | 'Recovering'
-  | 'Stale'
-  | 'Disconnected'
-  | 'Faulted';
-
-export type OpcQuality = 'Good' | 'Bad' | 'Uncertain';
+// DEF-08: BridgeStatus/OpcQuality viven en @ptap/shared (contrato compartido con el móvil).
+// Se re-exportan aquí para que la capa de conectividad siga importando de su puerto.
+export type { BridgeStatus, OpcQuality } from '@ptap/shared';
+import type { BridgeStatus, OpcQuality } from '@ptap/shared';
 
 /** Una muestra de un buffer (nodo array completo). Un MonitoredItem por buffer (regla 6). */
 export interface RawBufferSample {

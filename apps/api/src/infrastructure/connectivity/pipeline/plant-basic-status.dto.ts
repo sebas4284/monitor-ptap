@@ -1,5 +1,5 @@
-import type { BridgeStatus } from '../ports/connectivity-adapter.port';
-import type { LivenessDto, PlantSnapshotDto } from './plant-snapshot.dto';
+import type { PlantBasicStatusDto } from '@ptap/shared';
+import type { PlantSnapshotDto } from './plant-snapshot.dto';
 
 /**
  * Vista MÍNIMA de una planta para el rol Civil: exactamente las dos preguntas que la matriz
@@ -8,15 +8,11 @@ import type { LivenessDto, PlantSnapshotDto } from './plant-snapshot.dto';
  * Es una whitelist deliberada, no un snapshot recortado: aquí NO viaja `signals`, así que el
  * dispositivo del Civil nunca recibe caudales, presiones ni estados de válvula. Añadir campos
  * a este DTO es una decisión de producto (¿puede el Civil ver esto?), no un detalle técnico.
+ *
+ * DEF-08: el tipo vive en @ptap/shared (fuente única backend↔móvil); aquí queda la LÓGICA
+ * de proyección y se re-exporta el tipo para los consumidores del pipeline.
  */
-export interface PlantBasicStatusDto {
-  plantId: string;
-  displayName: string;
-  bridgeStatus: BridgeStatus;
-  liveness: LivenessDto;
-  /** null = la planta no tiene señales de tanque mapeadas (no se puede afirmar ni negar). */
-  waterAvailable: boolean | null;
-}
+export type { PlantBasicStatusDto } from '@ptap/shared';
 
 /**
  * Cota (m) bajo la cual un tanque se considera prácticamente vacío. Umbral operativo

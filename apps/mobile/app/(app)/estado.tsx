@@ -13,8 +13,9 @@ import type { LivenessState } from '../../services/api';
  * FRESCURA de datos (liveness), porque un puente Connected que ya no recibe datos no está
  * realmente "operativo": está congelado. La paleta es la misma que LiveBadge (coherencia).
  *
- * `bridgeStatus` llega como string en el DTO del móvil; el `default` cubre cualquier valor
- * inesperado sin romper la pantalla.
+ * El parámetro se mantiene como `string` a propósito (aunque el DTO ya viene tipado con los 6
+ * estados desde @ptap/shared — DEF-08): el `default` cubre cualquier valor inesperado de un
+ * backend más nuevo sin romper la pantalla.
  */
 function systemHealth(
   bridgeStatus: string | undefined,

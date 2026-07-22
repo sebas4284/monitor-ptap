@@ -39,6 +39,8 @@ export interface UserSummary {
   role: Role;
   plant: string;
   isActive: boolean;
+  /** Correo verificado (anti-bot). Un admin NO puede activar una cuenta con esto en false. */
+  emailVerified: boolean;
   lastLoginAt: string | null;
   createdAt: string | null;
 }
@@ -73,6 +75,123 @@ export function classifyBridge(bridgeStatus: string): Exclude<ConnectionFault, '
   if (bridgeStatus === 'Connected') return 'ok';
   if (bridgeStatus === 'Stale') return 'master_no_data';
   return 'route';
+}
+
+/**
+ * Códigos de los cortes de conexión que ve el usuario, para reportes precisos. La nomenclatura
+ * completa del proyecto vive en docs/CATALOGO_ERRORES.md; estos son los que la app muestra en el
+ * banner y en el informe exportable. `NET-*` = lado del dispositivo; `PLC-*` = lado del servidor.
+ */
+export const CONNECTION_CODES = {
+  /** El dispositivo no está conectado a ninguna red (WiFi/datos apagados). */
+  NO_NETWORK: 'NET-01',
+  /** Hay red pero sin salida a internet (problema del proveedor). */
+  NO_INTERNET: 'NET-02',
+  /** Hay internet pero el servidor del sistema no responde. */
+  SERVER_DOWN: 'NET-03',
+  /** El servidor no alcanza el PLC (ruta de red intermedia). Solo admin. */
+  PLC_ROUTE: 'PLC-01',
+  /** Hubo sesión con el PLC pero el maestro dejó de enviar datos. */
+  PLC_NO_DATA: 'PLC-02',
+} as const;
+
+export type ConnectionCode = (typeof CONNECTION_CODES)[keyof typeof CONNECTION_CODES];
+
+// ── Contrato del snapshot de planta (DEF-08: fuente ÚNICA backend↔móvil) ─────────────
+// Antes el móvil duplicaba estos tipos a mano en services/api.ts (con `bridgeStatus: string`,
+// perdiendo la verificación de los 6 estados) sin barrera técnica que forzara la sincronía.
+// Ahora ambos lados importan de aquí: un campo nuevo o un estado nuevo se declara UNA vez.
+
+/** Estado del puente OPC UA servidor↔PLC. Espejo exacto de la máquina de estados del backend. */
+export type BridgeStatus =
+  | 'Connecting'
+  | 'Connected'
+  | 'Recovering'
+  | 'Stale'
+  | 'Disconnected'
+  | 'Faulted';
+
+export type OpcQuality = 'Good' | 'Bad' | 'Uncertain';
+
+/**
+ * Frescura de datos de la planta. La diferencia entre los dos últimos es la salud de la SESIÓN,
+ * no el reloj: `stable` = sesión sana con valores quietos (operación NORMAL, datos válidos);
+ * `frozen` = perdimos la fuente y el dato ya no es fiable.
+ */
+export type LivenessState = 'live' | 'stable' | 'frozen';
+
+/** Razón por la que una señal no es usable (QualityService del backend). */
+export type UnusableReason = 'BAD_QUALITY' | 'INVALID_NUMBER' | 'BRIDGE_STALE';
+
+export type Confidence = 'confirmed' | 'inferred' | 'estimated';
+
+export interface SignalDto {
+  value: number | boolean | null;
+  unit: string | null;
+  quality: OpcQuality;
+  usable: boolean;
+  reason?: UnusableReason;
+  /** true si el valor cae fuera de [min, max] del mapping. Informativo/alerta — el valor
+   * SIGUE mostrándose (nunca se oculta por esto solo). */
+  outOfRange?: boolean;
+  mappingStatus: 'mapped' | 'unmapped';
+  confidence: Confidence;
+  label: string | null;
+  /** SourceTimestamp del PLC (regla 7: nunca Date.now() para datos). */
+  ts: string | null;
+  /** Rango operativo/normativo entregado por el operador; el front lo muestra junto al valor. */
+  opMin?: number;
+  opMax?: number;
+}
+
+export interface LivenessDto {
+  state: LivenessState;
+  lastChangeAt: string | null;
+  windowSec: number;
+}
+
+export interface PlantSnapshotDto {
+  plantId: string;
+  displayName: string;
+  sequence: number;
+  /** Opcionales EN EL CABLE: la respuesta `pending` del arranque de telemetría no los incluye.
+   *  El SnapshotBuilder del backend los emite siempre. */
+  protocolVersion?: string;
+  dtoVersion?: string;
+  bridgeStatus: BridgeStatus;
+  liveness: LivenessDto;
+  signals: Record<string, SignalDto>;
+  /** true si aún no hay snapshot en cache para esa planta (respuesta de espera, sin señales). */
+  pending?: boolean;
+}
+
+/** Cambio de liveness para el evento Socket.IO `opc:liveness`. */
+export interface LivenessChange {
+  plantId: string;
+  state: LivenessState;
+  lastChangeAt: string | null;
+  windowSec: number;
+}
+
+/**
+ * Vista MÍNIMA de la planta para el rol Civil. Whitelist deliberada, no un snapshot recortado:
+ * NO viaja `signals`, así que el dispositivo del Civil nunca recibe caudales ni presiones.
+ */
+export interface PlantBasicStatusDto {
+  plantId: string;
+  displayName: string;
+  bridgeStatus: BridgeStatus;
+  liveness: LivenessDto;
+  /** null = la planta no tiene señales de tanque mapeadas (no se puede afirmar ni negar). */
+  waterAvailable: boolean | null;
+}
+
+/** Elemento de GET /api/plants. */
+export interface PlantListItem {
+  plantId: string;
+  displayName: string;
+  liveness: LivenessDto;
+  bridgeStatus: BridgeStatus;
 }
 
 export interface Sensor {

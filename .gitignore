@@ -14,6 +14,8 @@ expo-env.d.ts
 .kotlin/
 *.orig.*
 *.jks
+*.keystore
+keystore.properties
 *.p8
 *.p12
 *.key
@@ -42,6 +44,8 @@ yarn-error.*
 apps/api/pki/
 pki/
 
-# generated native folders
+# generated native folders (expo prebuild) — se regeneran; nunca al repo (incluyen el keystore)
 /ios
 /android
+apps/mobile/ios/
+apps/mobile/android/

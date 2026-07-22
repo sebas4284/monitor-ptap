@@ -50,6 +50,22 @@ test('quality: StatusCode != Good → BAD_QUALITY', () => {
   assert.equal(evaluateQuality({ value: 10, quality: 'Bad', min: 0, max: 1000, livenessState: 'live' }).reason, 'BAD_QUALITY');
 });
 
+// DEF-04: una señal estructuralmente rota (índice fuera de rango, buffer ausente) llega con
+// value=null; antes salía usable:true, indistinguible de un dato bueno.
+test('quality: value=null aun con quality Good → NO usable (INVALID_NUMBER)', () => {
+  const v = evaluateQuality({ value: null, quality: 'Good', min: 0, max: 1000, livenessState: 'live' });
+  assert.equal(v.usable, false);
+  assert.equal(v.reason, 'INVALID_NUMBER');
+});
+
+// DEF-03: un `null` por elemento del PLC se convierte en NaN en el adaptador (nunca 0). Aquí se
+// verifica la GARANTÍA aguas abajo: un elemento sin dato (NaN) termina NO usable, jamás como 0 real.
+test('quality: NaN (lo que produce un null del PLC) → NO usable, nunca un 0 falso', () => {
+  const v = evaluateQuality({ value: NaN, quality: 'Good', min: 0, max: 1000, livenessState: 'live' });
+  assert.equal(v.usable, false);
+  assert.equal(v.reason, 'INVALID_NUMBER');
+});
+
 test('quality: liveness frozen → BRIDGE_STALE (perdimos la fuente)', () => {
   assert.equal(evaluateQuality({ value: 10, quality: 'Good', min: 0, max: 1000, livenessState: 'frozen' }).reason, 'BRIDGE_STALE');
 });
@@ -128,6 +144,31 @@ test('mapping: extrae realIn[0]→inletFlow1 y realIn[5]→inletFlow2 del buffer
   assert.equal(f1?.value, 0); // primario[0], no el tanque
   assert.equal(f5?.value, 5); // primario[5]
   assert.equal(dl.snapshot().total, 0);
+});
+
+// DEF-04 (capa 2): un índice fuera del array real → quality:'Bad' (no la del buffer), para que
+// aguas abajo salga BAD_QUALITY y nunca usable:true con value:null.
+test('mapping: índice fuera de rango → value:null Y quality:Bad (señal rota)', () => {
+  const mapping: LoadedMapping = {
+    version: '0.9.0', protocolVersion: 'v2', dtoVersion: 'v1',
+    plants: [{ plantId: 'montebello', displayName: 'Montebello', livenessWindowSec: null }],
+    targets: [],
+    signals: [
+      { plantId: 'montebello', buffer: 'realIn', sourceBuffer: 'REAL_IN_MONTEBELLO', index: 40, domainKey: 'x', label: null, unit: null, min: null, max: null, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
+    ],
+    raw: {},
+  };
+  const engine = new MappingEngine(mapping);
+  const dl = new DeadLetterBuffer();
+  const latest = new Map<string, RawBufferSample>();
+  // llega un buffer más corto (10) de lo que el mapping direcciona (índice 40)
+  latest.set('REAL_IN_MONTEBELLO', buf('REAL_IN_MONTEBELLO', 'realIn', Array.from({ length: 10 }, (_, i) => i)));
+  const ex = engine.extract('montebello', latest, dl);
+  assert.equal(ex[0].value, null);
+  assert.equal(ex[0].quality, 'Bad', 'una señal con índice fuera de rango NO puede heredar quality Good del buffer');
+  // y por tanto NO es usable
+  assert.equal(evaluateQuality({ value: ex[0].value, quality: ex[0].quality, min: null, max: null, livenessState: 'live' }).usable, false);
+  assert.equal(dl.snapshot().total, 1);
 });
 
 test('mapping: sourceBuffer explícito gana sobre el empate de tamaño del canal', () => {

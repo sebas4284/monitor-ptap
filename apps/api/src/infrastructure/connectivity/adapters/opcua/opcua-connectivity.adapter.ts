@@ -154,6 +154,15 @@ export class OpcUaConnectivityAdapter implements ConnectivityAdapter {
         this.bridge.transition('Disconnected', `fallo al conectar: ${message}`);
       }
       await this.teardownSession().catch(() => undefined);
+      // Cerrar TAMBIÉN el cliente: `teardownSession()` solo suelta sesión/subscription. Sin esto,
+      // cada reintento fallido tras `connect()` fuga un OPCUAClient completo (socket + canal
+      // seguro + 3 listeners), porque el siguiente `createClient()` sobrescribe la referencia
+      // sin desconectar la anterior — fuga sin cota con un mapping mal configurado (reintenta
+      // indefinido). Es lo mismo que ya hace stop().
+      if (this.client) {
+        await this.client.disconnect().catch(() => undefined);
+        this.client = null;
+      }
       throw err;
     } finally {
       this.starting = false;
@@ -385,7 +394,11 @@ export class OpcUaConnectivityAdapter implements ConnectivityAdapter {
 
   private toValueArray(raw: unknown): Array<number | boolean> {
     if (raw === null || raw === undefined) return [];
-    if (Array.isArray(raw)) return raw.map((v) => (typeof v === 'boolean' ? v : Number(v)));
+    // Un `null`/`undefined` POR ELEMENTO (canal con calidad mala representada como null en un
+    // array mixto) NO puede volverse 0: `Number(null) === 0` sería una lectura falsa e
+    // indistinguible de un cero real. Se mapea a NaN para que QualityService lo marque
+    // INVALID_NUMBER (DAT-02) — "el tablero nunca miente".
+    if (Array.isArray(raw)) return raw.map((v) => (typeof v === 'boolean' ? v : v == null ? NaN : Number(v)));
     if (ArrayBuffer.isView(raw)) return Array.from(raw as unknown as ArrayLike<number>);
     if (typeof raw === 'boolean') return [raw];
     return [Number(raw)];

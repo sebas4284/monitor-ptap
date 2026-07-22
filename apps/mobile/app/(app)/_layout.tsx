@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Tabs, router } from 'expo-router';
+import { Tabs, Redirect, router } from 'expo-router';
 import {
   View,
   Text,
@@ -7,10 +7,12 @@ import {
   Modal,
   Pressable,
   StyleSheet,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '../../constants/colors';
 import { useAuth } from '../../context/AuthContext';
+import { useAlerts } from '../../hooks/useAlerts';
 import { ROLE_LABELS, ROLE_COLORS, type AuthUser } from '@ptap/shared';
 
 function MenuModal({
@@ -38,6 +40,11 @@ function MenuModal({
   function goToSettings() {
     onClose();
     router.push('/(app)/ajustes');
+  }
+
+  function goToAlerts() {
+    onClose();
+    router.push('/(app)/alertas');
   }
 
   const roleColor = user ? ROLE_COLORS[user.role] : Colors.primary;
@@ -73,13 +80,14 @@ function MenuModal({
             <Text style={styles.drawerItemText}>Ajustes</Text>
           </TouchableOpacity>
 
-          {/* Aún no implementado: se marca como tal en vez de dejar un botón muerto que
-              parezca roto en una demo. Las notificaciones/alertas son la Semana 6 del plan. */}
-          <View style={[styles.drawerItem, styles.drawerItemDisabled]}>
-            <Ionicons name="notifications-outline" size={20} color={Colors.textSecondary} />
-            <Text style={[styles.drawerItemText, { color: Colors.textSecondary }]}>Notificaciones</Text>
-            <Text style={styles.soonTag}>Próximamente</Text>
-          </View>
+          {/* Alertas REALES (derivadas del snapshot): solo tienen sentido para roles que ven el
+              tablero. El Civil (solo estado básico) no recibe señales, así que no se le ofrece. */}
+          {hasPermission('view_dashboard') && (
+            <TouchableOpacity style={styles.drawerItem} onPress={goToAlerts}>
+              <Ionicons name="notifications-outline" size={20} color={Colors.textPrimary} />
+              <Text style={styles.drawerItemText}>Alertas</Text>
+            </TouchableOpacity>
+          )}
 
           <View style={styles.drawerDivider} />
 
@@ -93,18 +101,28 @@ function MenuModal({
   );
 }
 
-function TabBadge({ count }: { count: number }) {
-  return (
-    <View style={styles.tabBadge}>
-      <Text style={styles.tabBadgeText}>{count}</Text>
-    </View>
-  );
-}
-
 export default function AppLayout() {
   const [menuVisible, setMenuVisible] = useState(false);
-  const { user } = useAuth();
+  const { user, token, isLoading } = useAuth();
+  // Conteo REAL de alertas (0 para el Civil, que no recibe señales). Se llama SIEMPRE, antes de
+  // los early-return, para no violar las reglas de hooks.
+  const { count: alertCount } = useAlerts();
   const isCivil = user?.role === 'civil';
+
+  // GUARD de sesión para TODAS las rutas de (app). Cubre tres caminos al login:
+  //  1. Recargar la página en una ruta profunda (/sensores, /ajustes…) sin sesión — antes la
+  //     pantalla se renderizaba igual (solo index.tsx redirigía) y quedaba rota a punta de 401.
+  //  2. El cierre AUTOMÁTICO a las 8 h (AuthContext vence el token y deja token=null).
+  //  3. Un 401 del backend (token revocado/vencido): onUnauthorized hace logout y esto redirige.
+  // Mientras se restaura la sesión persistida no se decide nada (evita el parpadeo al login).
+  if (isLoading) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.bg }}>
+        <ActivityIndicator size="large" color={Colors.primary} />
+      </View>
+    );
+  }
+  if (!token) return <Redirect href="/(auth)/login" />;
 
   const HEADER_OPTS = {
     headerStyle: { backgroundColor: Colors.primary },
@@ -120,13 +138,17 @@ export default function AppLayout() {
         <Ionicons name="menu" size={24} color="#fff" />
       </TouchableOpacity>
     ),
+    // Campana con conteo REAL de alertas; toca para abrir la pantalla de alertas. El badge solo
+    // aparece si hay alertas (nada de un "3" inventado). Para el Civil (sin señales) siempre 0.
     headerRight: () => (
-      <TouchableOpacity style={{ marginRight: 16 }} hitSlop={8}>
+      <TouchableOpacity style={{ marginRight: 16 }} hitSlop={8} onPress={() => router.push('/(app)/alertas')}>
         <View>
           <Ionicons name="notifications-outline" size={24} color="#fff" />
-          <View style={styles.notifBadge}>
-            <Text style={styles.notifText}>3</Text>
-          </View>
+          {alertCount > 0 && (
+            <View style={styles.notifBadge}>
+              <Text style={styles.notifText}>{alertCount > 9 ? '9+' : alertCount}</Text>
+            </View>
+          )}
         </View>
       </TouchableOpacity>
     ),
@@ -156,10 +178,7 @@ export default function AppLayout() {
             ...HEADER_OPTS,
             tabBarLabel: 'Sensores',
             tabBarIcon: ({ color, size, focused }) => (
-              <View>
-                <Ionicons name={focused ? 'pulse' : 'pulse-outline'} size={size} color={color} />
-                <TabBadge count={1} />
-              </View>
+              <Ionicons name={focused ? 'pulse' : 'pulse-outline'} size={size} color={color} />
             ),
           }}
         />
@@ -169,10 +188,7 @@ export default function AppLayout() {
             ...HEADER_OPTS,
             tabBarLabel: 'Válvulas',
             tabBarIcon: ({ color, size, focused }) => (
-              <View>
-                <Ionicons name={focused ? 'toggle' : 'toggle-outline'} size={size} color={color} />
-                <TabBadge count={2} />
-              </View>
+              <Ionicons name={focused ? 'toggle' : 'toggle-outline'} size={size} color={color} />
             ),
           }}
         />
@@ -206,6 +222,15 @@ export default function AppLayout() {
             href: null,
             ...HEADER_OPTS,
             headerTitle: 'Estado General',
+          }}
+        />
+        {/* Fuera del tab bar: se entra desde el menú/campana. Solo roles con view_dashboard. */}
+        <Tabs.Screen
+          name="alertas"
+          options={{
+            href: null,
+            ...HEADER_OPTS,
+            headerTitle: 'Alertas',
           }}
         />
         {/* Fuera del tab bar: se entra desde el menú, y solo si el rol tiene manage_users. */}
@@ -291,18 +316,6 @@ const styles = StyleSheet.create({
     color: Colors.textPrimary,
     fontWeight: '500',
   },
-  drawerItemDisabled: { opacity: 0.55 },
-  soonTag: {
-    marginLeft: 'auto',
-    fontSize: 10,
-    fontWeight: '700',
-    color: Colors.textSecondary,
-    backgroundColor: '#E5E7EB',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-    overflow: 'hidden',
-  },
   drawerDivider: {
     height: 1,
     backgroundColor: '#E5E7EB',
@@ -334,17 +347,4 @@ const styles = StyleSheet.create({
     paddingHorizontal: 3,
   },
   notifText: { color: '#fff', fontSize: 9, fontWeight: '700' },
-  tabBadge: {
-    position: 'absolute',
-    right: -7,
-    top: -3,
-    backgroundColor: Colors.danger,
-    borderRadius: 7,
-    minWidth: 14,
-    height: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 3,
-  },
-  tabBadgeText: { color: '#fff', fontSize: 9, fontWeight: '700' },
 });

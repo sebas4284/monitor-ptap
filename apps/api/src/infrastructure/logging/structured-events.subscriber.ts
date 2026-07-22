@@ -18,8 +18,11 @@ export class StructuredEventsSubscriber implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
+    // DEF-09: una línea por snapshot son ~21.600/hora en operación normal — ahogaba los errores
+    // reales y encarecía el shipping. Va en `debug`: invisible con LOG_LEVEL=info (el default),
+    // recuperable al instante con LOG_LEVEL=debug cuando se investiga el pipeline.
     this.pipeline.snapshot$.subscribe((snapshot) => {
-      this.logger.log({
+      this.logger.debug({
         msg: 'snapshot emitted',
         plantId: snapshot.plantId,
         bridgeStatus: snapshot.bridgeStatus,
@@ -27,6 +30,7 @@ export class StructuredEventsSubscriber implements OnModuleInit {
       });
     });
 
+    // Las transiciones del puente son raras y significativas: se quedan en `info`.
     this.adapter.onStatusChange((status, reason) => {
       this.logger.log({ msg: 'bridge status change', bridgeStatus: status, reason });
     });

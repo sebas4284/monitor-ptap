@@ -1,0 +1,44 @@
+# CI mínimo del monorepo: typecheck + lint + tests del API en cada push/PR.
+#
+# Dos decisiones deliberadas:
+#  1. Los tests se ejecutan por GLOB (test/*.test.ts), NO con la lista manual de package.json.
+#     La lista manual ya nos mordió una vez (login.test.ts existía pero nunca se ejecutaba):
+#     aquí, un archivo de test olvidado en package.json corre igual — no puede quedar invisible.
+#  2. `set "VAR=..."&&` de los scripts npm es sintaxis de cmd.exe (dev en Windows); en Linux no
+#     define la variable. Por eso TSX_TSCONFIG_PATH va como `env:` del paso, no vía npm script.
+#
+# Los tests NO requieren MySQL (usan dobles; mysql2 aparece solo como tipos), así que no hay
+# servicio de base de datos. Si algún día un test lo necesita, añadir `services: mysql`.
+name: CI
+
+on:
+  push:
+    branches: [main, yosh]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Typecheck (api + mobile + shared)
+        run: npm run typecheck
+
+      - name: Lint (todos los workspaces)
+        run: npm run lint
+
+      - name: Tests del API (todos los test/*.test.ts, por glob)
+        working-directory: apps/api
+        env:
+          TSX_TSCONFIG_PATH: tsconfig.test.json
+        run: node --import tsx --test test/*.test.ts

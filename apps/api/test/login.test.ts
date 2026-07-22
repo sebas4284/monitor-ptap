@@ -20,6 +20,8 @@ import { AuthService } from '../src/modules/auth/auth.service';
 import { JwtService } from '../src/modules/auth/jwt.service';
 import { PasswordHashingService } from '../src/modules/auth/password-hashing.service';
 import { UsersRepository, type UserRecord } from '../src/modules/users/users.repository';
+import { EmailVerificationRepository } from '../src/modules/auth/email-verification.repository';
+import { EmailService } from '../src/modules/email/email.service';
 
 process.env.JWT_SECRET = process.env.JWT_SECRET ?? 'test-secret-login';
 process.env.PASSWORD_PEPPER_CURRENT_VERSION = process.env.PASSWORD_PEPPER_CURRENT_VERSION ?? '1';
@@ -67,6 +69,9 @@ async function buildApp(repo: UsersRepository, audit: AuditLogService): Promise<
       PasswordHashingService,
       { provide: UsersRepository, useValue: repo },
       { provide: AuditLogService, useValue: audit },
+      // AuthService ahora depende de estos; el login no los usa, así que dobles vacíos bastan.
+      { provide: EmailVerificationRepository, useValue: {} },
+      { provide: EmailService, useValue: {} },
     ],
   })
   class LoginTestModule {}

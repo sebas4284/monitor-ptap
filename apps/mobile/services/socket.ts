@@ -5,9 +5,11 @@ import { API_BASE_URL, getAuthToken, type LivenessChange, type PlantSnapshotDto 
  * Cliente Socket.IO REAL. El backend empuja opc:snapshot (por planta, solo en cambios)
  * y opc:liveness (broadcast). El front NO hace polling: escucha el push.
  *
- * El JWT viaja en el handshake por compatibilidad hacia adelante. OJO: hoy el gateway
- * del backend NO lo valida — autenticar el socket es un gap conocido y documentado
- * (ver docs/SECURITY_FINDING_P0.md §6). No asumir que este canal está protegido.
+ * SEGURIDAD: el JWT del login viaja en `auth.token` y el gateway lo VALIDA en el handshake
+ * (SRV-04): sin token válido, el backend corta la conexión. El token se captura al CREAR el
+ * socket, así que la sesión debe reiniciarlo en cada cambio de identidad — de eso se encarga
+ * `resetSocket()`, llamado por AuthContext en login y logout. Sin ese reinicio, el socket
+ * seguiría vivo tras cerrar sesión (fuga del stream) o reusaría el token de otro usuario.
  */
 let socket: Socket | null = null;
 
@@ -20,6 +22,19 @@ export function getSocket(): Socket {
     });
   }
   return socket;
+}
+
+/**
+ * Cierra el socket y lo olvida. El próximo `getSocket()` abre una conexión nueva con el token
+ * VIGENTE en ese momento. Debe llamarse al iniciar y al cerrar sesión: al salir, corta el stream
+ * de datos del usuario que se va; al entrar, evita reutilizar el socket (y el JWT) de la sesión
+ * anterior.
+ */
+export function resetSocket(): void {
+  if (socket) {
+    socket.disconnect();
+    socket = null;
+  }
 }
 
 export interface PlantStreamHandlers {

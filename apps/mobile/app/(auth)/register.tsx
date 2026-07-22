@@ -45,6 +45,7 @@ export default function RegisterScreen() {
   const [phone, setPhone] = useState('');
   const [plant, setPlant] = useState<string>(PLANTS[0].id); // slug, no displayName
   const [password, setPassword] = useState('');
+  const [website, setWebsite] = useState(''); // honeypot: un humano lo deja vacío
   const [showPassword, setShowPassword] = useState(false);
   const [showPlantPicker, setShowPlantPicker] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -65,6 +66,7 @@ export default function RegisterScreen() {
         phone: phone.trim(),
         plant,
         password,
+        website, // honeypot; vacío para humanos
       });
       alertWeb('Cuenta creada', message, () => router.replace('/(auth)/login'));
     } catch (err) {
@@ -150,7 +152,7 @@ export default function RegisterScreen() {
               style={[styles.input, styles.passwordInput]}
               value={password}
               onChangeText={setPassword}
-              placeholder="Mínimo 8 caracteres"
+              placeholder="Mín. 8, con mayúscula, minúscula y número"
               placeholderTextColor={Colors.textSecondary}
               secureTextEntry={!showPassword}
               autoCapitalize="none"
@@ -159,6 +161,21 @@ export default function RegisterScreen() {
               <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={20} color={Colors.textSecondary} />
             </TouchableOpacity>
           </View>
+          <Text style={styles.hint}>
+            La contraseña debe tener al menos 8 caracteres, con una mayúscula, una minúscula y un número.
+          </Text>
+
+          {/* Honeypot anti-bot: fuera de pantalla para humanos, pero presente en el DOM web para
+              que un bot que rellena todo lo llene y el backend lo rechace. No lleva label. */}
+          <TextInput
+            value={website}
+            onChangeText={setWebsite}
+            style={styles.honeypot}
+            autoComplete="off"
+            autoCorrect={false}
+            autoCapitalize="none"
+            importantForAccessibility="no-hide-descendants"
+          />
 
           <TouchableOpacity
             style={[styles.btnPrimary, isLoading && styles.btnDisabled]}
@@ -232,6 +249,9 @@ const styles = StyleSheet.create({
   passwordRow: { position: 'relative', justifyContent: 'center' },
   passwordInput: { paddingRight: 44 },
   eye: { position: 'absolute', right: 12 },
+  hint: { fontSize: 11.5, color: Colors.textSecondary, marginTop: 6, lineHeight: 16 },
+  // Honeypot: fuera de la vista (no display:none, que algunos bots ignoran).
+  honeypot: { position: 'absolute', width: 1, height: 1, opacity: 0, left: -9999, top: -9999 },
   btnPrimary: {
     backgroundColor: Colors.primary,
     borderRadius: 12,

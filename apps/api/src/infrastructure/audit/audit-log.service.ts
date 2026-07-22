@@ -24,7 +24,20 @@ export interface AuditEventRow {
 interface RawAuditRow extends RowDataPacket {
   at: Date;
   event_type: string;
-  detail: string | null;
+  /** La columna es JSON: mysql2 la entrega YA parseada como objeto (string solo si otro
+   *  driver/config no parsea). Asumir string aquí fue el bug del 500 del diagnóstico. */
+  detail: Record<string, unknown> | string | null;
+}
+
+/** Tolera ambas formas del driver: objeto (columna JSON parseada) o string JSON crudo. */
+function parseDetail(raw: RawAuditRow['detail']): Record<string, unknown> | null {
+  if (raw == null) return null;
+  if (typeof raw !== 'string') return raw;
+  try {
+    return JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return { raw };
+  }
 }
 
 function detailMaxBytes(): number {
@@ -88,7 +101,7 @@ export class AuditLogService {
     return rows.map((r) => ({
       at: new Date(r.at).toISOString(),
       eventType: r.event_type,
-      detail: r.detail ? (JSON.parse(r.detail) as Record<string, unknown>) : null,
+      detail: parseDetail(r.detail),
     }));
   }
 }

@@ -20,6 +20,8 @@ import { JwtService } from '../src/modules/auth/jwt.service';
 import { PasswordHashingService } from '../src/modules/auth/password-hashing.service';
 import { registerSchema } from '../src/modules/auth/dto/register.dto';
 import { DUPLICATE_ENTRY, UsersRepository, type NewUser } from '../src/modules/users/users.repository';
+import { EmailVerificationRepository } from '../src/modules/auth/email-verification.repository';
+import { EmailService } from '../src/modules/email/email.service';
 
 process.env.JWT_SECRET = process.env.JWT_SECRET ?? 'test-secret-register';
 process.env.PASSWORD_PEPPER_CURRENT_VERSION = process.env.PASSWORD_PEPPER_CURRENT_VERSION ?? '1';
@@ -51,7 +53,32 @@ function fakeAudit(): { service: AuditLogService; calls: AuditEntry[] } {
   return { service: { record: async (e: AuditEntry) => { calls.push(e); } } as unknown as AuditLogService, calls };
 }
 
-async function buildApp(repo: UsersRepository, audit: AuditLogService): Promise<INestApplication> {
+/** Doble del repo de tokens: `issue` cuenta llamadas y devuelve un token fijo. */
+function fakeVerification(): { repo: EmailVerificationRepository; issued: string[] } {
+  const issued: string[] = [];
+  const repo = {
+    issue: async (userId: string) => { issued.push(userId); return { raw: 'raw-token', hash: 'hash' }; },
+    invalidateForUser: async () => undefined,
+    consume: async () => null,
+  } as unknown as EmailVerificationRepository;
+  return { repo, issued };
+}
+
+/** Doble del correo: registra los enlaces "enviados". */
+function fakeEmail(): { service: EmailService; sent: Array<{ to: string; link: string }> } {
+  const sent: Array<{ to: string; link: string }> = [];
+  const service = {
+    sendVerificationEmail: async (to: string, link: string) => { sent.push({ to, link }); },
+  } as unknown as EmailService;
+  return { service, sent };
+}
+
+async function buildApp(
+  repo: UsersRepository,
+  audit: AuditLogService,
+  verification: EmailVerificationRepository = fakeVerification().repo,
+  email: EmailService = fakeEmail().service,
+): Promise<INestApplication> {
   @Module({
     controllers: [AuthController],
     providers: [
@@ -60,6 +87,8 @@ async function buildApp(repo: UsersRepository, audit: AuditLogService): Promise<
       PasswordHashingService,
       { provide: UsersRepository, useValue: repo },
       { provide: AuditLogService, useValue: audit },
+      { provide: EmailVerificationRepository, useValue: verification },
+      { provide: EmailService, useValue: email },
     ],
   })
   class RegisterTestModule {}
@@ -83,12 +112,37 @@ test('register-schema: acepta un body válido sin role', () => {
 });
 
 test('register-schema: exige password de al menos 8 caracteres', () => {
-  assert.equal(registerSchema.safeParse({ ...VALID, password: 'corta' }).success, false);
+  assert.equal(registerSchema.safeParse({ ...VALID, password: 'Corta1' }).success, false);
 });
 
-test('register-schema: exige email válido y plant en formato slug', () => {
+test('register-schema: exige complejidad de contraseña (mayúscula, minúscula y dígito)', () => {
+  assert.equal(registerSchema.safeParse({ ...VALID, password: 'todominuscula1' }).success, false, 'sin mayúscula');
+  assert.equal(registerSchema.safeParse({ ...VALID, password: 'TODOMAYUSCULA1' }).success, false, 'sin minúscula');
+  assert.equal(registerSchema.safeParse({ ...VALID, password: 'SinNumeros' }).success, false, 'sin dígito');
+  assert.equal(registerSchema.safeParse({ ...VALID, password: 'Valida123' }).success, true);
+});
+
+test('register-schema: exige email válido, sin desechables, y plant REAL', () => {
   assert.equal(registerSchema.safeParse({ ...VALID, email: 'no-es-email' }).success, false);
-  assert.equal(registerSchema.safeParse({ ...VALID, plant: 'PTAP Norte' }).success, false);
+  assert.equal(registerSchema.safeParse({ ...VALID, email: 'bot@mailinator.com' }).success, false, 'desechable');
+  assert.equal(registerSchema.safeParse({ ...VALID, plant: 'PTAP Norte' }).success, false, 'formato');
+  assert.equal(registerSchema.safeParse({ ...VALID, plant: 'planta-inexistente' }).success, false, 'no está en el mapping');
+});
+
+test('register-schema: normaliza email (trim + minúsculas)', () => {
+  const parsed = registerSchema.parse({ ...VALID, email: '  ANA@PTAP.CO ' });
+  assert.equal(parsed.email, 'ana@ptap.co');
+});
+
+test('register-schema: rechaza nombre con URL y teléfono inválido', () => {
+  assert.equal(registerSchema.safeParse({ ...VALID, name: 'Compra en www.spam.com' }).success, false, 'URL en el nombre');
+  assert.equal(registerSchema.safeParse({ ...VALID, phone: 'abc' }).success, false, 'teléfono no numérico');
+  assert.equal(registerSchema.safeParse({ ...VALID, phone: '' }).success, true, 'teléfono vacío = omitido');
+});
+
+test('register-schema: honeypot con contenido → rechazado', () => {
+  assert.equal(registerSchema.safeParse({ ...VALID, website: 'http://bot.com' }).success, false);
+  assert.equal(registerSchema.safeParse({ ...VALID, website: '' }).success, true, 'vacío OK');
 });
 
 // ── End-to-end por HTTP ──
@@ -118,7 +172,34 @@ test('register: NO devuelve token — la cuenta queda pendiente de aprobación',
     assert.equal(res.body.email, VALID.email);
     assert.equal(res.body.token, undefined, 'registrarse NO puede dar sesión: la aprueba un admin');
     assert.equal(res.body.user, undefined);
-    assert.match(res.body.message, /pendiente de aprobación/i);
+    assert.match(res.body.message, /verificar/i);
+  } finally {
+    await app.close();
+  }
+});
+
+test('register: emite un token de verificación y "envía" el correo con el enlace', async () => {
+  const repo = fakeRepo();
+  const verification = fakeVerification();
+  const email = fakeEmail();
+  const app = await buildApp(repo, fakeAudit().service, verification.repo, email.service);
+  try {
+    await request(app.getHttpServer()).post('/api/auth/register').send(VALID).expect(201);
+    assert.equal(verification.issued.length, 1, 'debe emitir un token para el usuario creado');
+    assert.equal(email.sent.length, 1, 'debe enviar el correo de verificación');
+    assert.equal(email.sent[0].to, VALID.email);
+    assert.match(email.sent[0].link, /\/api\/auth\/verify-email\?token=raw-token$/);
+  } finally {
+    await app.close();
+  }
+});
+
+test('register: el honeypot lleno se rechaza con 400 y no crea usuario', async () => {
+  const repo = fakeRepo();
+  const app = await buildApp(repo, fakeAudit().service);
+  try {
+    await request(app.getHttpServer()).post('/api/auth/register').send({ ...VALID, website: 'x' }).expect(400);
+    assert.equal(repo.created.length, 0);
   } finally {
     await app.close();
   }

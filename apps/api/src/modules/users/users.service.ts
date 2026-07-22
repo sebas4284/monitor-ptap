@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import type { Role, UserSummary } from '@ptap/shared';
 import { AuditLogService } from '../../infrastructure/audit/audit-log.service';
 import { UsersRepository, type UserListFilter } from './users.repository';
@@ -15,9 +15,14 @@ export interface AdminActor {
  * Administración de usuarios (solo Admin — matriz oficial: "Crear, editar y eliminar
  * usuarios" y "Asignar roles a los usuarios" son exclusivas del Administrador).
  *
- * Guard rails deliberados: un admin NO puede cambiar su propio rol ni desactivarse a sí
- * mismo. Sin esto, un admin puede dejarse fuera del sistema con un clic y quedarse sin
- * forma de volver a entrar (no hay otra vía de recuperación en la app).
+ * Guard rails deliberados (los administradores son MUTUAMENTE intocables):
+ *  1. Nadie puede cambiar su PROPIO rol ni desactivarse a sí mismo (evita dejarse fuera).
+ *  2. Ningún admin puede cambiar el rol NI desactivar a OTRO admin. Los administradores no se
+ *     eliminan entre sí desde la app: un admin comprometido no puede desmantelar al resto, y
+ *     nadie pierde el acceso por un clic ajeno. La membresía de admin se gestiona fuera de la
+ *     app (scripts/seed-admin-user.ts o la BD) — es una decisión de seguridad, no una omisión.
+ *  SÍ se permite PROMOVER a admin (el objetivo aún no es admin), solo se bloquea actuar sobre
+ *  uno ya existente.
  *
  * Todo cambio queda auditado con quién, a quién y de qué → a qué.
  */
@@ -37,6 +42,12 @@ export class UsersService {
 
     if (actor.userId === targetId) {
       throw new BadRequestException('No puedes cambiar tu propio rol (evita perder el acceso de administrador).');
+    }
+    // Los admins son mutuamente intocables: no se puede degradar a otro administrador.
+    if (target.role === 'admin') {
+      throw new ForbiddenException(
+        'No puedes cambiar el rol de otro administrador. La gestión de administradores se hace fuera de la app.',
+      );
     }
     if (target.role === role) return target; // no-op: no ensucia la auditoría
 
@@ -61,6 +72,19 @@ export class UsersService {
 
     if (actor.userId === targetId) {
       throw new BadRequestException('No puedes desactivar tu propia cuenta.');
+    }
+    // Los admins son mutuamente intocables: no se puede desactivar a otro administrador.
+    if (!isActive && target.role === 'admin') {
+      throw new ForbiddenException(
+        'No puedes desactivar a otro administrador. La gestión de administradores se hace fuera de la app.',
+      );
+    }
+    // Nudo anti-bot: no se puede ACTIVAR una cuenta cuyo correo no fue verificado. Así ninguna
+    // cuenta con correo inventado llega a iniciar sesión, aunque un admin se distraiga.
+    if (isActive && !target.emailVerified) {
+      throw new BadRequestException(
+        'No puedes activar esta cuenta: el correo aún no ha sido verificado por el usuario.',
+      );
     }
     if (target.isActive === isActive) return target;
 

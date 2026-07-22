@@ -38,6 +38,33 @@ Pruebas hechas desde el equipo de monitoreo el 2026-07-21, **sin pasar por la ap
 La conectividad a internet del equipo de monitoreo **funciona correctamente**, así que el problema
 no está en la red del monitoreo.
 
+### Actualización 2026-07-22 — prueba de ruta automatizada + hallazgo del ping
+
+La app ya incluye la prueba de ruta en vivo (Ajustes → "Probar ruta ahora", o
+`GET /api/diagnostics/route-check`) y un **registro continuo** (una muestra cada 5 min,
+`GET /api/diagnostics/route-history`). Resultado de hoy:
+
+```
+servidor → internet : 8.8.8.8:53            → OK (60 ms)      ← la red del monitoreo está BIEN
+ping ICMP al host   : 181.204.165.66        → OK (21 ms)      ← ¡EL HOST ESTÁ VIVO!
+servidor → PLC      : 181.204.165.66:59100  → TIMEOUT (5 s)   ← el TCP al puerto muere
+IP pública del servidor de monitoreo: 181.234.151.111
+```
+
+**El ping cambia el diagnóstico.** Un `Test-NetConnection 181.204.165.66 -Port 59100` manual
+confirmó lo mismo: `PingSucceeded: True (21 ms)` + `TcpTestSucceeded: False`. Es decir:
+
+- El host **existe, está encendido y en línea** en esa IP (descarta la hipótesis B — IP cambiada —
+  y la C — planta sin internet/equipo apagado).
+- Lo que muere es **específicamente el TCP** hacia el puerto: un cortafuegos lo está **filtrando**
+  (veredicto **PLC-12**). Las pruebas del 21-jul solo eran TCP (59100 y 80), por eso el host
+  parecía "muerto"; nunca se probó ICMP.
+
+**Conclusión: la hipótesis A es ahora la más probable con diferencia** — se aplicó un bloqueo de
+cortafuegos (posiblemente la mitigación P0 que este proyecto solicitó). La pregunta al admin OT se
+reduce a una sola: *¿se cerró/filtró el `59100/tcp` al exterior, y por qué vía nos dan acceso
+(VPN)?* — y la respuesta correcta NO es reabrir el puerto a internet (§7).
+
 ## 3. Descartado: no es un fallo de la aplicación
 
 - El resto de la cadena (sesión OPC UA → parser → mapeo → calidad → snapshot → API → pantalla) se
@@ -88,3 +115,21 @@ Si la hipótesis A es la correcta, conviene **no revertir** el cierre del puerto
 OT directamente a internet es el hallazgo P0 de este proyecto: hoy ese endpoint acepta sesiones
 anónimas sin cifrar y con tags escribibles. La vía correcta es VPN o red segregada, no reabrir el
 puerto.
+
+## 8. Cómo alertar de un corte (monitoreo)
+
+El enlace al PLC es **externo** y no lo podemos garantizar desde el código; lo que sí garantizamos es
+que un corte sea **detectable**. El backend expone dos señales; el monitor que las vigila es
+infraestructura de despliegue (no vive en el repo), y el "alertar solo tras N minutos" (para no
+disparar por un reintento momentáneo) se configura **en el monitor**, no en el código — así ops ajusta
+el umbral sin redeploy.
+
+| Señal | Qué exponer al monitor | Regla sugerida |
+|---|---|---|
+| **Healthcheck HTTP** (público, sin JWT) | `GET /api/health/opc` → **200** solo si el puente está `Connected`; **503** en cualquier otro estado (incluido `Connecting`, el caso del corte real). El cuerpo trae `bridgeStatus` y `plcReachable` para el detalle. | Uptime-monitor (UptimeRobot, Pingdom, healthcheck de Kubernetes/Docker): "alertar tras **N** fallos consecutivos / **5 min** en 503". |
+| **Métrica Prometheus** | `opc_bridge_status{state="Connected"}` (gauge; 1 = en ese estado). Ya expuesta en `/api/metrics`. | Alertmanager: `opc_bridge_status{state="Connected"} == 0 **for: 5m**`. |
+
+**Importante:** el health reporta el estado **instantáneo**. Un 503 aislado durante un reintento
+normal es esperado; solo debe alertar si **persiste** (de ahí el `for: 5m` / umbral de N fallos). Al
+restablecerse el enlace, el puente vuelve a `Connected` solo y el health regresa a 200 sin
+intervención (ver §6).

@@ -12,6 +12,7 @@ export interface UserRecord {
   passwordHash: string;
   pepperVersion: number;
   isActive: boolean;
+  emailVerified: boolean;
 }
 
 export interface NewUser {
@@ -42,6 +43,7 @@ interface UserRow extends RowDataPacket {
   password_hash: string;
   pepper_version: number;
   is_active: number;
+  email_verified: number;
 }
 
 interface SummaryRow extends RowDataPacket {
@@ -52,6 +54,7 @@ interface SummaryRow extends RowDataPacket {
   role: string;
   plant: string;
   is_active: number;
+  email_verified: number;
   last_login_at: Date | null;
   created_at: Date | null;
 }
@@ -66,6 +69,7 @@ function toRecord(row: UserRow): UserRecord {
     passwordHash: row.password_hash,
     pepperVersion: row.pepper_version,
     isActive: row.is_active === 1,
+    emailVerified: row.email_verified === 1,
   };
 }
 
@@ -78,6 +82,7 @@ function toSummary(row: SummaryRow): UserSummary {
     role: row.role as Role,
     plant: row.plant,
     isActive: row.is_active === 1,
+    emailVerified: row.email_verified === 1,
     lastLoginAt: row.last_login_at ? new Date(row.last_login_at).toISOString() : null,
     createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
   };
@@ -176,7 +181,7 @@ export class UsersRepository {
     }
 
     const [rows] = await this.pool.query<SummaryRow[]>(
-      `SELECT id, email, phone, name, role, plant, is_active, last_login_at, created_at
+      `SELECT id, email, phone, name, role, plant, is_active, email_verified, last_login_at, created_at
          FROM users
          ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
          ORDER BY created_at DESC`,
@@ -188,7 +193,7 @@ export class UsersRepository {
   /** Devuelve un usuario por id SIN filtrar por is_active (administración). */
   async findSummaryById(id: string): Promise<UserSummary | null> {
     const [rows] = await this.pool.query<SummaryRow[]>(
-      `SELECT id, email, phone, name, role, plant, is_active, last_login_at, created_at
+      `SELECT id, email, phone, name, role, plant, is_active, email_verified, last_login_at, created_at
          FROM users WHERE id = ? LIMIT 1`,
       [id],
     );
@@ -201,5 +206,10 @@ export class UsersRepository {
 
   async setActive(id: string, isActive: boolean): Promise<void> {
     await this.pool.query('UPDATE users SET is_active = ? WHERE id = ?', [isActive ? 1 : 0, id]);
+  }
+
+  /** Marca el correo del usuario como verificado (lo llama AuthService.verifyEmail). */
+  async setEmailVerified(id: string): Promise<void> {
+    await this.pool.query('UPDATE users SET email_verified = 1 WHERE id = ?', [id]);
   }
 }

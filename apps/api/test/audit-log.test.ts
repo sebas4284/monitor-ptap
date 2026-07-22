@@ -97,6 +97,23 @@ test('audit-log: detail se trunca cuando excede AUDIT_LOG_DETAIL_MAX_BYTES', asy
   }
 });
 
+test('audit-log: listByEventType tolera detail como OBJETO (columna JSON de mysql2) y como string', async () => {
+  // Regresión del 500 del diagnóstico: la columna `detail` es JSON y mysql2 la entrega YA
+  // parseada como objeto; hacer JSON.parse(objeto) reventaba el endpoint con 500.
+  const rows = [
+    { at: new Date('2026-07-22T10:00:00.000Z'), event_type: 'opc.bridge_status_change', detail: { status: 'Connecting', reason: 'timeout TCP' } },
+    { at: new Date('2026-07-22T09:00:00.000Z'), event_type: 'opc.bridge_status_change', detail: '{"status":"Faulted"}' },
+    { at: new Date('2026-07-22T08:00:00.000Z'), event_type: 'opc.bridge_status_change', detail: null },
+  ];
+  const pool = { query: async () => [rows, []] } as unknown as Pool;
+  const service = new AuditLogService(pool);
+
+  const events = await service.listByEventType('opc.bridge_status_change', 10);
+  assert.equal(events[0].detail?.status, 'Connecting'); // objeto del driver: pasa tal cual
+  assert.equal(events[1].detail?.status, 'Faulted'); // string JSON: se parsea
+  assert.equal(events[2].detail, null);
+});
+
 test('connection-events-subscriber: graba la línea base de arranque Y cada transición', async () => {
   const { pool, calls } = fakePool();
   const auditLog = new AuditLogService(pool);
