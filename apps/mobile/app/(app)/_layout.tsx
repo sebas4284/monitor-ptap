@@ -165,7 +165,7 @@ export default function AppLayout() {
             ? { display: 'none' }
             : {
                 backgroundColor: Colors.bg,
-                borderTopColor: '#E5E7EB',
+                borderTopColor: Colors.divider,
                 elevation: 0,
                 shadowOpacity: 0,
               },
@@ -173,12 +173,12 @@ export default function AppLayout() {
         }}
       >
         <Tabs.Screen
-          name="sensores"
+          name="tablero"
           options={{
             ...HEADER_OPTS,
-            tabBarLabel: 'Sensores',
+            tabBarLabel: 'Tablero',
             tabBarIcon: ({ color, size, focused }) => (
-              <Ionicons name={focused ? 'pulse' : 'pulse-outline'} size={size} color={color} />
+              <Ionicons name={focused ? 'grid' : 'grid-outline'} size={size} color={color} />
             ),
           }}
         />
@@ -189,16 +189,6 @@ export default function AppLayout() {
             tabBarLabel: 'Válvulas',
             tabBarIcon: ({ color, size, focused }) => (
               <Ionicons name={focused ? 'toggle' : 'toggle-outline'} size={size} color={color} />
-            ),
-          }}
-        />
-        <Tabs.Screen
-          name="tanques"
-          options={{
-            ...HEADER_OPTS,
-            tabBarLabel: 'Tanques',
-            tabBarIcon: ({ color, size, focused }) => (
-              <Ionicons name={focused ? 'water' : 'water-outline'} size={size} color={color} />
             ),
           }}
         />
@@ -318,7 +308,7 @@ const styles = StyleSheet.create({
   },
   drawerDivider: {
     height: 1,
-    backgroundColor: '#E5E7EB',
+    backgroundColor: Colors.divider,
     marginHorizontal: 20,
     marginVertical: 8,
   },

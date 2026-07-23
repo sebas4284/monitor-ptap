@@ -26,7 +26,7 @@ export function LiveBadge({ state }: { state: LivenessState }) {
         paddingVertical: 10,
         backgroundColor: Colors.surface,
         borderTopWidth: 1,
-        borderTopColor: '#E5E7EB',
+        borderTopColor: Colors.divider,
       }}
     >
       <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color, marginRight: 8 }} />

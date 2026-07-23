@@ -55,3 +55,6 @@ apps/api/reports/
 /android
 apps/mobile/ios/
 apps/mobile/android/
+
+# Subagent-driven-development scratch state
+.superpowers/

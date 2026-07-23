@@ -15,5 +15,5 @@ export default function Index() {
   }
 
   if (!token) return <Redirect href="/(auth)/login" />;
-  return <Redirect href={user?.role === 'civil' ? '/(app)/estado' : '/(app)/sensores'} />;
+  return <Redirect href={user?.role === 'civil' ? '/(app)/estado' : '/(app)/tablero'} />;
 }

@@ -4,7 +4,8 @@
     "jsx": "react-jsx",
     "paths": {
       "@ptap/shared": ["../../packages/shared/src/index.ts"]
-    }
+    },
+    "types": ["node"]
   },
   "include": [
     "**/*.ts",

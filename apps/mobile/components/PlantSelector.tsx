@@ -14,7 +14,7 @@ export function PlantSelector() {
   if (!canSwitchPlant) return null;
 
   return (
-    <View style={{ backgroundColor: Colors.bg, borderBottomWidth: 1, borderBottomColor: '#E5E7EB' }}>
+    <View style={{ backgroundColor: Colors.bg, borderBottomWidth: 1, borderBottomColor: Colors.divider }}>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}

@@ -42,7 +42,7 @@ export default function LoginScreen() {
     try {
       const { token, user } = await apiLogin(email.trim(), password);
       await login(token, user);
-      router.replace(user.role === 'civil' ? '/(app)/estado' : '/(app)/sensores');
+      router.replace(user.role === 'civil' ? '/(app)/estado' : '/(app)/tablero');
     } catch (err) {
       // Mostrar el motivo REAL: un servidor caído o un rate-limit no son una contraseña mala.
       // Decir siempre "credenciales inválidas" manda a la gente a revisar lo que no falla.
