@@ -1,25 +1,19 @@
 {
+  "//": "Config de DEV/TYPECHECK/TESTS: @ptap/shared se resuelve por paths al SOURCE (sin build previo). El emit de producción usa tsconfig.build.json (sin paths → dist).",
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "target": "ES2022",
     "module": "CommonJS",
     "moduleResolution": "node",
     "ignoreDeprecations": "6.0",
-    "outDir": "dist",
-    "rootDir": "src",
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
     "strictPropertyInitialization": false,
-    "noEmit": false,
-    "types": [
-      "node"
-    ]
+    "types": ["node"],
+    "paths": {
+      "@ptap/shared": ["../../packages/shared/src/index.ts"]
+    }
   },
-  "include": [
-    "src/**/*.ts"
-  ],
-  "exclude": [
-    "dist",
-    "node_modules"
-  ]
+  "include": ["src/**/*.ts"],
+  "exclude": ["dist", "node_modules"]
 }

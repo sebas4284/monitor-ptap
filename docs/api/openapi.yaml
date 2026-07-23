@@ -38,6 +38,8 @@ tags:
     description: Administración de usuarios — exclusiva del Administrador
   - name: plants
     description: Telemetría de dominio desde cache RAM
+  - name: reports
+    description: Informes por métrica (CSV de exportación; no tocan MySQL)
   - name: diagnostics
     description: Historial de conexión del puente — exclusivo del Administrador
   - name: commands
@@ -514,6 +516,82 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  # ── REPORTS (informes por métrica; CSV; solo main.ts) ───────────────────────
+  /api/reports/{plantId}:
+    get:
+      summary: Métricas de la planta con el estado de su informe
+      operationId: listReports
+      tags: [reports]
+      description: >
+        Requiere `view_dashboard`. Lista las métricas mapeadas de la planta con el estado de su
+        informe (`idle`/`collecting`/`ready`), progreso de recolección, última generación y próxima
+        auto. Sujeto al alcance por planta (PlantScopeGuard).
+      parameters: [{ $ref: '#/components/parameters/PlantId' }]
+      responses:
+        '200':
+          description: Lista de informes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reports:
+                    type: array
+                    items: { $ref: '#/components/schemas/ReportInfo' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ForbiddenPlantScope' }
+
+  /api/reports/{plantId}/{metric}/generate:
+    post:
+      summary: Generar un informe (recolección 1 muestra/min por 1 h)
+      operationId: generateReport
+      tags: [reports]
+      description: >
+        Requiere `export_data` (solo admin). Inicia la recolección: muestrea la métrica cada
+        `REPORT_SAMPLE_INTERVAL_MS` (default 1 min) `REPORT_SAMPLE_COUNT` veces (default 60). No se
+        puede lanzar OTRA del MISMO informe mientras una está en curso (409, REP-01); métricas
+        distintas sí concurren. Al terminar escribe el CSV (reemplaza al anterior; no hay historial).
+      parameters:
+        - { $ref: '#/components/parameters/PlantId' }
+        - { name: metric, in: path, required: true, schema: { type: string, example: inletFlow1 } }
+      responses:
+        '202':
+          description: Recolección iniciada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [collecting] }
+                  plantId: { type: string }
+                  metric: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ForbiddenPlantScope' }
+        '404': { description: Métrica desconocida para la planta (REP-02) }
+        '409': { description: Ya hay una recolección de ese informe en curso (REP-01) }
+
+  /api/reports/{plantId}/{metric}/download:
+    get:
+      summary: Descargar el último CSV del informe
+      operationId: downloadReport
+      tags: [reports]
+      description: >
+        Requiere `export_data` (solo admin). Devuelve el CSV listo (`text/csv`, `Content-Disposition`
+        adjunto). Columnas Fecha | Hora | Cantidad. Es responsabilidad del usuario descargarlo antes
+        de que la siguiente generación (auto o manual) lo reemplace.
+      parameters:
+        - { $ref: '#/components/parameters/PlantId' }
+        - { name: metric, in: path, required: true, schema: { type: string, example: inletFlow1 } }
+      responses:
+        '200':
+          description: Archivo CSV
+          content:
+            text/csv:
+              schema: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ForbiddenPlantScope' }
+        '404': { description: Aún no hay un informe generado (REP-03) }
+
   # ── OPC (observabilidad; solo main.ts) ──────────────────────────────────────
   /api/opc/status:
     get:
@@ -841,6 +919,20 @@ components:
             status: { $ref: '#/components/schemas/BridgeStatus' }
             reconnectCount: { type: integer }
             lastNotificationAt: { type: string, format: date-time, nullable: true }
+
+    ReportInfo:
+      type: object
+      description: Estado del informe de una métrica.
+      properties:
+        metric: { type: string, example: inletFlow1 }
+        label: { type: string, example: Caudal de entrada }
+        unit: { type: string, nullable: true, example: l/s }
+        status: { type: string, enum: [idle, collecting, ready] }
+        progress: { type: integer, nullable: true, description: Muestras tomadas mientras collecting }
+        total: { type: integer, nullable: true }
+        generatedAt: { type: string, format: date-time, nullable: true }
+        rows: { type: integer, nullable: true }
+        nextAutoAt: { type: string, format: date-time, nullable: true }
 
     OpcHealth:
       type: object

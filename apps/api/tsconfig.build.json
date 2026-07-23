@@ -1,0 +1,10 @@
+{
+  "//": "Build de PRODUCCIÓN: sin paths → @ptap/shared se resuelve por node_modules a su dist compilado (packages/shared/dist). Requiere compilar shared antes (npm run build en la raíz lo hace en orden). El tsconfig.json normal (paths → src) es para dev/typecheck/tests con tsx.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {},
+    "outDir": "dist",
+    "rootDir": "src",
+    "noEmit": false
+  }
+}

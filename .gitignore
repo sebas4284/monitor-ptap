@@ -9,6 +9,7 @@ node_modules/
 dist/
 web-build/
 expo-env.d.ts
+packages/shared/dist/
 
 # Native
 .kotlin/
@@ -43,6 +44,11 @@ yarn-error.*
 # OPC UA client PKI (auto-generated certificates)
 apps/api/pki/
 pki/
+
+# Informes CSV generados (archivos de exportación efímeros; no historial).
+# OJO: anclar la ruta — un `reports/` suelto también ignoraría src/modules/reports (el código).
+apps/api/reports/
+/reports/
 
 # generated native folders (expo prebuild) — se regeneran; nunca al repo (incluyen el keystore)
 /ios

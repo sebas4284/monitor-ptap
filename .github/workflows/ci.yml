@@ -31,6 +31,13 @@ jobs:
       - name: Instalar dependencias
         run: npm ci
 
+      # Auditoría de dependencias (seguridad frontend #13). Informativo: no bloquea el pipeline por
+      # avisos transitivos (node-opcua/expo arrastran muchos), pero SÍ los deja visibles en el log.
+      # Para endurecer, quitar `continue-on-error` o subir a `--audit-level=critical`.
+      - name: Auditoría de dependencias (npm audit)
+        continue-on-error: true
+        run: npm audit --audit-level=high
+
       - name: Typecheck (api + mobile + shared)
         run: npm run typecheck
 

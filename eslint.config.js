@@ -12,6 +12,15 @@ module.exports = [
     rules: { 'expo/no-dynamic-env-var': 'off' },
   },
   {
+    // Archivos de configuración CommonJS de Node (ecosystem de PM2, etc.): __dirname/module/require
+    // son globales legítimos de Node, no del bundle. Se declaran para que no salten como no-undef.
+    files: ['**/ecosystem.config.js'],
+    languageOptions: {
+      sourceType: 'commonjs',
+      globals: { module: 'writable', require: 'readonly', __dirname: 'readonly', process: 'readonly' },
+    },
+  },
+  {
     ignores: [
       '**/node_modules/**',
       '**/dist/**',

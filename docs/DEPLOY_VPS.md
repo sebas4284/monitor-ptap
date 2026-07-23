@@ -147,21 +147,26 @@ SEED_ADMIN_PLANT=voragine \
 
 ---
 
-## 7. Arrancar el backend con PM2
+## 7. Compilar y arrancar el backend con PM2
 
-> **Importante:** se arranca con **`tsx`**, no con `node dist/main.js`. Motivo: `@ptap/shared`
-> expone su `main` como TypeScript (`src/index.ts`), que Node no ejecuta directamente. `tsx` lo
-> maneja. (Alternativa a futuro: compilar `@ptap/shared` a JS.)
+Compila el paquete compartido y el API (produce `dist/`), luego arranca con el ecosystem de PM2:
 
 ```bash
-cd ~/monitor-ptap/apps/api
-pm2 start npx --name ptap-api --interpreter none -- tsx src/main.ts
+cd ~/monitor-ptap
+npm run build          # compila @ptap/shared → dist y luego el API → dist/main.js
+
+cd apps/api
+pm2 start ecosystem.config.js   # corre node dist/main.js (nombre ptap-api)
 pm2 save
 pm2 startup            # ejecuta la línea que imprime (para reinicio en reboot)
 
 pm2 logs ptap-api      # ver el arranque; debe decir que MySQL conectó y el puerto 4000 escucha
 pm2 status
 ```
+
+> El build de producción resuelve `@ptap/shared` a su JS compilado (`packages/shared/dist`), así
+> que arranca con **`node dist/main.js`** (vía el ecosystem). Para desarrollo se sigue usando
+> `npm run dev:api` (tsx), que resuelve el paquete desde su source sin compilar.
 
 Verificación local (antes de nginx):
 
@@ -181,6 +186,14 @@ server {
     listen 80;
     server_name ptaps.telcobras.com;
 
+    # ── Cabeceras de seguridad (ciberseguridad frontend: clickjacking, HSTS, MIME, referrer) ──
+    # `always` para que se envíen también en respuestas de error. La API ya trae CSP por helmet;
+    # estas cubren lo que nginx sirve (incluida la build web si se aloja aquí).
+    add_header X-Frame-Options "DENY" always;                    # anti-clickjacking (#15)
+    add_header X-Content-Type-Options "nosniff" always;          # no adivinar MIME
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;  # HTTPS forzado (#6)
+
     location / {
         proxy_pass http://127.0.0.1:4000;
         proxy_http_version 1.1;
@@ -193,8 +206,30 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 300s;
     }
+
+    # ── (OPCIONAL) Servir la build WEB de la app (expo export -p web → dist/) ──
+    # Si además del APK se sirve la versión web, descomenta y ajusta la ruta:
+    #
+    # location /app/ {
+    #     alias /home/deploy/monitor-ptap/apps/mobile/dist/;
+    #     try_files $uri $uri/ /app/index.html;
+    #     # Este location define add_header → hay que REPETIR las de seguridad (nginx no las hereda):
+    #     add_header X-Frame-Options "DENY" always;
+    #     add_header X-Content-Type-Options "nosniff" always;
+    #     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    #     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    #     # CSP para la web (#2). RN-web inyecta estilos inline → style-src permite 'unsafe-inline';
+    #     # connect-src cubre la API y el WebSocket (mismo origen). Ajusta si el API va en otro host.
+    #     add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https: wss:; frame-ancestors 'none'; base-uri 'self'; object-src 'none'" always;
+    #     # No servir los source maps en producción (#9): menos código legible en DevTools.
+    #     location ~* \.map$ { return 404; }
+    # }
 }
 ```
+
+> Las cabeceras `add_header` se re-declaran dentro de un `location` si ese bloque añade las suyas
+> (nginx NO hereda `add_header` cuando el bloque hijo define alguno). Por eso el `location /app/`
+> repite/añade su CSP.
 
 ```bash
 sudo ln -s /etc/nginx/sites-available/ptaps /etc/nginx/sites-enabled/ptaps

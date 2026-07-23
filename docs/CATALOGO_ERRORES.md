@@ -129,6 +129,24 @@ Una señal concreta no es usable o se descartó. El valor **sigue mostrándose s
 
 ---
 
+## REP — Informes por métrica (CSV de exportación)
+
+Informes que muestrean UNA señal cada 1 min por 1 h → CSV en disco (Fecha | Hora | Cantidad), uno
+por (planta, métrica); el siguiente reemplaza al anterior. NO tocan MySQL. Solo admin genera/descarga
+(`export_data`); ver la lista exige `view_dashboard`.
+
+| Código | Título | HTTP | Causa | Ruta |
+|---|---|---|---|---|
+| **REP-01** | Recolección ya en curso | 409 | Se pidió generar un informe cuyo (planta, métrica) ya está recolectando. Métricas DISTINTAS sí corren a la vez | [reports.service.ts](../apps/api/src/modules/reports/reports.service.ts) |
+| **REP-02** | Métrica desconocida | 404 | La métrica no existe en el mapping de esa planta | ídem |
+| **REP-03** | Informe aún no disponible | 404 | Se pidió descargar antes de que exista un CSV listo | [reports.controller.ts](../apps/api/src/modules/reports/reports.controller.ts) |
+
+> Automático cada 7 días (`REPORTS_AUTO_INTERVAL_MS`) por informe ya generado; muestreo configurable
+> (`REPORT_SAMPLE_INTERVAL_MS` × `REPORT_SAMPLE_COUNT`). El archivo es responsabilidad del usuario:
+> si no lo descarga, la siguiente generación (auto o manual) lo reemplaza (no hay historial).
+
+---
+
 ## CMD — Canal de comandos / escritura al PLC (Fase 5)
 
 Rechazos (`REJECT`) y fallos (`FAIL`) del `WriteService`. Todos quedan auditados.
@@ -168,6 +186,11 @@ Rechazos (`REJECT`) y fallos (`FAIL`) del `WriteService`. Todos quedan auditados
 
 Hallazgos de la auditoría del front (2026-07-22). El backend ya está cubierto (JWT por request,
 RBAC, PlantScopeGuard, SRV-04, revocación por relectura en BD); estos son del lado del cliente.
+
+> **Revisión completa de los 20 controles de ciberseguridad del frontend** (XSS, CSP, cabeceras,
+> almacenamiento, dependencias, etc.) con su estado y decisiones:
+> [SEGURIDAD_FRONTEND.md](SEGURIDAD_FRONTEND.md). Las cabeceras web y `npm audit` en CI se
+> añadieron en esa revisión.
 
 | Código | Título | Estado | Ruta |
 |---|---|---|---|

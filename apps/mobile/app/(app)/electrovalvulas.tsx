@@ -6,6 +6,7 @@ import { usePlant } from '../../context/PlantContext';
 import { useAuth } from '../../context/AuthContext';
 import { ValveItem } from '../../components/ValveItem';
 import { PlantSelector } from '../../components/PlantSelector';
+import { ExampleDataBanner } from '../../components/ExampleDataBanner';
 import Colors from '../../constants/colors';
 
 export default function ElectrovalvulasScreen() {
@@ -27,6 +28,7 @@ export default function ElectrovalvulasScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['bottom']}>
       <PlantSelector />
+      <ExampleDataBanner detail="Las válvulas aún no se controlan por el canal real del PLC (escritura bloqueada). Lo que ves es una demostración; abrir/cerrar no afecta la planta." />
 
       <ScrollView
         contentContainerStyle={styles.content}
