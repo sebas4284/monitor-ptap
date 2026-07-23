@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -38,6 +38,8 @@ function isActiveOf(status: StatusFilter): boolean | undefined {
   return undefined;
 }
 
+const PAGE_SIZE = 50;
+
 /**
  * Gestión de usuarios — SOLO Administrador (matriz oficial: "Crear, editar y eliminar
  * usuarios" y "Asignar roles a los usuarios"). El backend es quien manda: exige los permisos
@@ -60,27 +62,49 @@ export default function UsuariosScreen() {
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<StatusFilter>('pendientes');
   const [roleFilter, setRoleFilter] = useState<Role | null>(null);
+  const [total, setTotal] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  // page vive fuera de React state para no crear una dependencia circular con `load` — se lee/
+  // escribe de forma síncrona dentro del propio callback (ver comentario en loadMore).
+  const pageRef = useRef(1);
 
   const load = useCallback(
-    async (term: string, statusFilter: StatusFilter, role: Role | null) => {
+    async (term: string, statusFilter: StatusFilter, role: Role | null, page: number, append: boolean) => {
       try {
         setError(null);
-        setUsers(await fetchUsers({ search: term, role: role ?? undefined, isActive: isActiveOf(statusFilter) }));
+        const result = await fetchUsers({
+          search: term,
+          role: role ?? undefined,
+          isActive: isActiveOf(statusFilter),
+          page,
+          limit: PAGE_SIZE,
+        });
+        setUsers((prev) => (append ? [...prev, ...result.users] : result.users));
+        setTotal(result.total);
+        pageRef.current = page;
       } catch (err) {
         setError(err instanceof Error ? err.message : 'No se pudieron cargar los usuarios');
       } finally {
         setLoading(false);
+        setLoadingMore(false);
       }
     },
     [],
   );
 
   // Debounce: cada tecla es una consulta a la BD; 300 ms basta para que se sienta inmediato
-  // sin disparar una petición por letra.
+  // sin disparar una petición por letra. Cambiar el filtro siempre vuelve a la página 1.
   useEffect(() => {
-    const id = setTimeout(() => void load(search, status, roleFilter), 300);
+    const id = setTimeout(() => void load(search, status, roleFilter, 1, false), 300);
     return () => clearTimeout(id);
   }, [load, search, status, roleFilter]);
+
+  const loadMore = useCallback(() => {
+    if (loadingMore || users.length >= total) return;
+    setLoadingMore(true);
+    void load(search, status, roleFilter, pageRef.current + 1, true);
+  }, [load, loadingMore, users.length, total, search, status, roleFilter]);
 
   if (!hasPermission('manage_users')) {
     return (
@@ -114,8 +138,9 @@ export default function UsuariosScreen() {
       await setUserActive(target.id, !target.isActive);
       // Recargar, no parchear en memoria: al aprobar a alguien desde "Pendientes" la cuenta
       // deja de cumplir el filtro y debe desaparecer de la lista. Parchearla la dejaría ahí,
-      // contradiciendo el filtro activo.
-      await load(search, status, roleFilter);
+      // contradiciendo el filtro activo. Vuelve a página 1 (la lista completa pudo cambiar de
+      // tamaño/orden).
+      await load(search, status, roleFilter, 1, false);
     } catch (err) {
       notify('No se pudo cambiar el estado', err instanceof Error ? err.message : 'Intenta de nuevo.');
     } finally {
@@ -145,7 +170,12 @@ export default function UsuariosScreen() {
         keyExtractor={(u) => u.id}
         contentContainerStyle={styles.list}
         keyboardShouldPersistTaps="handled"
-        refreshControl={<RefreshControl refreshing={false} onRefresh={() => void load(search, status, roleFilter)} />}
+        refreshControl={
+          <RefreshControl refreshing={false} onRefresh={() => void load(search, status, roleFilter, 1, false)} />
+        }
+        onEndReached={loadMore}
+        onEndReachedThreshold={0.4}
+        ListFooterComponent={loadingMore ? <ActivityIndicator size="small" color={Colors.primary} style={styles.footerLoader} /> : null}
         ListEmptyComponent={
           <Text style={styles.empty}>
             {status === 'pendientes' && !search && !roleFilter
@@ -343,6 +373,7 @@ const styles = StyleSheet.create({
   deniedTitle: { fontSize: 18, fontWeight: '700', color: Colors.textPrimary },
   deniedBody: { fontSize: 14, color: Colors.textSecondary, textAlign: 'center' },
   list: { padding: 16, gap: 12 },
+  footerLoader: { marginVertical: 16 },
   header: { gap: 10, marginBottom: 4 },
   intro: { fontSize: 12.5, lineHeight: 18, color: Colors.textSecondary },
   bold: { fontWeight: '700', color: Colors.textPrimary },

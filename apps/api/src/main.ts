@@ -3,6 +3,7 @@ import './config/load-env';
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import helmet from 'helmet';
+import compression from 'compression';
 import rateLimit from 'express-rate-limit';
 import { AppModule } from './modules/app.module';
 import { readHttpHardeningConfig } from './infrastructure/http-hardening.config';
@@ -14,6 +15,7 @@ async function bootstrap() {
   const hardening = readHttpHardeningConfig();
 
   app.use(helmet());
+  app.use(compression());
   app.use(rateLimit({ windowMs: hardening.rateLimit.windowMs, max: hardening.rateLimit.max }));
   // Límite más estricto para login (mitiga fuerza bruta) y para registro (mitiga alta masiva
   // de cuentas) — ambos apilan con el global (express-rate-limit apila por path).

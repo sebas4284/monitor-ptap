@@ -43,7 +43,7 @@ function fakeRepo() {
     filters,
     list: async (filter: UserListFilter = {}) => {
       filters.push(filter); // para verificar que el filtro llega al SQL, no se aplica en el cliente
-      return [...store.values()];
+      return { users: [...store.values()], total: store.size };
     },
     // Lo usa JwtAuthGuard en cada petición. Los tokens de estos tests van con sub `u-<rol>` o
     // ADMIN_ID; devolver el rol del propio id mantiene coherentes token y "base".
@@ -141,7 +141,8 @@ test('users-admin: la query se valida — rol inexistente o parámetro desconoci
   try {
     await request(app.getHttpServer()).get('/api/users?role=superadmin').set('Authorization', admin).expect(400);
     await request(app.getHttpServer()).get('/api/users?isActive=quizas').set('Authorization', admin).expect(400);
-    await request(app.getHttpServer()).get('/api/users?limit=99').set('Authorization', admin).expect(400);
+    await request(app.getHttpServer()).get('/api/users?limit=999').set('Authorization', admin).expect(400); // excede el máx (100)
+    await request(app.getHttpServer()).get('/api/users?foo=bar').set('Authorization', admin).expect(400); // parámetro desconocido
     assert.equal(repo.filters.length, 0, 'una query inválida no debe llegar a la base');
   } finally {
     await app.close();

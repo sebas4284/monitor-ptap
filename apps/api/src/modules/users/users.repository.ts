@@ -32,6 +32,15 @@ export interface UserListFilter {
   search?: string;
   role?: Role;
   isActive?: boolean;
+  /** Paginación (base 1). Sin estos dos, se listan todos los resultados (compatibilidad). */
+  page?: number;
+  limit?: number;
+}
+
+export interface UserListResult {
+  users: UserSummary[];
+  /** Total de filas que matchean el filtro (sin paginar) — para calcular páginas en el cliente. */
+  total: number;
 }
 
 interface UserRow extends RowDataPacket {
@@ -162,7 +171,7 @@ export class UsersRepository {
    * pretendía dejar fuera. Todo va parametrizado (?) — `search` viaja como valor, jamás
    * concatenado, así que un `%` o una comilla en la búsqueda es texto, no SQL.
    */
-  async list(filter: UserListFilter = {}): Promise<UserSummary[]> {
+  async list(filter: UserListFilter = {}): Promise<UserListResult> {
     const where: string[] = [];
     const params: unknown[] = [];
 
@@ -179,15 +188,32 @@ export class UsersRepository {
       where.push('is_active = ?');
       params.push(filter.isActive ? 1 : 0);
     }
+    const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+
+    const [countRows] = await this.pool.query<(RowDataPacket & { total: number })[]>(
+      `SELECT COUNT(*) AS total FROM users ${whereSql}`,
+      params,
+    );
+    const total = countRows[0]?.total ?? 0;
+
+    // Sin page/limit: se listan todos los resultados (mantiene compatibilidad con llamadas
+    // existentes que no paginan). Con page/limit: LIMIT/OFFSET sobre el mismo WHERE.
+    let pagination = '';
+    const queryParams = [...params];
+    if (filter.page !== undefined && filter.limit !== undefined) {
+      pagination = 'LIMIT ? OFFSET ?';
+      queryParams.push(filter.limit, (filter.page - 1) * filter.limit);
+    }
 
     const [rows] = await this.pool.query<SummaryRow[]>(
       `SELECT id, email, phone, name, role, plant, is_active, email_verified, last_login_at, created_at
          FROM users
-         ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
-         ORDER BY created_at DESC`,
-      params,
+         ${whereSql}
+         ORDER BY created_at DESC
+         ${pagination}`,
+      queryParams,
     );
-    return rows.map(toSummary);
+    return { users: rows.map(toSummary), total };
   }
 
   /** Devuelve un usuario por id SIN filtrar por is_active (administración). */

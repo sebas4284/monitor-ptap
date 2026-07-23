@@ -36,13 +36,20 @@ export class UsersController {
   @RequirePermission('manage_users')
   async list(@Query(new ZodValidationPipe(listUsersQuerySchema)) query: ListUsersQueryDto): Promise<{
     users: UserSummary[];
+    total: number;
+    page?: number;
+    limit?: number;
   }> {
-    const users = await this.usersService.list({
+    const { users, total } = await this.usersService.list({
       search: query.search,
       role: query.role as Role | undefined,
       isActive: query.isActive === undefined ? undefined : query.isActive === 'true',
+      // Solo se agregan si vienen en la query — así una llamada sin paginar produce el mismo
+      // filtro de siempre (compatibilidad con quien ya dependía de esa forma exacta).
+      ...(query.page !== undefined ? { page: query.page } : {}),
+      ...(query.limit !== undefined ? { limit: query.limit } : {}),
     });
-    return { users };
+    return { users, total, page: query.page, limit: query.limit };
   }
 
   @Patch(':id/role')

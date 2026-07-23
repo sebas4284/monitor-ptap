@@ -31,11 +31,14 @@ capas y los publica a la app móvil/web por REST y Socket.IO.
 6. [Instalación](#instalación)
 7. [Configuración (.env)](#configuración-env)
 8. [Cómo levantar el proyecto](#cómo-levantar-el-proyecto)
-9. [API REST y eventos Socket.IO](#api-rest-y-eventos-socketio)
-10. [Pruebas, typecheck y scripts de mapping](#pruebas-typecheck-y-scripts-de-mapping)
-11. [Reglas de dominio y convenciones](#reglas-de-dominio-y-convenciones)
-12. [Guía para nuevos desarrolladores](#guía-para-nuevos-desarrolladores)
-13. [Documentación de referencia](#documentación-de-referencia)
+9. [Acceso externo (Cloudflare Tunnel)](#acceso-externo-cloudflare-tunnel)
+10. [API REST y eventos Socket.IO](#api-rest-y-eventos-socketio)
+11. [Pruebas, typecheck y scripts de mapping](#pruebas-typecheck-y-scripts-de-mapping)
+12. [Empaquetado Android (APK)](#empaquetado-android-apk)
+13. [Optimizaciones de rendimiento aplicadas](#optimizaciones-de-rendimiento-aplicadas)
+14. [Reglas de dominio y convenciones](#reglas-de-dominio-y-convenciones)
+15. [Guía para nuevos desarrolladores](#guía-para-nuevos-desarrolladores)
+16. [Documentación de referencia](#documentación-de-referencia)
 
 ---
 
@@ -234,11 +237,25 @@ monitor-ptap/
 - **Node.js ≥ 20** (probado en 24). Incluye `npm`.
 - **Git Bash** o PowerShell (Windows).
 - **MySQL** corriendo en `127.0.0.1:3306` — **solo** si vas a levantar el backend COMPLETO
-  (`main.ts`). El arranque de **telemetría** no lo necesita.
+  (`main.ts`). El arranque de **telemetría** no lo necesita. En Windows, si no tienes MySQL
+  instalado como servicio, se puede instalar con `winget install --id Oracle.MySQL` e
+  inicializarlo a mano (`mysqld --initialize-insecure --datadir=<ruta>`, luego correrlo como
+  proceso normal con `mysqld --datadir=<ruta>`) — útil cuando no tienes permisos de administrador
+  para registrarlo como servicio de Windows.
 - **Acceso de red** al PLC (`opc.tcp://181.204.165.66:59100`) para el modo `opcua`.
   Sin red al PLC, usa `CONNECTIVITY_PROVIDER=simulator`.
 - Para el móvil: la app **Expo Go** en un dispositivo, un emulador, o simplemente el navegador
   (modo web).
+- **Solo para compilar el `.apk` de Android** (no hace falta para desarrollar): JDK 17
+  (`winget install --id Microsoft.OpenJDK.17`) y Android SDK (platform-tools + `platforms;android-36`
+  + `build-tools`) — ver [§12 Empaquetado Android](#empaquetado-android-apk) y `docs/ANDROID_APK.md`.
+- **Solo para exponer el proyecto fuera de tu red local** (que otro dispositivo/persona lo use sin
+  estar en tu wifi): `cloudflared` (`winget install --id Cloudflare.cloudflared`) — ver
+  [§9 Acceso externo](#acceso-externo-cloudflare-tunnel).
+- **Solo para probar el flujo de verificación de correo sin un proveedor SMTP real**:
+  [Mailpit](https://mailpit.axllent.dev/) (`winget install --id axllent.mailpit`), un servidor SMTP
+  de pruebas que captura los correos localmente (UI en `http://localhost:8025`) en vez de
+  enviarlos — ver `EMAIL_TRANSPORT` en la sección de configuración.
 
 ---
 
@@ -277,10 +294,24 @@ Claves relevantes (todas documentadas en `.env.example`):
 | `JWT_SECRET` | *(vacío, obligatorio)* | Firma de tokens (Fase 4). El backend completo no arranca sin esto. |
 | `SEED_ADMIN_EMAIL`/`PASSWORD`/`NAME`/`PLANT` | *(vacío)* | Solo los lee `npm run db:seed-admin -w @ptap/api` (no el runtime). |
 | `OPC_AUTO_ACCEPT_UNKNOWN_CERTIFICATE` | `false` | `true` solo para bootstrap/desarrollo; nunca en producción contra la planta (ver `docs/OPTIX_CLIENT_CERT_TRUST.md`). |
-| `CORS_ORIGINS` | *(vacío)* | Orígenes permitidos, separados por coma; vacío = CORS deshabilitado en `main.ts` (y el arranque lo avisa en el log). **Para la web de Expo pon `http://localhost:8081`**: corre en otro puerto que el backend, así que sin esto el *navegador* bloquea el login. `curl` no lo detecta — no aplica CORS. |
+| `CORS_ORIGINS` | *(vacío)* | Orígenes permitidos, separados por coma; vacío = CORS deshabilitado en `main.ts` (y el arranque lo avisa en el log). **Para la web de Expo pon `http://localhost:8081`**: corre en otro puerto que el backend, así que sin esto el *navegador* bloquea el login. `curl` no lo detecta — no aplica CORS. Si además expones la web por un túnel de Cloudflare (§9), agrega también esa URL HTTPS aquí (coma-separada) — el gateway Socket.IO hereda esta misma allowlist. |
+| `EMAIL_TRANSPORT` | `console` | `console` (default; escribe el link de verificación en el log, sin envío real — cómodo para dev) o `smtp` (envío real vía nodemailer con las `SMTP_*` de abajo). Con `smtp` pero sin `SMTP_HOST`/`USER`/`PASS` completos, cae a `console` con aviso. |
+| `SMTP_HOST`/`SMTP_PORT`/`SMTP_USER`/`SMTP_PASS`/`SMTP_SECURE` | *(vacío)* | Credenciales SMTP reales. **Para probar el flujo de verificación sin un proveedor real ni arriesgar credenciales**, apunta esto a un servidor local como Mailpit (`SMTP_HOST=127.0.0.1`, `SMTP_PORT=1025`, `SMTP_USER`/`SMTP_PASS` cualquier valor) — Mailpit acepta cualquier credencial y muestra los correos capturados en `http://localhost:8025`, sin enviarlos a ninguna bandeja real. |
+| `APP_PUBLIC_URL` | `http://localhost:PORT` | Base del enlace de verificación de correo (`GET /api/auth/verify-email?token=...`). Debe ser una URL que la persona que registra la cuenta pueda abrir: la IP LAN si prueban desde otro dispositivo en tu red, o la URL del túnel de Cloudflare (§9) si prueban desde fuera. |
+| `EMAIL_VERIFICATION_TTL_HOURS` | `24` | Vigencia del enlace de verificación. Vencido, hay que pedir uno nuevo con `POST /api/auth/resend-verification`. |
+| `REGISTER_BLOCK_DISPOSABLE` | `true` | Bloquea dominios de correo desechables (mailinator, yopmail, guerrillamail…) en el auto-registro. |
 
-> El móvil apunta por defecto a `http://localhost:4000`. Para un **dispositivo físico**, pon la
-> IP LAN del backend en `apps/mobile/app.json` → `expo.extra.apiBaseUrl`.
+> El móvil apunta por defecto a `http://localhost:4000`. Para un **dispositivo físico en tu misma
+> red**, define `API_BASE_URL` como variable de entorno antes de `expo start --web`/`prebuild` con
+> la IP LAN del backend (p. ej. `$env:API_BASE_URL = "http://192.168.1.x:4000"` en PowerShell —
+> **ojo con las comillas**, sin ellas PowerShell intenta ejecutar la URL como comando). Para un
+> dispositivo **fuera de tu red**, usa la URL del túnel de Cloudflare en su lugar (§9). El valor se
+> hornea en `apps/mobile/app.config.js` → `extra.apiBaseUrl` (leído por `services/api.ts`).
+
+> **Caché de Expo al cambiar `API_BASE_URL`:** si vuelves a correr `expo start --web` con un
+> `API_BASE_URL` distinto y el bundle sigue sirviendo el valor viejo, borra
+> `apps/mobile/.expo/web/cache` (o usa `npm run web:fast`, que ya corre con `--clear`) — Expo cachea
+> la config resuelta por archivo, no por variable de entorno.
 
 ---
 
@@ -320,6 +351,67 @@ congelados aparecen como `unknown`.
 
 ---
 
+## Acceso externo (Cloudflare Tunnel)
+
+Por defecto, el backend y la web solo son alcanzables dentro de tu red local (o de tu propia
+máquina). Para que **dispositivos fuera de tu red** (celular con datos móviles, otro computador en
+otra red) puedan usar el proyecto, hay dos caminos:
+
+### Túnel rápido (`trycloudflare.com`) — para probar
+
+Gratis, sin cuenta ni dominio, pero la URL **cambia cada vez que reinicias `cloudflared`** — no
+sirve para algo que varias personas usen de forma estable.
+
+```bash
+# Terminal aparte por cada servicio que quieras exponer
+cloudflared tunnel --url http://localhost:4000   # backend/API
+cloudflared tunnel --url http://localhost:8081   # web (opcional, si no vas a usar el .apk)
+```
+
+Cada uno imprime una URL `https://algo-al-azar.trycloudflare.com`. Luego:
+
+1. Agrega la URL de la **web** a `CORS_ORIGINS` en `.env` (coma-separada) y reinicia el backend.
+2. Pon la URL de la **API** en `APP_PUBLIC_URL` (para que el link de verificación de correo sea
+   abrible desde fuera) y reinicia el backend.
+3. Vuelve a levantar la web con `API_BASE_URL` = la URL del túnel de la API (no la IP LAN):
+   ```powershell
+   $env:API_BASE_URL = "https://<tu-tunel-api>.trycloudflare.com"
+   npm run web:fast -w @ptap/mobile
+   ```
+4. Comparte la URL del túnel **web** — cualquiera con esa URL, desde cualquier red, puede entrar.
+
+### Túnel con nombre (dominio propio) — para algo estable
+
+URL fija que sobrevive reinicios. Requiere un dominio tuyo dado de alta en Cloudflare (gratis, el
+dominio en sí puede costar unos pocos dólares/año si no tienes uno):
+
+```bash
+cloudflared login                                        # autoriza tu cuenta/dominio en el navegador
+cloudflared tunnel create ptap                            # crea el túnel, guarda credenciales locales
+cloudflared tunnel route dns ptap api.tudominio.com       # DNS para la API
+cloudflared tunnel route dns ptap app.tudominio.com       # DNS para la web
+```
+
+Luego un `config.yml` (junto a las credenciales, típicamente `~/.cloudflared/config.yml`) con las
+reglas de ingreso:
+
+```yaml
+tunnel: ptap
+credentials-file: /ruta/a/<tunnel-id>.json
+ingress:
+  - hostname: api.tudominio.com
+    service: http://localhost:4000
+  - hostname: app.tudominio.com
+    service: http://localhost:8081
+  - service: http_status:404
+```
+
+Y `cloudflared tunnel run ptap` — las URLs quedan fijas para siempre, mientras el túnel esté
+corriendo. `docs/ANDROID_APK.md` §7 documenta cómo reconstruir el `.apk` cuando cambia la URL del
+túnel rápido; con túnel con nombre, esto **no vuelve a hacer falta**.
+
+---
+
 ## API REST y eventos Socket.IO
 
 Prefijo global: **`/api`** (excepto `/metrics`, fuera del prefijo por convención de Prometheus).
@@ -329,7 +421,9 @@ Prefijo global: **`/api`** (excepto `/metrics`, fuera del prefijo por convenció
 | Método · Ruta | Devuelve |
 |---------------|----------|
 | `POST /api/auth/login` | `{ email, password } → { token, user: AuthUser }` — mismo shape que ya espera `apps/mobile/services/auth.ts`. Rate-limit propio (`LOGIN_RATE_LIMIT_*`). **401** genérico si las credenciales son malas; **403** si son buenas pero la cuenta está pendiente/desactivada. |
-| `POST /api/auth/register` | `{ name, email, phone?, plant, password } → { status: 'pending_approval', email, message }` — alta propia. **Sin token**: la cuenta nace `is_active = 0` y no puede entrar hasta que un admin la apruebe. Nace **SIEMPRE con rol `civil`**: el rol lo fija el servidor y el schema es `.strict()`, así que enviar `role` → **400**. Mismo rate-limit que login. |
+| `POST /api/auth/register` | `{ name, email, phone?, plant, password } → { status: 'pending_approval', email, message }` — alta propia. **Sin token**: la cuenta nace `is_active = 0` y no puede entrar hasta que un admin la apruebe. Nace **SIEMPRE con rol `civil`**: el rol lo fija el servidor y el schema es `.strict()`, así que enviar `role` → **400**. Mismo rate-limit que login. Al registrarse se envía (o se loguea, según `EMAIL_TRANSPORT`) un enlace de verificación de correo — ver fila siguiente. Password: mín. 8 caracteres, con mayúscula+minúscula+dígito; el body de error 400 de Zod no trae un `message` legible por campo (solo `fieldErrors`), así que la app hoy solo puede mostrar "HTTP 400" genérico si algo no cumple. |
+| `GET /api/auth/verify-email?token=...` | Verifica el correo (`email_verified=1` en MySQL) siguiendo el enlace enviado al registrarse. Token de un solo uso, vence en `EMAIL_VERIFICATION_TTL_HOURS` (24h default). **Precondición para poder activarse**: `PATCH /api/users/:id/active` con `isActive:true` rechaza con 400 si el correo no está verificado. |
+| `POST /api/auth/resend-verification` | `{ email }` → reenvía el enlace (invalida el anterior). Respuesta genérica siempre (no revela si el correo existe). **No hay botón para esto en la app todavía** — solo se puede invocar directo (curl/Postman) si el enlace original venció o se perdió. |
 
 > **El orden del login es la defensa:** la contraseña se verifica **antes** de mirar `is_active`. Con
 > la contraseña mala siempre sale el mismo `401`, exista o no el correo — si el 403 saliera antes,
@@ -341,7 +435,7 @@ La matriz oficial reserva *"Crear, editar y eliminar usuarios"* y *"Asignar role
 
 | Método · Ruta | Permiso | Devuelve |
 |---------------|---------|----------|
-| `GET /api/users` | `manage_users` (admin) | Lista de usuarios (`UserSummary`, sin secretos). Filtra en **SQL parametrizado**: `?search=` (nombre/correo/teléfono), `?role=`, `?isActive=` (`false` = pendientes). Query inválida → **400**. |
+| `GET /api/users` | `manage_users` (admin) | Lista de usuarios (`UserSummary`, sin secretos) + `total`. Filtra en **SQL parametrizado**: `?search=` (nombre/correo/teléfono), `?role=`, `?isActive=` (`false` = pendientes). Query inválida → **400**. Paginación opcional `?page=&limit=` (`limit` máx. 100) — **sin estos dos parámetros, devuelve todo** (compatibilidad); `apps/mobile/app/(app)/usuarios.tsx` los usa con scroll infinito sobre el `FlatList`. `role`/`is_active` están indexados en MySQL (migración `0006_add_users_indexes.sql`) — el filtro por defecto de la pestaña "Pendientes" ya no hace full table scan. |
 | `PATCH /api/users/:id/active` | `manage_users` (admin) | **Aprueba** (`true` sobre una cuenta nueva), activa o desactiva; audita `user.active_changed`. |
 | `PATCH /api/users/:id/role` | `assign_roles` (admin) | Asigna rol; audita `user.role_changed` (quién, a quién, de→a). |
 
@@ -355,10 +449,13 @@ pestaña *Pendientes*). Un admin no puede cambiar su propio rol ni desactivarse 
 > firmó el login—, no una autorización: desactivar una cuenta corta esa sesión en el acto y un rol
 > degradado no sobrevive dentro del token. Cuesta una consulta por clave primaria por petición.
 
-> **Por qué aprobación humana y no verificación por correo:** confirmar un correo solo prueba que
-> alguien tiene acceso a ese buzón, y una cuenta desechable se crea en treinta segundos — contra
-> cuentas fantasma no aporta nada. Lo que frena a un impostor es que una persona lo reconozca. La
-> verificación por correo puede **sumarse** después como filtro de ruido, pero no sustituye esto.
+> **Por qué aprobación humana Y verificación de correo (las dos, no una u otra):** confirmar un
+> correo solo prueba que alguien tiene acceso a ese buzón, y una cuenta desechable se crea en
+> treinta segundos — contra cuentas fantasma no aporta nada por sí sola. Lo que frena a un impostor
+> es que una persona lo reconozca. Por eso la verificación de correo (`GET /api/auth/verify-email`)
+> se sumó como **filtro de ruido previo**, no como reemplazo: `PATCH /api/users/:id/active` con
+> `isActive:true` exige `email_verified=1` (si no, 400) — un admin no puede aprobar por error una
+> cuenta cuyo dueño ni siquiera abrió el correo. La aprobación humana sigue siendo la barrera real.
 
 El resto de rutas (salvo `/api/health*` y `/metrics`) exige `Authorization: Bearer <token>`. El
 RBAC gatea por **permiso granular** (`@RequirePermission(...)`, sobre `hasPermission()` de
@@ -458,22 +555,34 @@ npm run test:security -w @ptap/api    # conmutación real a SignAndEncrypt+usern
                                        # contra un OPCUAServer local (no un mock)
 npm run test:commands -w @ptap/api    # Fase 5: WriteService (precondición dura, interlock, idempotencia,
                                        # read-back), RBAC del endpoint, y schema del write spec
+npm run test:users    -w @ptap/api    # registro, verificación de correo, admin de usuarios (RBAC,
+                                       # aprobar/activar, cambio de rol, guard rails de auto-admin)
+npm run test:reports   -w @ptap/api   # generación/listado/descarga de informes CSV
+npm run test:diagnostics -w @ptap/api # prueba de ruta al PLC (route-check/route-history)
 
 # Mapping (la semántica vive en datos, no en código)
 npm run generate:mapping -w @ptap/api # regenera config/opc_mapping.json (idempotente)
 npm run validate:mapping -w @ptap/api # valida schema + reglas semánticas
 
-# Base de datos (Fase 4 — solo users + audit_log; el resto del dominio sigue pendiente)
-npm run db:migrate     -w @ptap/api   # crea las tablas si no existen (idempotente)
-npm run db:seed-users  -w @ptap/api   # siembra un usuario por rol para probar RBAC (Demo1234!)
+# Base de datos (Fase 4 — users + audit_log + command_log; el resto del dominio sigue pendiente)
+# Migraciones actuales (apps/api/src/infrastructure/database/migrations/), aplicadas en orden y
+# de forma idempotente por scripts/migrate.ts (tabla schema_migrations lleva el registro):
+#   0001_create_users · 0002_create_audit_log · 0003_create_command_log ·
+#   0004_add_users_phone · 0005_email_verification · 0006_add_users_indexes
+npm run db:migrate     -w @ptap/api   # crea/actualiza las tablas si no existen (idempotente)
+npm run db:seed-users  -w @ptap/api   # siembra las 4 cuentas demo (civil/operador/jefe/admin@ptap.co)
+                                       # con la contraseña de SEED_USERS_PASSWORD (.env) — OBLIGATORIA,
+                                       # ya no existe un default público
 npm run db:seed-admin  -w @ptap/api   # siembra solo el primer admin desde SEED_ADMIN_* (.env)
+npm run db:disable-demo-users -w @ptap/api  # desactiva las 4 cuentas demo antes de exponer el
+                                       # backend fuera de desarrollo (reversible por PATCH .../active)
 ```
 
-> ⚠️ **Las 4 cuentas demo tienen una contraseña pública.** `Demo1234!` está escrita en este README, en
-> `docs/SETUP.md`, en `docs/SETUP_AGENT.md` y en el `.env.example` — es decir, **cualquiera que abra el
-> repo puede entrar como `admin@ptap.co`**. Es aceptable en local, pero **antes de exponer el backend
-> fuera de tu máquina hay que desactivarlas o cambiarles la contraseña** (`PATCH /api/users/:id/active`
-> con `isActive:false` las corta al instante). No son un mecanismo de acceso: son un atajo de demo.
+> **Las 4 cuentas demo usan la contraseña que definas en `SEED_USERS_PASSWORD` (.env)** — ya no hay
+> un default público tipo `Demo1234!` escrito en el repo. Aun así, siguen siendo cuentas de **demo**
+> conocidas por su correo (`civil@ptap.co`, `operador@ptap.co`, `jefe@ptap.co`, `admin@ptap.co`):
+> antes de exponer el backend fuera de tu máquina, córtalas con `npm run db:disable-demo-users`
+> (reversible al instante vía `PATCH /api/users/:id/active`).
 
 > **Nota de tooling:** los archivos en `test/` no están en el `include` de `tsconfig.json` (por
 > diseño, para no mezclarse con el `build` de `src/`), pero eso hace que `tsx`/esbuild use el
@@ -483,6 +592,83 @@ npm run db:seed-admin  -w @ptap/api   # siembra solo el primer admin desde SEED_
 > agregas un test nuevo que declare clases con decoradores de Nest (`@Controller`, `@Injectable`…),
 > ejecútalo siempre vía `npm run test:*` (nunca `node --import tsx --test` a secas) o fallará con
 > `Cannot read properties of undefined (reading 'value')`.
+
+---
+
+## Empaquetado Android (APK)
+
+Guía completa en `docs/ANDROID_APK.md`. Resumen de lo que hace falta y por qué:
+
+- **Toolchain** (solo para compilar, no para desarrollar): JDK 17 y Android SDK
+  (`platform-tools`, `platforms;android-36`, `build-tools`) — ver instalación en §5.
+- **`apps/mobile/android/gradle.properties`** → `reactNativeArchitectures=arm64-v8a`. Se restringió
+  de las 4 arquitecturas por defecto (`armeabi-v7a,arm64-v8a,x86,x86_64`) a solo `arm64-v8a`: `x86`/
+  `x86_64` son **exclusivas de emulador**, ningún celular real las usa, y compilarlas de más
+  multiplicaba el tiempo de build nativo (CMake/ninja) hasta 4x. Si necesitas probar en el emulador
+  de Android Studio, añade `x86_64` de vuelta.
+- **`compileSdkVersion`/`targetSdkVersion` = 36** en `apps/mobile/app.config.js` (plugin
+  `expo-build-properties`) — subido desde 35 porque una dependencia transitiva de AndroidX
+  (`androidx.core:1.18.0`) lo exige; sin esto, `assembleRelease` falla en `checkReleaseAarMetadata`.
+- **Permisos del manifest acotados a `INTERNET`**: la plantilla base de Expo agrega
+  `SYSTEM_ALERT_WINDOW`/`VIBRATE`/`READ_EXTERNAL_STORAGE`/`WRITE_EXTERNAL_STORAGE` "opcionales" que
+  el proyecto no necesita. `android.permissions` de Expo solo **agrega** permisos, nunca quita los
+  de la plantilla — hay que bloquearlos explícitamente con `android.blockedPermissions` en
+  `app.config.js` (`tools:node="remove"` en el manifest final) para que el APK realmente pida
+  únicamente `INTERNET`.
+- **Firma de release**: keystore fuera del repo (`C:/keys/monitor-ptap-release.keystore` en esta
+  máquina — nunca versionado), configurado en `apps/mobile/android/gradle.properties`
+  (`MONITORPTAP_UPLOAD_*`) y `apps/mobile/android/app/build.gradle` (`signingConfigs.release`).
+  **Ambos archivos se regeneran con `expo prebuild --clean`** y hay que volver a aplicar estos
+  cambios manualmente después (no sobreviven al clean).
+- **Windows: límite de 260 caracteres de ruta.** El build nativo (CMake/ninja) de módulos como
+  `react-native-gesture-handler`/`react-native-screens` falla con `Filename longer than 260
+  characters` si el repo vive en una ruta larga (`C:\Users\<user>\Documents\GitHub\monitor-ptap\...`).
+  Arreglo de dos partes: (1) habilitar rutas largas de Windows (registro, requiere admin —
+  `HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem\LongPathsEnabled=1` + `git config --system
+  core.longpaths true`), y (2) acortar la carpeta de build de CMake en
+  `apps/mobile/android/app/build.gradle` (`externalNativeBuild.cmake.buildStagingDirectory`, p. ej.
+  `C:/cxx-ptap`) — solo el registro alcanza a bajar el total por debajo de 260, pero acortar la
+  carpeta de staging da más margen.
+- **API_BASE_URL horneada en el build**: la APK nativa habla HTTPS con el backend
+  (`usesCleartextTraffic:false`), así que necesita una URL pública — ver
+  [§9 Acceso externo](#acceso-externo-cloudflare-tunnel) para el túnel de Cloudflare que provee esa
+  URL.
+
+Comando final (con el toolchain listo y el túnel corriendo):
+
+```powershell
+$env:API_BASE_URL = "https://<tu-tunel-api>.trycloudflare.com"
+cd apps/mobile
+npx expo prebuild -p android --clean
+# reaplicar signingConfig + reactNativeArchitectures + build cache en gradle.properties/build.gradle
+cd android
+.\gradlew.bat assembleRelease
+# APK en: apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+```
+
+---
+
+## Optimizaciones de rendimiento aplicadas
+
+Auditoría de "por qué se siente lento" (build, apertura de la app, panel admin) y lo que se corrigió:
+
+| Área | Antes | Después |
+|------|-------|---------|
+| **Build Android** | 4 arquitecturas de CPU compiladas (2 de ellas solo útiles para emulador); sin caché de Gradle | Solo `arm64-v8a`; `org.gradle.caching`/`org.gradle.configuration-cache` activados; heap del daemon subido (2GB→3GB) |
+| **Backend — compresión** | Sin gzip/brotli en ninguna respuesta | `compression()` middleware en `apps/api/src/main.ts` |
+| **Backend — pool MySQL** | `connectionLimit: 10`, cola sin límite (`queueLimit` default 0 = infinita) | `connectionLimit: 20`, `queueLimit: 50` (falla rápido bajo sobrecarga en vez de acumular latencia) — `apps/api/src/infrastructure/database/database.module.ts` |
+| **`GET /api/users`** | Sin `LIMIT`, devolvía toda la tabla siempre; `role`/`is_active` sin índice (full table scan en el filtro por defecto de "Pendientes") | Paginado (`?page=&limit=`, compatible sin params); índices `idx_users_role`/`idx_users_active` (migración `0006`) |
+| **Polling redundante** | `hooks/useSnapshot.ts` heredaba `refetchInterval: 30_000` del `QueryClient` global aunque ya recibe todo por push de Socket.IO (`staleTime: Infinity`) | `refetchInterval: false` explícito — el socket es la única fuente de refresco |
+| **Bundle web** | Un solo archivo JS con **todas** las pantallas (admin, civil, operador) sin importar el rol que entra | Expo Router **Async Routes** (`asyncRoutes: "production"` en `app.json`) — cada ruta es un chunk separado; verificado con `expo export --platform web` (18 archivos en vez de 1) |
+| **Ícono de la app** | `assets/icon.png` en 393KB | Recomprimido a 210KB (paleta adaptativa 256 colores, mismo contenido visual) |
+| **Reportes CSV** | Se sentían "lentos" | **No es un bug**: por diseño toman ~1h (`REPORT_SAMPLE_INTERVAL_MS` × `REPORT_SAMPLE_COUNT` = 60 muestras × 1/min). El CSV en sí es trivial; ajustable solo si aceptas menos resolución temporal. |
+
+**Pendiente/fuera de alcance, por si se retoma:** `opc:liveness` es un `server.emit` sin room (a
+diferencia de `opc:snapshot`, que sí está scoped por planta) — bajo impacto hoy (payload chico, solo
+en cambios de estado), pero a revisar si crece mucho el número de plantas/usuarios simultáneos. La
+arquitectura backend es single-instance por diseño (PM2 `instances:1`, fork mode) porque el puente
+OPC UA y el estado de Socket.IO viven en RAM de un solo proceso — no es un bug, es una restricción
+arquitectónica.
 
 ---
 
@@ -539,6 +725,11 @@ pichinde, carbonero, sirena, san-antonio, quijote`). Nada de `PTAP Norte` ni `pt
 | `docs/OPTIX_CLIENT_CERT_TRUST.md` | ★ Fase 4: cómo confiar el certificado de cliente del gateway en FactoryTalk Optix (y el del servidor, en el gateway). |
 | `docs/SETUP.md` | Puesta en marcha desde cero (MySQL, `.env`, migraciones, usuarios de prueba). Empieza por aquí si acabas de clonar. |
 | `docs/SETUP_AGENT.md` | El mismo montaje como **runbook ejecutable** (pasos + verificación + errores típicos), pensado para que lo siga un agente de IA. |
+| `docs/ANDROID_APK.md` | Guía completa para compilar el `.apk` de Android: toolchain, túnel HTTPS, keystore de firma, checklist de seguridad antes de repartirlo, y qué hacer cuando cambia la URL del túnel. Ver también [§12](#empaquetado-android-apk). |
+| `docs/DEPLOY_VPS.md` | Despliegue en un VPS (bare-metal, PM2, nginx, certbot) — no Docker. |
+| `docs/CHECKLIST_PRODUCCION.md` | Checklist de endurecimiento antes de producción (valores de env, desactivar cuentas demo, `npm ci`+`build`+`migrate` en el servidor). |
+| `docs/REQUISITOS_SERVIDOR.md` | Requisitos del servidor de producción. |
+| `docs/SEGURIDAD_FRONTEND.md` | Requisitos de seguridad del frontend/móvil. |
 | `docs/DATA_CATALOG.md` | Catálogo de señales por planta (generado desde el mapping). |
 | `docs/architecture/` | Documento de arquitectura + métodos/contratos internos del backend. |
 | `docs/api/openapi.yaml`, `docs/postman/` | Contrato de API (todas las rutas, con su permiso). |

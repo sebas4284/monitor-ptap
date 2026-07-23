@@ -25,7 +25,15 @@ import { MYSQL_POOL } from './database.tokens';
         const pool = createPool({
           ...config,
           waitForConnections: true,
-          connectionLimit: 10,
+          // 10 → 20: había una sola cifra compitiendo entre lecturas (JwtAuthGuard hace un
+          // findById por request autenticado), auditoría (un INSERT fire-and-forget por request
+          // a /api/opc, /api/plants, /api/users) y el resto de la app.
+          connectionLimit: 20,
+          // Sin límite (default 0) la cola crece sin fin bajo carga alta y las respuestas se
+          // vuelven cada vez más lentas en vez de fallar rápido. Con tope, una ráfaga que supere
+          // la capacidad real del pool rechaza el exceso (ER_DEADLOCK-like) en vez de acumular
+          // latencia de cola indefinidamente.
+          queueLimit: 50,
           connectTimeout: 10_000,
         });
         await pool.query('SELECT 1');

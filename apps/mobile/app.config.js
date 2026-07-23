@@ -22,6 +22,15 @@ module.exports = ({ config }) => ({
   android: {
     ...config.android,
     permissions: ['INTERNET'],
+    // La plantilla base de Expo agrega estos 4 permisos "opcionales" al manifest y
+    // `permissions` solo AGREGA, nunca los quita — hay que bloquearlos explícitamente
+    // (tools:node="remove") para que el APK final pida únicamente INTERNET.
+    blockedPermissions: [
+      'android.permission.SYSTEM_ALERT_WINDOW',
+      'android.permission.VIBRATE',
+      'android.permission.READ_EXTERNAL_STORAGE',
+      'android.permission.WRITE_EXTERNAL_STORAGE',
+    ],
   },
   plugins: [
     ...(config.plugins ?? []),
@@ -33,8 +42,8 @@ module.exports = ({ config }) => ({
           enableProguardInReleaseBuilds: true,
           enableShrinkResources: true,
           minSdkVersion: 24,
-          compileSdkVersion: 35,
-          targetSdkVersion: 35,
+          compileSdkVersion: 36,
+          targetSdkVersion: 36,
         },
       },
     ],

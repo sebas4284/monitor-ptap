@@ -34,6 +34,7 @@ export function useSnapshot(plantId: string, enabled = true) {
       return snapshot;
     },
     staleTime: Infinity, // el push mantiene el dato fresco; no re-fetch por tiempo
+    refetchInterval: false, // sin esto hereda el poll de 30s global (app/_layout.tsx) y duplica el socket
     // `enabled=false` para roles sin view_dashboard (Civil): NO se pide el snapshot detallado
     // (el backend responde 403) NI se abre la suscripción de socket (el gateway aún no valida
     // permisos por planta, así que suscribir al Civil filtraría datos que su rol no debe ver).

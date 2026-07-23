@@ -15,17 +15,27 @@ export interface UserFilter {
   role?: Role;
   /** `false` = pendientes de aprobación. */
   isActive?: boolean;
+  /** Paginación (base 1). Sin page/limit, el backend devuelve todo (compatibilidad). */
+  page?: number;
+  limit?: number;
 }
 
-export async function fetchUsers(filter: UserFilter = {}): Promise<UserSummary[]> {
+export interface UserListPage {
+  users: UserSummary[];
+  total: number;
+}
+
+export async function fetchUsers(filter: UserFilter = {}): Promise<UserListPage> {
   const params = new URLSearchParams();
   if (filter.search?.trim()) params.set('search', filter.search.trim());
   if (filter.role) params.set('role', filter.role);
   if (filter.isActive !== undefined) params.set('isActive', String(filter.isActive));
+  if (filter.page !== undefined) params.set('page', String(filter.page));
+  if (filter.limit !== undefined) params.set('limit', String(filter.limit));
 
   const qs = params.toString();
-  const body = await getJson<{ users: UserSummary[] }>(`/api/users${qs ? `?${qs}` : ''}`);
-  return body.users;
+  const body = await getJson<{ users: UserSummary[]; total: number }>(`/api/users${qs ? `?${qs}` : ''}`);
+  return { users: body.users, total: body.total };
 }
 
 /** Eleva o degrada a un usuario. El backend audita el cambio (quién, a quién, de qué a qué). */
