@@ -10,6 +10,7 @@ import {
   Alert,
   ActivityIndicator,
   StyleSheet,
+  Image,
 } from 'react-native';
 
 function alertWeb(title: string, message: string) {
@@ -68,10 +69,12 @@ export default function LoginScreen() {
         >
           {/* Hero */}
           <View style={styles.hero}>
-            <View style={styles.shieldWrap}>
-              <Ionicons name="shield-checkmark" size={42} color="#fff" />
-            </View>
-            <Text style={styles.title}>Monitor PTAP</Text>
+            <Image
+              source={require('../../assets/aquora-logo.png')}
+              style={styles.logo}
+              resizeMode="contain"
+              accessibilityLabel="Aquora, creado por Xpertic"
+            />
             <Text style={styles.subtitle}>Ingresa a tu cuenta de operador</Text>
           </View>
 
@@ -149,30 +152,15 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   scroll: {
     flexGrow: 1,
-    justifyContent: 'center',
     paddingHorizontal: 24,
-    paddingVertical: 40,
+    paddingTop: 28,
+    paddingBottom: 20,
   },
-  hero: { alignItems: 'center', marginBottom: 36 },
-  shieldWrap: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: Colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 16,
-    shadowColor: Colors.primary,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.35,
-    shadowRadius: 12,
-    elevation: 8,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: '800',
-    color: Colors.primary,
-    letterSpacing: 0.5,
+  hero: { alignItems: 'center', marginBottom: 20 },
+  logo: {
+    width: 152,
+    aspectRatio: 545 / 459,
+    marginBottom: 4,
   },
   subtitle: {
     fontSize: 15,
@@ -208,7 +196,7 @@ const styles = StyleSheet.create({
     color: Colors.textPrimary,
   },
   btnPrimary: {
-    marginTop: 28,
+    marginTop: 22,
     height: 52,
     backgroundColor: Colors.primary,
     borderRadius: 14,

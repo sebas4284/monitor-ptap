@@ -149,6 +149,8 @@ export default function AppLayout() {
       <TouchableOpacity
         style={{ marginLeft: 16 }}
         hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel="Abrir menú"
         onPress={() => setMenuVisible(true)}
       >
         <View>
@@ -165,7 +167,13 @@ export default function AppLayout() {
     // Campana con conteo REAL de alertas; toca para abrir la pantalla de alertas. El badge solo
     // aparece si hay alertas (nada de un "3" inventado). Para el Civil (sin señales) siempre 0.
     headerRight: () => (
-      <TouchableOpacity style={{ marginRight: 16 }} hitSlop={8} onPress={() => router.push('/(app)/alertas')}>
+      <TouchableOpacity
+        style={{ marginRight: 16 }}
+        hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel={alertCount > 0 ? `Alertas, ${alertCount} activa${alertCount === 1 ? '' : 's'}` : 'Alertas'}
+        onPress={() => router.push('/(app)/alertas')}
+      >
         <View>
           <Ionicons name="notifications-outline" size={24} color="#fff" />
           {alertCount > 0 && (

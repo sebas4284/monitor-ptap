@@ -133,7 +133,7 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   frozenTagText: { fontSize: 9, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.5 },
-  value: { fontSize: 28, fontWeight: '800', marginBottom: 6, textAlign: 'center' },
+  value: { fontSize: 28, fontWeight: '800', marginBottom: 6, textAlign: 'center', fontVariant: ['tabular-nums'] },
   unit: { fontSize: 14, fontWeight: '400', color: Colors.textSecondary },
   rangeText: { fontSize: 11, fontWeight: '600', color: Colors.textSecondary },
   noData: { marginBottom: 6, alignItems: 'center' },

@@ -26,6 +26,10 @@ export function PlantSelector() {
             <TouchableOpacity
               key={plant.id}
               onPress={() => setSelectedPlant(plant)}
+              hitSlop={{ top: 8, bottom: 8 }}
+              accessibilityRole="button"
+              accessibilityLabel={`Seleccionar planta ${plant.name}`}
+              accessibilityState={{ selected: isSelected }}
               style={{
                 paddingHorizontal: 18,
                 paddingVertical: 7,

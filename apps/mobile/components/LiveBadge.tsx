@@ -21,6 +21,8 @@ export function LiveBadge({ state, loading = false }: { state: LivenessState; lo
   const { color, label } = loading ? { color: Colors.neutral, label: 'CONECTANDO…' } : LIVENESS[state];
   return (
     <View
+      accessibilityLiveRegion="polite"
+      accessibilityRole="text"
       style={{
         flexDirection: 'row',
         alignItems: 'center',

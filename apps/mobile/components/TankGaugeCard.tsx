@@ -162,7 +162,7 @@ const styles = StyleSheet.create({
   },
   chipLabel: { fontSize: 9, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.5 },
   chipValue: { fontSize: 12, fontWeight: '700', color: Colors.textPrimary },
-  pctText: { fontSize: 34, fontWeight: '800', color: Colors.textPrimary, textAlign: 'center' },
+  pctText: { fontSize: 34, fontWeight: '800', color: Colors.textPrimary, textAlign: 'center', fontVariant: ['tabular-nums'] },
   pctTextUnknown: {
     fontSize: 20,
     fontWeight: '700',
