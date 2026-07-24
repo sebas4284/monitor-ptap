@@ -19,6 +19,8 @@ export function LiveBadge({ state }: { state: LivenessState }) {
   const { color, label } = LIVENESS[state];
   return (
     <View
+      accessibilityLiveRegion="polite"
+      accessibilityRole="text"
       style={{
         flexDirection: 'row',
         alignItems: 'center',

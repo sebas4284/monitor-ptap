@@ -115,13 +115,20 @@ export default function AppLayout() {
       <TouchableOpacity
         style={{ marginLeft: 16 }}
         hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel="Abrir menú"
         onPress={() => setMenuVisible(true)}
       >
         <Ionicons name="menu" size={24} color="#fff" />
       </TouchableOpacity>
     ),
     headerRight: () => (
-      <TouchableOpacity style={{ marginRight: 16 }} hitSlop={8}>
+      <TouchableOpacity
+        style={{ marginRight: 16 }}
+        hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel="Notificaciones, 3 sin leer"
+      >
         <View>
           <Ionicons name="notifications-outline" size={24} color="#fff" />
           <View style={styles.notifBadge}>

@@ -74,7 +74,7 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   name: { fontSize: 12, fontWeight: '600', color: Colors.textSecondary, marginBottom: 8, textAlign: 'center' },
-  value: { fontSize: 28, fontWeight: '800', marginBottom: 6, textAlign: 'center' },
+  value: { fontSize: 28, fontWeight: '800', marginBottom: 6, textAlign: 'center', fontVariant: ['tabular-nums'] },
   unit: { fontSize: 14, fontWeight: '400', color: Colors.textSecondary },
   rangeText: { fontSize: 11, fontWeight: '600', color: Colors.textSecondary },
   noData: { marginBottom: 6, alignItems: 'center' },

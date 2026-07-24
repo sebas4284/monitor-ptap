@@ -71,7 +71,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   headerText: { fontSize: 11, fontWeight: '700', letterSpacing: 0.5 },
-  value: { fontSize: 28, fontWeight: '800', color: Colors.textPrimary, marginBottom: 10 },
+  value: { fontSize: 28, fontWeight: '800', color: Colors.textPrimary, marginBottom: 10, fontVariant: ['tabular-nums'] },
   unit: { fontSize: 14, fontWeight: '400', color: Colors.textSecondary },
   barOuter: {
     height: 8,
