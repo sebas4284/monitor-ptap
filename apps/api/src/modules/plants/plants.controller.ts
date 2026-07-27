@@ -1,4 +1,6 @@
-import { Controller, Get, Inject, NotFoundException, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Inject, NotFoundException, Param, Req, UseGuards } from '@nestjs/common';
+import { hasPermission } from '@ptap/shared';
+import type { AuthenticatedRequest } from '../auth/authenticated-request';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionGuard } from '../auth/guards/permission.guard';
 import { PlantScopeGuard } from '../auth/guards/plant-scope.guard';
@@ -35,10 +37,18 @@ export class PlantsController {
     @Inject(PlantCache) private readonly cache: PlantCache,
   ) {}
 
-  /** Lista de plantas con su liveness (para el tablero). */
+  /**
+   * Lista de plantas con su liveness (para el tablero). Exige `view_dashboard` (el Civil recibe
+   * 403: no enumera plantas). Sin `view_all_plants` la respuesta se ACOTA a la planta de la
+   * cuenta, de modo que un operador/jefe no pueda enumerar plantas ajenas.
+   */
   @Get()
-  list() {
-    return { plants: this.pipeline.listPlants() };
+  @RequirePermission('view_dashboard')
+  list(@Req() request: AuthenticatedRequest) {
+    const all = this.pipeline.listPlants();
+    const user = request.user;
+    if (user && hasPermission(user.role, 'view_all_plants')) return { plants: all };
+    return { plants: all.filter((p) => p.plantId === user?.plant) };
   }
 
   /**

@@ -1,9 +1,11 @@
 import { View, Text, ScrollView, RefreshControl, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { useSnapshot } from '../../hooks/useSnapshot';
 import { useTanques } from '../../hooks/useTanques';
 import { useTime } from '../../hooks/useTime';
 import { usePlant } from '../../context/PlantContext';
+import { useAuth } from '../../context/AuthContext';
 import { GaugeCard } from '../../components/GaugeCard';
 import { FlowMeterCard } from '../../components/FlowMeterCard';
 import { TankGaugeCard } from '../../components/TankGaugeCard';
@@ -38,6 +40,7 @@ const ICONS: Record<string, string> = {
 
 export default function TableroScreen() {
   const { selectedPlant } = usePlant();
+  const { hasPermission } = useAuth();
   const { data: snapshot, isLoading, isError, refetch, isRefetching } = useSnapshot(selectedPlant.id);
   const { tanks } = useTanques();
   const time = useTime();
@@ -48,6 +51,20 @@ export default function TableroScreen() {
     : [];
   const livenessState = snapshot?.liveness.state ?? 'frozen';
   const hasContent = tanks.length > 0 || signals.length > 0;
+
+  // Guard de rol: el tablero detallado es para operador/jefe/admin. El Civil (solo estado
+  // básico) no entra aquí ni siquiera por navegación directa. El backend igual responde 403.
+  if (!hasPermission('view_dashboard')) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['bottom']}>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 10 }}>
+          <Ionicons name="lock-closed-outline" size={40} color={Colors.textSecondary} />
+          <Text style={styles.plantName}>Acceso restringido</Text>
+          <Text style={styles.sectionSubtitle}>El tablero detallado no está disponible para tu rol.</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe} edges={['bottom']}>

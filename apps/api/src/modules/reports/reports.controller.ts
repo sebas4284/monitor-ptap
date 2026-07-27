@@ -6,6 +6,7 @@ import { PlantScopeGuard } from '../auth/guards/plant-scope.guard';
 import { RequirePermission } from '../auth/decorators/require-permission.decorator';
 import { ZodValidationPipe } from '../../infrastructure/validation/zod-validation.pipe';
 import { plantIdParamSchema } from '../../infrastructure/validation/plant-id.schema';
+import { metricParamSchema } from '../../infrastructure/validation/metric.schema';
 import { ReportsService, type ReportInfo } from './reports.service';
 
 /**
@@ -32,7 +33,7 @@ export class ReportsController {
   @HttpCode(202)
   generate(
     @Param('plantId', new ZodValidationPipe(plantIdParamSchema)) plantId: string,
-    @Param('metric') metric: string,
+    @Param('metric', new ZodValidationPipe(metricParamSchema)) metric: string,
   ): { status: 'collecting'; plantId: string; metric: string } {
     this.reports.generate(plantId, metric);
     return { status: 'collecting', plantId, metric };
@@ -44,7 +45,7 @@ export class ReportsController {
   @RequirePermission('export_data')
   download(
     @Param('plantId', new ZodValidationPipe(plantIdParamSchema)) plantId: string,
-    @Param('metric') metric: string,
+    @Param('metric', new ZodValidationPipe(metricParamSchema)) metric: string,
     @Res() res: Response,
   ): void {
     const path = this.reports.filePath(plantId, metric);

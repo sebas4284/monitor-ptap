@@ -38,6 +38,10 @@ export default function LoginScreen() {
       alertWeb('Campos requeridos', 'Por favor completa todos los campos.');
       return;
     }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      alertWeb('Correo inválido', 'Escribe un correo con formato válido.');
+      return;
+    }
     setIsLoading(true);
     try {
       const { token, user } = await apiLogin(email.trim(), password);
@@ -84,6 +88,7 @@ export default function LoginScreen() {
               keyboardType="email-address"
               autoCapitalize="none"
               autoCorrect={false}
+              maxLength={255}
             />
           </View>
 
@@ -99,6 +104,7 @@ export default function LoginScreen() {
               onChangeText={setPassword}
               secureTextEntry={!showPassword}
               autoCapitalize="none"
+              maxLength={200}
             />
             <TouchableOpacity onPress={() => setShowPassword(v => !v)} hitSlop={8}>
               <Ionicons

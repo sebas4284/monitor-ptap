@@ -26,10 +26,15 @@ function isKnownPlant(slug: string): boolean {
  * se externaliza a config.
  */
 const DISPOSABLE_EMAIL_DOMAINS = new Set([
-  'mailinator.com', 'guerrillamail.com', 'guerrillamail.info', 'sharklasers.com',
-  '10minutemail.com', 'tempmail.com', 'temp-mail.org', 'throwawaymail.com',
-  'yopmail.com', 'getnada.com', 'trashmail.com', 'maildrop.cc', 'dispostable.com',
-  'fakeinbox.com', 'mailnesia.com', 'mohmal.com', 'emailondeck.com',
+  'mailinator.com', 'guerrillamail.com', 'guerrillamail.info', 'guerrillamail.net',
+  'guerrillamail.org', 'guerrillamail.biz', 'sharklasers.com', 'grr.la', 'spam4.me',
+  '10minutemail.com', '10minutemail.net', '20minutemail.com', 'tempmail.com', 'temp-mail.org',
+  'tempmail.net', 'tempr.email', 'tempmailo.com', 'throwawaymail.com', 'throwaway.email',
+  'yopmail.com', 'yopmail.net', 'yopmail.fr', 'getnada.com', 'nada.email', 'trashmail.com',
+  'trashmail.de', 'maildrop.cc', 'dispostable.com', 'fakeinbox.com', 'mailnesia.com',
+  'mohmal.com', 'emailondeck.com', 'mailcatch.com', 'moakt.com', 'inboxkitten.com',
+  'mytemp.email', 'tempinbox.com', 'discard.email', 'wegwerfmail.de', 'einrot.com',
+  'fakemailgenerator.com', 'mailtemp.net', 'burnermail.io', 'anonaddy.com', 'mailsac.com',
 ]);
 function isDisposableEmail(email: string): boolean {
   if (process.env.REGISTER_BLOCK_DISPOSABLE === 'false') return false;
@@ -39,6 +44,10 @@ function isDisposableEmail(email: string): boolean {
 
 // El nombre no debe llevar URLs (los bots inyectan enlaces).
 const URL_LIKE = /https?:\/\/|www\./i;
+// Allowlist del nombre: SOLO letras (con tildes/ñ/ü vía \p{L}\p{M}), espacios y . ' - (apóstrofo
+// recto o tipográfico). Rechaza dígitos y cualquier símbolo (< > " & { } [ ] ( ) / \ | @ etc.),
+// cerrando inyección de HTML/atributos y XSS almacenado. Es una lista blanca, no negra.
+const NAME_ALLOWED = /^[\p{L}\p{M} .'’-]+$/u;
 // ...ni caracteres de control (charCode < 32) — se comprueba sin regex para no escribir bytes crudos.
 function hasControlChars(v: string): boolean {
   for (let i = 0; i < v.length; i++) {
@@ -60,7 +69,11 @@ export const registerSchema = z
       .min(2, 'El nombre debe tener al menos 2 caracteres')
       .max(120)
       .refine((v) => !URL_LIKE.test(v), 'El nombre no puede contener enlaces')
-      .refine((v) => !hasControlChars(v), 'El nombre contiene caracteres no válidos'),
+      .refine((v) => !hasControlChars(v), 'El nombre contiene caracteres no válidos')
+      .refine(
+        (v) => NAME_ALLOWED.test(v),
+        'El nombre solo puede contener letras, espacios y los signos . \' -',
+      ),
     email: z
       .string()
       .trim()

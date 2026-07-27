@@ -24,6 +24,7 @@ function fechaHora(iso: string | null): string {
 export default function ReportesScreen() {
   const { selectedPlant } = usePlant();
   const { hasPermission } = useAuth();
+  const canView = hasPermission('view_dashboard'); // ver informes = operador/jefe/admin
   const canExport = hasPermission('export_data'); // generar/descargar = solo admin
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState<string | null>(null); // metric en acción
@@ -31,9 +32,27 @@ export default function ReportesScreen() {
   const { data: reports, isLoading, refetch, isRefetching } = useQuery({
     queryKey: ['reports', selectedPlant.id],
     queryFn: () => fetchReports(selectedPlant.id),
+    // No dispara la petición para quien no puede ver (evita un 403 inútil).
+    enabled: canView,
     // Refresco frecuente para ver avanzar la recolección (N/total) y pasar a "listo".
     refetchInterval: 8_000,
   });
+
+  // Guard de rol de la pantalla (defensa en el front; el backend igual responde 403). El Civil
+  // no ve informes. Va después de TODOS los hooks para no violar las reglas de hooks.
+  if (!canView) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: Colors.bg }}>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 10 }}>
+          <Ionicons name="lock-closed-outline" size={40} color={Colors.textSecondary} />
+          <Text style={{ fontSize: 18, fontWeight: '700', color: Colors.textPrimary }}>Acceso restringido</Text>
+          <Text style={{ fontSize: 13, color: Colors.textSecondary, textAlign: 'center' }}>
+            Los informes están disponibles para operador, jefe y administrador.
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   async function onGenerate(r: ReportInfo) {
     setBusy(r.metric);

@@ -143,6 +143,8 @@ export class ReportsService implements OnModuleInit, OnModuleDestroy {
 
   /** Ruta del CSV listo, o null si no hay. El controller lo transmite. */
   filePath(plantId: string, metric: string): string | null {
+    // Defensa en profundidad (además del schema del param): solo métricas reales de la planta.
+    if (!this.metricsFor(plantId).some((m) => m.metric === metric)) return null;
     const path = this.csvPath(plantId, metric);
     return existsSync(path) ? path : null;
   }

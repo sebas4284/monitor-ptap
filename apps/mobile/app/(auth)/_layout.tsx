@@ -8,7 +8,7 @@ export default function AuthLayout() {
   // navegador, enlace guardado) devuelve a la app — la sesión persiste hasta sus 8 h y solo el
   // logout (manual o por expiración) muestra el login de nuevo.
   if (!isLoading && token) {
-    return <Redirect href={user?.role === 'civil' ? '/(app)/estado' : '/(app)/sensores'} />;
+    return <Redirect href={user?.role === 'civil' ? '/(app)/estado' : '/(app)/tablero'} />;
   }
 
   return (

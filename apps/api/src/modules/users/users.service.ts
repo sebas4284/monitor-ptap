@@ -79,9 +79,11 @@ export class UsersService {
         'No puedes desactivar a otro administrador. La gestión de administradores se hace fuera de la app.',
       );
     }
-    // Nudo anti-bot: no se puede ACTIVAR una cuenta cuyo correo no fue verificado. Así ninguna
-    // cuenta con correo inventado llega a iniciar sesión, aunque un admin se distraiga.
-    if (isActive && !target.emailVerified) {
+    // Nudo anti-bot: solo se exige el correo verificado si HAY un canal de verificación activo
+    // (REQUIRE_EMAIL_VERIFICATION=true). Sin canal (hoy: sin SMTP/SMS) esta barrera dejaría a
+    // TODAS las cuentas imposibles de activar, así que el filtro pasa a ser la aprobación MANUAL
+    // del admin. Cuando se conecte SMTP/SMS, activar el flag reactiva la exigencia.
+    if (isActive && !target.emailVerified && process.env.REQUIRE_EMAIL_VERIFICATION === 'true') {
       throw new BadRequestException(
         'No puedes activar esta cuenta: el correo aún no ha sido verificado por el usuario.',
       );

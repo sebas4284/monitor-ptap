@@ -13,16 +13,19 @@ import { Ionicons } from '@expo/vector-icons';
 import Colors from '../../constants/colors';
 import { useAuth } from '../../context/AuthContext';
 import { useAlerts } from '../../hooks/useAlerts';
+import { usePendingUsers } from '../../hooks/usePendingUsers';
 import { ROLE_LABELS, ROLE_COLORS, type AuthUser } from '@ptap/shared';
 
 function MenuModal({
   visible,
   onClose,
   user,
+  pendingCount,
 }: {
   visible: boolean;
   onClose: () => void;
   user: AuthUser | null;
+  pendingCount: number;
 }) {
   const { logout, hasPermission } = useAuth();
 
@@ -72,6 +75,13 @@ function MenuModal({
             <TouchableOpacity style={styles.drawerItem} onPress={goToUsers}>
               <Ionicons name="people-outline" size={20} color={Colors.textPrimary} />
               <Text style={styles.drawerItemText}>Usuarios</Text>
+              {pendingCount > 0 && (
+                <View style={styles.pendingPill}>
+                  <Text style={styles.pendingPillText}>
+                    {pendingCount > 9 ? '9+' : pendingCount} pendiente{pendingCount === 1 ? '' : 's'}
+                  </Text>
+                </View>
+              )}
             </TouchableOpacity>
           )}
 
@@ -107,6 +117,9 @@ export default function AppLayout() {
   // Conteo REAL de alertas (0 para el Civil, que no recibe señales). Se llama SIEMPRE, antes de
   // los early-return, para no violar las reglas de hooks.
   const { count: alertCount } = useAlerts();
+  // Aviso en la app para admins: cuentas pendientes de aprobación (0 para no-admin). Se llama
+  // SIEMPRE antes de los early-return (reglas de hooks).
+  const { count: pendingCount } = usePendingUsers();
   const isCivil = user?.role === 'civil';
 
   // GUARD de sesión para TODAS las rutas de (app). Cubre tres caminos al login:
@@ -135,7 +148,15 @@ export default function AppLayout() {
         hitSlop={8}
         onPress={() => setMenuVisible(true)}
       >
-        <Ionicons name="menu" size={24} color="#fff" />
+        <View>
+          <Ionicons name="menu" size={24} color="#fff" />
+          {/* Punto de aviso: hay cuentas pendientes de aprobar (solo lo ve un admin). */}
+          {pendingCount > 0 && (
+            <View style={styles.menuDot}>
+              <Text style={styles.notifText}>{pendingCount > 9 ? '9+' : pendingCount}</Text>
+            </View>
+          )}
+        </View>
       </TouchableOpacity>
     ),
     // Campana con conteo REAL de alertas; toca para abrir la pantalla de alertas. El badge solo
@@ -156,7 +177,7 @@ export default function AppLayout() {
 
   return (
     <>
-      <MenuModal visible={menuVisible} onClose={() => setMenuVisible(false)} user={user} />
+      <MenuModal visible={menuVisible} onClose={() => setMenuVisible(false)} user={user} pendingCount={pendingCount} />
       <Tabs
         screenOptions={{
           tabBarActiveTintColor: Colors.primary,
@@ -337,4 +358,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 3,
   },
   notifText: { color: '#fff', fontSize: 9, fontWeight: '700' },
+  menuDot: {
+    position: 'absolute',
+    top: -6,
+    right: -8,
+    backgroundColor: Colors.danger,
+    borderRadius: 8,
+    minWidth: 16,
+    height: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+  },
+  pendingPill: {
+    marginLeft: 'auto',
+    backgroundColor: Colors.danger,
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  pendingPillText: { color: '#fff', fontSize: 11, fontWeight: '700' },
 });

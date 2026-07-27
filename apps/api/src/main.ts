@@ -12,6 +12,9 @@ import { JsonLogger } from './infrastructure/logging/json-logger.service';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   app.useLogger(app.get(JsonLogger));
+  // Detrás de nginx/Cloudflare: confiar en el proxy inmediato para que req.ip sea la IP real
+  // del cliente (X-Forwarded-For) y el rate-limit NO agrupe a todos como la IP del proxy.
+  app.getHttpAdapter().getInstance().set('trust proxy', 1);
   const hardening = readHttpHardeningConfig();
 
   app.use(helmet());

@@ -52,9 +52,29 @@ export default function RegisterScreen() {
 
   const plantLabel = PLANTS.find((p) => p.id === plant)?.name ?? plant;
 
+  // Primer filtro en cliente (el backend es la validación autoritativa). Mismas reglas que el
+  // schema del servidor: nombre en allowlist (letras/espacios/.'-), correo con formato, y
+  // contraseña con mayúscula/minúscula/dígito. Evita basura/bots y da feedback inmediato.
+  function validate(): string | null {
+    const n = name.trim();
+    if (n.length < 2) return 'El nombre debe tener al menos 2 caracteres.';
+    if (!/^[\p{L}\p{M} .'’-]+$/u.test(n)) return 'El nombre solo puede contener letras, espacios y . \' -';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) return 'El correo no tiene un formato válido.';
+    const p = phone.trim();
+    if (p && !(/^[0-9+()\-\s]+$/.test(p) && (p.match(/\d/g)?.length ?? 0) >= 7)) {
+      return 'Teléfono inválido (mínimo 7 dígitos; solo números, +, -, paréntesis y espacios).';
+    }
+    if (password.length < 8) return 'La contraseña debe tener al menos 8 caracteres.';
+    if (!/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/\d/.test(password)) {
+      return 'La contraseña debe incluir mayúscula, minúscula y número.';
+    }
+    return null;
+  }
+
   async function handleRegister() {
-    if (!name.trim() || !email.trim() || !password.trim()) {
-      alertWeb('Campos requeridos', 'Nombre, correo y contraseña son obligatorios.');
+    const error = validate();
+    if (error) {
+      alertWeb('Revisa los datos', error);
       return;
     }
     setIsLoading(true);
@@ -96,7 +116,7 @@ export default function RegisterScreen() {
           </View>
 
           <Text style={styles.label}>Nombre completo</Text>
-          <TextInput style={styles.input} value={name} onChangeText={setName} placeholder="Tu nombre" placeholderTextColor={Colors.textSecondary} />
+          <TextInput style={styles.input} value={name} onChangeText={setName} placeholder="Tu nombre" placeholderTextColor={Colors.textSecondary} maxLength={120} />
 
           <Text style={styles.label}>Correo</Text>
           <TextInput
@@ -107,6 +127,7 @@ export default function RegisterScreen() {
             placeholderTextColor={Colors.textSecondary}
             autoCapitalize="none"
             keyboardType="email-address"
+            maxLength={255}
           />
 
           <Text style={styles.label}>Teléfono</Text>
@@ -117,6 +138,7 @@ export default function RegisterScreen() {
             placeholder="Para que el administrador pueda verificarte"
             placeholderTextColor={Colors.textSecondary}
             keyboardType="phone-pad"
+            maxLength={32}
           />
 
           <Text style={styles.label}>Planta</Text>
@@ -156,6 +178,7 @@ export default function RegisterScreen() {
               placeholderTextColor={Colors.textSecondary}
               secureTextEntry={!showPassword}
               autoCapitalize="none"
+              maxLength={200}
             />
             <TouchableOpacity style={styles.eye} onPress={() => setShowPassword((v) => !v)} hitSlop={8}>
               <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={20} color={Colors.textSecondary} />

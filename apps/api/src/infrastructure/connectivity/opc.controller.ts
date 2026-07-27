@@ -8,9 +8,9 @@ import type { ConnectivityAdapter } from './ports/connectivity-adapter.port';
 
 /**
  * Endpoints de observabilidad del puente OPC UA (Fase 1). Responden en ambos
- * providers (simulator | opcua). RBAC (Fase 4): status → cualquier autenticado;
- * info/buffers/dead-letter → permiso `system_config` (solo admin). La auditoría de
- * accesos (permitidos y denegados) la aplica AuditMiddleware a nivel de app, no por ruta.
+ * providers (simulator | opcua). RBAC (Fase 4): TODOS los endpoints (status/info/buffers/
+ * dead-letter) exigen `system_config` (solo admin) — son diagnóstico de infraestructura. La
+ * auditoría de accesos (permitidos y denegados) la aplica AuditMiddleware a nivel de app.
  */
 @Controller('opc')
 @UseGuards(JwtAuthGuard, PermissionGuard)
@@ -20,8 +20,10 @@ export class OpcController {
     @Inject(PlantPipelineService) private readonly pipeline: PlantPipelineService,
   ) {}
 
-  /** Estado operativo del puente: bridgeStatus, notificaciones, reconexiones, por planta. */
+  /** Estado operativo del puente: bridgeStatus, notificaciones, reconexiones, por planta.
+   *  Diagnóstico de infraestructura → `system_config` (admin), como el resto de /opc/*. */
   @Get('status')
+  @RequirePermission('system_config')
   getStatus() {
     return this.adapter.getDiagnostics();
   }
