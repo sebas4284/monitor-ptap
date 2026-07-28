@@ -28,46 +28,66 @@ function alertWeb(title: string, message: string, onDismiss?: () => void) {
 }
 
 /**
+ * Medidor de seguridad de la contraseña (0..4) para feedback visual. Cuenta: longitud ≥8,
+ * mayúscula+minúscula, dígito, símbolo (y sube un punto si es larga ≥12). Las MISMAS reglas
+ * mínimas las exige el backend; esto solo orienta al usuario.
+ */
+function passwordStrength(pw: string): { score: number; label: string; color: string } {
+  if (!pw) return { score: 0, label: '', color: Colors.divider };
+  let score = 0;
+  if (pw.length >= 8) score++;
+  if (/[a-z]/.test(pw) && /[A-Z]/.test(pw)) score++;
+  if (/\d/.test(pw)) score++;
+  if (/[^A-Za-z0-9]/.test(pw)) score++;
+  if (pw.length >= 12 && score >= 3) score = 4;
+  score = Math.min(4, score);
+  const label = score <= 1 ? 'Débil' : score === 2 ? 'Media' : score === 3 ? 'Buena' : 'Fuerte';
+  const color = score <= 1 ? Colors.danger : score === 2 ? Colors.warning : Colors.success;
+  return { score, label, color };
+}
+
+/**
  * Alta de cuenta. NO hay selector de rol a propósito: toda cuenta nueva nace como **Civil**
- * (solo lectura) y solo un Administrador puede elevarla (matriz oficial: "Asignar roles a
- * los usuarios" → solo Admin). El backend además rechaza cualquier `role` que llegue en el
- * body, así que esto no es solo cosmético.
+ * (solo lectura) y solo un Administrador puede elevarla. Registrarse tampoco da acceso: la
+ * cuenta queda pendiente hasta que un administrador la apruebe.
  *
- * Registrarse tampoco da acceso: la cuenta queda pendiente hasta que un administrador la
- * apruebe. Por eso aquí no se inicia sesión — solo se confirma y se vuelve al login.
- *
- * `plant` guarda el SLUG canónico (voragine), no el nombre visible (La Vorágine): el plantId
- * es la única identidad del sistema.
+ * Doble campo de correo y de contraseña: sin verificación por correo/SMS, confirmar ambos en el
+ * formulario es lo que atrapa los typos (la causa real de "me registré y no puedo entrar").
+ * Normalización: correo → minúsculas; nombre → MAYÚSCULAS; celular → 10 dígitos.
  */
 export default function RegisterScreen() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [emailConfirm, setEmailConfirm] = useState('');
   const [phone, setPhone] = useState('');
   const [plant, setPlant] = useState<string>(PLANTS[0].id); // slug, no displayName
   const [password, setPassword] = useState('');
+  const [passwordConfirm, setPasswordConfirm] = useState('');
   const [website, setWebsite] = useState(''); // honeypot: un humano lo deja vacío
   const [showPassword, setShowPassword] = useState(false);
   const [showPlantPicker, setShowPlantPicker] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
   const plantLabel = PLANTS.find((p) => p.id === plant)?.name ?? plant;
+  const strength = passwordStrength(password);
 
-  // Primer filtro en cliente (el backend es la validación autoritativa). Mismas reglas que el
-  // schema del servidor: nombre en allowlist (letras/espacios/.'-), correo con formato, y
-  // contraseña con mayúscula/minúscula/dígito. Evita basura/bots y da feedback inmediato.
+  // Primer filtro en cliente (el backend es la validación autoritativa). Mismas reglas.
   function validate(): string | null {
     const n = name.trim();
     if (n.length < 2) return 'El nombre debe tener al menos 2 caracteres.';
     if (!/^[\p{L}\p{M} .'’-]+$/u.test(n)) return 'El nombre solo puede contener letras, espacios y . \' -';
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) return 'El correo no tiene un formato válido.';
-    const p = phone.trim();
-    if (p && !(/^[0-9+()\-\s]+$/.test(p) && (p.match(/\d/g)?.length ?? 0) >= 7)) {
-      return 'Teléfono inválido (mínimo 7 dígitos; solo números, +, -, paréntesis y espacios).';
-    }
+
+    const em = email.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) return 'El correo no tiene un formato válido.';
+    if (em !== emailConfirm.trim()) return 'Los correos no coinciden.';
+
+    if (!/^\d{10}$/.test(phone)) return 'El celular debe tener exactamente 10 dígitos.';
+
     if (password.length < 8) return 'La contraseña debe tener al menos 8 caracteres.';
-    if (!/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/\d/.test(password)) {
-      return 'La contraseña debe incluir mayúscula, minúscula y número.';
-    }
+    if (!/[a-z]/.test(password) || !/[A-Z]/.test(password)) return 'La contraseña debe incluir mayúscula y minúscula.';
+    if (!/\d/.test(password)) return 'La contraseña debe incluir al menos un número.';
+    if (!/[^A-Za-z0-9]/.test(password)) return 'La contraseña debe incluir al menos un símbolo.';
+    if (password !== passwordConfirm) return 'Las contraseñas no coinciden.';
     return null;
   }
 
@@ -81,9 +101,9 @@ export default function RegisterScreen() {
     try {
       // No hay token: la cuenta queda pendiente de aprobación → de vuelta al login.
       const { message } = await apiRegister({
-        name: name.trim(),
-        email: email.trim(),
-        phone: phone.trim(),
+        name: name.trim(), // ya en MAYÚSCULAS por el input
+        email: email.trim(), // ya en minúsculas por el input
+        phone, // 10 dígitos
         plant,
         password,
         website, // honeypot; vacío para humanos
@@ -110,35 +130,60 @@ export default function RegisterScreen() {
             <Text style={styles.noticeText}>
               Tu cuenta queda <Text style={styles.noticeStrong}>pendiente de aprobación</Text>: un
               administrador la habilita antes de que puedas entrar. Se crea como{' '}
-              <Text style={styles.noticeStrong}>Civil</Text> (solo consulta) y, si necesitas más acceso,
-              el administrador puede ampliarlo. Deja un teléfono donde puedan verificarte.
+              <Text style={styles.noticeStrong}>Civil</Text> (solo consulta). Deja un celular real
+              donde el administrador pueda verificarte.
             </Text>
           </View>
 
           <Text style={styles.label}>Nombre completo</Text>
-          <TextInput style={styles.input} value={name} onChangeText={setName} placeholder="Tu nombre" placeholderTextColor={Colors.textSecondary} maxLength={120} />
+          <TextInput
+            style={styles.input}
+            value={name}
+            onChangeText={(t) => setName(t.toUpperCase())}
+            placeholder="TU NOMBRE"
+            placeholderTextColor={Colors.textSecondary}
+            autoCapitalize="characters"
+            maxLength={120}
+          />
 
           <Text style={styles.label}>Correo</Text>
           <TextInput
             style={styles.input}
             value={email}
-            onChangeText={setEmail}
+            onChangeText={(t) => setEmail(t.toLowerCase())}
             placeholder="tucorreo@ejemplo.com"
             placeholderTextColor={Colors.textSecondary}
             autoCapitalize="none"
+            autoCorrect={false}
             keyboardType="email-address"
             maxLength={255}
           />
 
-          <Text style={styles.label}>Teléfono</Text>
+          <Text style={styles.label}>Confirmar correo</Text>
+          <TextInput
+            style={styles.input}
+            value={emailConfirm}
+            onChangeText={(t) => setEmailConfirm(t.toLowerCase())}
+            placeholder="Escríbelo de nuevo"
+            placeholderTextColor={Colors.textSecondary}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="email-address"
+            maxLength={255}
+          />
+          {emailConfirm.length > 0 && email.trim() !== emailConfirm.trim() && (
+            <Text style={styles.errorHint}>Los correos no coinciden.</Text>
+          )}
+
+          <Text style={styles.label}>Celular</Text>
           <TextInput
             style={styles.input}
             value={phone}
-            onChangeText={setPhone}
-            placeholder="Para que el administrador pueda verificarte"
+            onChangeText={(t) => setPhone(t.replace(/\D/g, ''))}
+            placeholder="10 dígitos (ej. 3001234567)"
             placeholderTextColor={Colors.textSecondary}
-            keyboardType="phone-pad"
-            maxLength={32}
+            keyboardType="number-pad"
+            maxLength={10}
           />
 
           <Text style={styles.label}>Planta</Text>
@@ -174,22 +219,54 @@ export default function RegisterScreen() {
               style={[styles.input, styles.passwordInput]}
               value={password}
               onChangeText={setPassword}
-              placeholder="Mín. 8, con mayúscula, minúscula y número"
+              placeholder="Mín. 8: mayúscula, minúscula, número y símbolo"
               placeholderTextColor={Colors.textSecondary}
               secureTextEntry={!showPassword}
               autoCapitalize="none"
+              autoCorrect={false}
               maxLength={200}
             />
             <TouchableOpacity style={styles.eye} onPress={() => setShowPassword((v) => !v)} hitSlop={8}>
               <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={20} color={Colors.textSecondary} />
             </TouchableOpacity>
           </View>
-          <Text style={styles.hint}>
-            La contraseña debe tener al menos 8 caracteres, con una mayúscula, una minúscula y un número.
-          </Text>
+          {/* Medidor de seguridad */}
+          {password.length > 0 && (
+            <View style={styles.strengthWrap}>
+              <View style={styles.strengthBar}>
+                {[0, 1, 2, 3].map((i) => (
+                  <View
+                    key={i}
+                    style={[
+                      styles.strengthSeg,
+                      { backgroundColor: i < strength.score ? strength.color : Colors.divider },
+                    ]}
+                  />
+                ))}
+              </View>
+              <Text style={[styles.strengthText, { color: strength.color }]}>{strength.label}</Text>
+            </View>
+          )}
 
-          {/* Honeypot anti-bot: fuera de pantalla para humanos, pero presente en el DOM web para
-              que un bot que rellena todo lo llene y el backend lo rechace. No lleva label. */}
+          <Text style={styles.label}>Confirmar contraseña</Text>
+          <View style={styles.passwordRow}>
+            <TextInput
+              style={[styles.input, styles.passwordInput]}
+              value={passwordConfirm}
+              onChangeText={setPasswordConfirm}
+              placeholder="Escríbela de nuevo"
+              placeholderTextColor={Colors.textSecondary}
+              secureTextEntry={!showPassword}
+              autoCapitalize="none"
+              autoCorrect={false}
+              maxLength={200}
+            />
+          </View>
+          {passwordConfirm.length > 0 && password !== passwordConfirm && (
+            <Text style={styles.errorHint}>Las contraseñas no coinciden.</Text>
+          )}
+
+          {/* Honeypot anti-bot: fuera de pantalla para humanos, presente en el DOM para cazar bots. */}
           <TextInput
             value={website}
             onChangeText={setWebsite}
@@ -273,6 +350,11 @@ const styles = StyleSheet.create({
   passwordInput: { paddingRight: 44 },
   eye: { position: 'absolute', right: 12 },
   hint: { fontSize: 11.5, color: Colors.textSecondary, marginTop: 6, lineHeight: 16 },
+  errorHint: { fontSize: 11.5, color: Colors.danger, marginTop: 6 },
+  strengthWrap: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 },
+  strengthBar: { flexDirection: 'row', gap: 4, flex: 1 },
+  strengthSeg: { flex: 1, height: 5, borderRadius: 3 },
+  strengthText: { fontSize: 11.5, fontWeight: '700', minWidth: 44, textAlign: 'right' },
   // Honeypot: fuera de la vista (no display:none, que algunos bots ignoran).
   honeypot: { position: 'absolute', width: 1, height: 1, opacity: 0, left: -9999, top: -9999 },
   btnPrimary: {

@@ -56,10 +56,8 @@ function hasControlChars(v: string): boolean {
   return false;
 }
 
-// Formato de teléfono: solo dígitos, +, -, paréntesis y espacios, con al menos 7 dígitos.
-function isValidPhone(v: string): boolean {
-  return /^[0-9+()\-\s]+$/.test(v) && (v.match(/\d/g)?.length ?? 0) >= 7;
-}
+// Celular: EXACTAMENTE 10 dígitos (formato de celular en Colombia).
+const PHONE_10 = /^\d{10}$/;
 
 export const registerSchema = z
   .object({
@@ -73,7 +71,10 @@ export const registerSchema = z
       .refine(
         (v) => NAME_ALLOWED.test(v),
         'El nombre solo puede contener letras, espacios y los signos . \' -',
-      ),
+      )
+      // Se persiste en MAYÚSCULAS (aunque el usuario lo escriba en minúsculas). toUpperCase
+      // respeta tildes/ñ (josé → JOSÉ). El transform corre DESPUÉS de las validaciones.
+      .transform((v) => v.toUpperCase()),
     email: z
       .string()
       .trim()
@@ -81,16 +82,12 @@ export const registerSchema = z
       .email('Correo con formato inválido')
       .max(255)
       .refine((v) => !isDisposableEmail(v), 'No se permiten correos temporales/desechables'),
-    // Vacío o ausente = sin teléfono. Cuando viene, se valida el formato.
+    // Celular OBLIGATORIO y de EXACTAMENTE 10 dígitos: la aprobación manual del admin necesita un
+    // contacto real para verificar a la persona (no hay verificación por correo/SMS).
     phone: z
       .string()
       .trim()
-      .transform((v) => (v === '' ? undefined : v))
-      .optional()
-      .refine(
-        (v) => v === undefined || isValidPhone(v),
-        'Teléfono inválido (mínimo 7 dígitos; solo números, +, -, paréntesis y espacios)',
-      ),
+      .regex(PHONE_10, 'El celular debe tener exactamente 10 dígitos'),
     plant: z
       .string()
       .min(1)
@@ -103,7 +100,8 @@ export const registerSchema = z
       .max(200)
       .refine((v) => /[a-z]/.test(v), 'La contraseña debe incluir al menos una minúscula')
       .refine((v) => /[A-Z]/.test(v), 'La contraseña debe incluir al menos una mayúscula')
-      .refine((v) => /\d/.test(v), 'La contraseña debe incluir al menos un dígito'),
+      .refine((v) => /\d/.test(v), 'La contraseña debe incluir al menos un dígito')
+      .refine((v) => /[^A-Za-z0-9]/.test(v), 'La contraseña debe incluir al menos un símbolo'),
     // Honeypot anti-bot: campo que un humano nunca ve ni llena. Si llega con contenido, es un bot.
     // Declarado (para que `.strict()` no lo rechace) pero DEBE ir vacío/ausente.
     website: z.string().max(0, 'Solicitud rechazada').optional(),
