@@ -199,3 +199,73 @@ de tu red: inicia sesión → Sensores muestra telemetría en vivo → cerrar se
 - **Migración futura a dominio propio/HTTPS permanente** → misma receta, cambiando solo
   `API_BASE_URL` al dominio definitivo. No hay nada más que tocar en el código (la URL no está
   hardcodeada: se inyecta en el build).
+
+---
+
+## 8. Build EN LA VM (lo que hicimos) — toolchain desechable
+
+El PC Windows **no** pudo compilar: choca con un bug de ninja/CMake propio de Windows
+(`ninja: error: manifest 'build.ninja' still dirty after 100 tries`, en el compile nativo de
+`expo-modules-core`), reproducible en varios intentos. **Linux no tiene ese bug**, así que la APK se
+construye **en la VM** con un toolchain **temporal que se borra al terminar** (deja la VM liviana).
+
+> La VM es un servidor de 2 GB de RAM en producción. El build es pesado; se hace **acotado** para no
+> tumbar el API/MySQL: heap topado, 1 sola ABI, `nice/ionice`, y sin R8. La swap (2 GB) absorbe
+> picos. Durante el build el API sigue respondiendo (verificado: `health=200` todo el tiempo).
+
+### Receta
+
+1. **Instalar toolchain temporal** (autocontenido en `~/android-build` para borrarlo fácil):
+   - `sudo apt-get install -y openjdk-17-jdk-headless unzip`.
+   - Android SDK vía `cmdline-tools` + `sdkmanager` en `~/android-build/sdk`:
+     `platform-tools`, `platforms;android-35`, `build-tools;35.0.0`, `cmake;3.22.1`,
+     `ndk;27.1.12297006`.
+   - `export ANDROID_HOME=~/android-build/sdk`, `export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64`.
+2. **Prebuild** con la URL horneada:
+   `cd ~/monitor-ptap/apps/mobile && API_BASE_URL=<URL del túnel> npx expo prebuild -p android --clean`.
+3. **Acotar Gradle** (`apps/mobile/android/gradle.properties`):
+   ```
+   org.gradle.jvmargs=-Xmx1024m -XX:MaxMetaspaceSize=512m
+   org.gradle.daemon=false
+   org.gradle.workers.max=1
+   org.gradle.parallel=false
+   kotlin.compiler.execution.strategy=in-process
+   reactNativeArchitectures=arm64-v8a
+   ```
+   Y **desactivar R8** (en `android/app/build.gradle`, release): `minifyEnabled false` +
+   `shrinkResources false` — con 2 GB de RAM, R8 dispara `OutOfMemoryError`. El APK queda un poco
+   más grande (~42 MB) pero funcional. (Con más RAM se puede dejar R8 activo.)
+4. **Compilar** cediendo prioridad al API:
+   `cd android && nice -n 19 ionice -c3 ./gradlew assembleRelease --no-daemon`.
+   Salida: `android/app/build/outputs/apk/release/app-release.apk` (firmado con la debug key del
+   template Expo — suficiente para una APK de prueba).
+
+### Alojar la APK (queda en línea, descargable)
+
+- `sudo mkdir -p /var/www/ptap-download` (carpeta **aparte** de la web → sobrevive re-despliegues).
+- Copiar el `.apk` → `/var/www/ptap-download/monitor-ptap.apk` + una página `index.html` de
+  descarga con instrucciones; `chown www-data`.
+- nginx: `location /descargar/` con `alias /var/www/ptap-download/` y `types { application/vnd.android.package-archive apk; }`
+  (para que el navegador lo **descargue**). Enlace: **`https://<túnel>/descargar/`**.
+
+### Limpieza (dejar la VM liviana)
+
+`rm -rf ~/android-build ~/.gradle ~/monitor-ptap/apps/mobile/android` + `sudo apt-get purge -y
+openjdk-17-jdk-headless && sudo apt-get autoremove -y && apt-get clean` + `swapoff -a && swapon -a`.
+Verificar: `free -m` en baseline, sin procesos `java`/`gradle`, disco reclamado.
+
+### Verificación del APK
+
+`aapt2 dump badging/permissions` → `com.ptap.monitor`, `usesCleartextTraffic=false`, permisos
+`INTERNET` + biometría de `expo-secure-store` (para el JWT cifrado). `unzip -l` no lista `.env`.
+
+> **Límite**: la APK lleva horneada la **URL del túnel efímero** → si el túnel cambia hay que
+> reconstruir. Para repartir de forma estable: **dominio + named tunnel** (ver
+> [RUNBOOK_PRODUCCION.md](RUNBOOK_PRODUCCION.md) §8) y construir una sola vez.
+
+## 9. iOS — fuera de alcance por ahora
+
+iOS **no permite** instalar el `.apk`/`.ipa` por descarga directa como Android. Requiere **Apple
+Developer Program ($99/año)** + firma de Apple + **TestFlight** o **Ad Hoc** (UDIDs), y compilar en
+**macOS/Xcode o EAS Build (nube)**. Es la MISMA app Expo (target iOS ya configurado), no una nueva.
+Alternativa inmediata en iPhone: la **web en Safari** ("Añadir a pantalla de inicio"). Diferido.
