@@ -124,8 +124,16 @@ export class PlantPipelineService implements OnModuleInit, OnModuleDestroy {
       deadLetter: this.deadLetter,
     });
 
-    // Diff: firma sin sequence. No emitir snapshots idénticos (PASO 3.7).
-    const signature = JSON.stringify({ signals: candidate.signals, liveness, bridgeStatus });
+    // Diff: firma sin sequence. No emitir snapshots idénticos (PASO 3.7). Firma BARATA (sin
+    // JSON.stringify de todo el objeto en CADA frame): solo los campos que cambian en runtime
+    // distinguen un snapshot — value/quality/usable/reason/ts por señal + liveness + bridge. Los
+    // estáticos del mapping (unit/label/mappingStatus/confidence/opMin/opMax) no cambian sin
+    // reiniciar, así que omitirlos NO altera la decisión de diff, y se ahorra CPU en el hot path.
+    let signature = `${bridgeStatus}|${liveness.state}|${liveness.lastChangeAt ?? ''}|${liveness.windowSec ?? ''}`;
+    for (const key of Object.keys(candidate.signals)) {
+      const sig = candidate.signals[key];
+      signature += `|${key}=${String(sig.value)}:${sig.quality}:${sig.usable ? 1 : 0}:${sig.reason ?? ''}:${sig.ts ?? ''}`;
+    }
     const prevLivenessState = this.lastLivenessState.get(plantId);
     this.lastLivenessState.set(plantId, liveness.state);
 

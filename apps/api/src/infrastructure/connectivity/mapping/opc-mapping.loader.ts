@@ -159,8 +159,21 @@ function parseWriteSpec(raw: RawWriteSpec | undefined): WriteSpec | undefined {
   };
 }
 
+/**
+ * Cache por ruta resuelta: el mapping es INMUTABLE en runtime (no hay hot-reload), así que
+ * releer + re-parsear 80 KB en cada llamada es desperdicio (reports.service lo invocaba por
+ * request). Ahora todos los consumidores comparten el mismo objeto parseado.
+ * `clearMappingCache()` existe para los tests.
+ */
+const mappingCache = new Map<string, LoadedMapping>();
+export function clearMappingCache(): void {
+  mappingCache.clear();
+}
+
 export function loadMapping(explicitPath?: string): LoadedMapping {
   const path = resolvePath(explicitPath);
+  const cached = mappingCache.get(path);
+  if (cached) return cached;
   const doc = JSON.parse(readFileSync(path, 'utf8')) as {
     version?: string;
     protocolVersion?: string;
@@ -234,7 +247,7 @@ export function loadMapping(explicitPath?: string): LoadedMapping {
     }
   }
 
-  return {
+  const result: LoadedMapping = {
     version: doc.version ?? '0.0.0',
     protocolVersion: doc.protocolVersion ?? 'v0',
     dtoVersion: doc.dtoVersion ?? 'v1',
@@ -243,4 +256,6 @@ export function loadMapping(explicitPath?: string): LoadedMapping {
     signals,
     raw: doc,
   };
+  mappingCache.set(path, result);
+  return result;
 }
