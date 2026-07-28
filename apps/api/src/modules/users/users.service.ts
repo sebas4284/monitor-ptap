@@ -40,6 +40,15 @@ export class UsersService {
   async changeRole(targetId: string, role: Role, actor: AdminActor): Promise<UserSummary> {
     const target = await this.requireUser(targetId);
 
+    // Aprobar-primero: no se cambia el rol de una cuenta que aún no está aprobada/activa. Evita
+    // el callejón sin salida de promover una cuenta PENDIENTE a admin (quedaría admin+inactiva y,
+    // por la regla de "admins intocables", ni se podría aprobar ni degradar desde la app).
+    if (!target.isActive) {
+      throw new BadRequestException(
+        'Aprueba (activa) la cuenta antes de asignarle un rol. Primero "Aprobar", luego "Cambiar rol".',
+      );
+    }
+
     if (actor.userId === targetId) {
       throw new BadRequestException('No puedes cambiar tu propio rol (evita perder el acceso de administrador).');
     }

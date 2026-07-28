@@ -248,6 +248,9 @@ export default function UsuariosScreen() {
           // Otro administrador: los admins son mutuamente intocables (el backend lo rechaza).
           const isOtherAdmin = item.role === 'admin' && !isSelf;
           const locked = isSelf || isOtherAdmin; // acciones deshabilitadas
+          // Aprobar-primero: no se puede cambiar el rol hasta que la cuenta esté aprobada/activa
+          // (evita crear un "admin pendiente" que luego no se puede aprobar ni degradar).
+          const roleLocked = locked || !item.isActive;
           const busy = busyId === item.id;
           // Nunca inició sesión y está inactiva = recién registrada, esperando aprobación. Si ya
           // entró alguna vez, un admin la desactivó: son dos situaciones distintas y el botón
@@ -279,15 +282,16 @@ export default function UsuariosScreen() {
                   </Text>
                 </View>
               )}
-              {/* Correo verificado: el backend NO deja activar una cuenta sin verificar. */}
+              {/* Estado del correo (informativo). La activación NO exige correo verificado salvo
+                  que se active REQUIRE_EMAIL_VERIFICATION en el backend (hoy off, sin canal de envío). */}
               <View style={styles.verifyTag}>
                 <Ionicons
                   name={item.emailVerified ? 'mail-open-outline' : 'mail-unread-outline'}
                   size={13}
-                  color={item.emailVerified ? Colors.success : Colors.danger}
+                  color={item.emailVerified ? Colors.success : Colors.textSecondary}
                 />
-                <Text style={[styles.verifyTagText, { color: item.emailVerified ? Colors.success : Colors.danger }]}>
-                  {item.emailVerified ? 'Correo verificado' : 'Correo sin verificar — no se puede activar'}
+                <Text style={[styles.verifyTagText, { color: item.emailVerified ? Colors.success : Colors.textSecondary }]}>
+                  {item.emailVerified ? 'Correo verificado' : 'Correo sin verificar'}
                 </Text>
               </View>
               {!item.isActive && !isPending && (
@@ -296,8 +300,8 @@ export default function UsuariosScreen() {
 
               <View style={styles.actions}>
                 <TouchableOpacity
-                  style={[styles.action, (busy || locked) && styles.actionDisabled]}
-                  disabled={busy || locked}
+                  style={[styles.action, (busy || roleLocked) && styles.actionDisabled]}
+                  disabled={busy || roleLocked}
                   onPress={() => setExpandedId(expandedId === item.id ? null : item.id)}
                   activeOpacity={0.8}
                 >
@@ -338,6 +342,11 @@ export default function UsuariosScreen() {
               {isOtherAdmin && (
                 <Text style={styles.selfHint}>
                   No puedes modificar a otro administrador. La gestión de administradores se hace fuera de la app.
+                </Text>
+              )}
+              {!item.isActive && !locked && (
+                <Text style={styles.selfHint}>
+                  Aprueba la cuenta primero; luego podrás asignarle un rol.
                 </Text>
               )}
 
