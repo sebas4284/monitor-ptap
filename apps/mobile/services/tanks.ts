@@ -25,7 +25,7 @@ export interface TankView {
   external: boolean;
 }
 
-const LEVEL_KEY = /^tank(\d+)Level$/;
+const TANK_NUM = /^tank(\d+)(?:Level|Volume)$/;
 const OWN_TANK_KEY = /^tank\d+(Level|Volume)$/;
 
 interface ExternalTankDef {
@@ -87,10 +87,17 @@ function numericValue(signal: SignalDto | undefined): number | null {
 export function tanksFromSnapshot(snapshot: PlantSnapshotDto | undefined): TankView[] {
   if (!snapshot) return [];
   const found: Array<{ n: number; tank: TankView }> = [];
-  for (const [domainKey, level] of Object.entries(snapshot.signals)) {
-    const match = LEVEL_KEY.exec(domainKey);
-    if (!match) continue;
-    const n = Number(match[1]);
+  // Un tanque existe si tiene Level Y/O Volume (antes solo se derivaba de Level → un tanque con
+  // solo Volume mapeado desaparecía del tablero). Se recorre la UNIÓN de ambos keys.
+  const nums = new Set<number>();
+  for (const key of Object.keys(snapshot.signals)) {
+    const m = TANK_NUM.exec(key);
+    if (m) nums.add(Number(m[1]));
+  }
+  for (const n of nums) {
+    const level = snapshot.signals[`tank${n}Level`];
+    const volume = snapshot.signals[`tank${n}Volume`];
+    const meta = level ?? volume; // metadatos de aviso: preferir el de nivel, si no el de volumen
     const levelM = numericValue(level);
     const fullLevelM = FULL_LEVEL_M[snapshot.plantId]?.[n] ?? null;
     found.push({
@@ -99,12 +106,12 @@ export function tanksFromSnapshot(snapshot: PlantSnapshotDto | undefined): TankV
         id: `tank-${n}`,
         name: `Tanque ${n}`,
         levelM,
-        volumeM3: numericValue(snapshot.signals[`tank${n}Volume`]),
+        volumeM3: numericValue(volume),
         percentage: levelM !== null && fullLevelM !== null ? (levelM / fullLevelM) * 100 : null,
-        levelOpMin: level.opMin ?? null,
-        levelOpMax: level.opMax ?? null,
-        ts: level.ts,
-        outOfRange: level.outOfRange ?? false,
+        levelOpMin: meta?.opMin ?? null,
+        levelOpMax: meta?.opMax ?? null,
+        ts: meta?.ts ?? null,
+        outOfRange: meta?.outOfRange ?? false,
         external: false,
       },
     });

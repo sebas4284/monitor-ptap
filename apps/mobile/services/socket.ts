@@ -40,6 +40,13 @@ export function resetSocket(): void {
 export interface PlantStreamHandlers {
   onSnapshot: (snapshot: PlantSnapshotDto) => void;
   onLiveness: (change: LivenessChange) => void;
+  /**
+   * Cambia el estado del transporte del socket: `false` = socket caído o handshake rechazado
+   * (JWT vencido/revocado) → los datos dejan de llegar y ya NO son fiables (marcar frozen);
+   * `true` = (re)conectado → conviene resincronizar por REST. Sin esto, un socket muerto dejaba
+   * las tarjetas "EN VIVO" para siempre con datos viejos.
+   */
+  onConnectionChange?: (connected: boolean) => void;
 }
 
 /**
@@ -53,23 +60,26 @@ export function subscribePlant(plantId: string, handlers: PlantStreamHandlers): 
     if (snapshot && snapshot.plantId === plantId) handlers.onSnapshot(snapshot);
   };
   const onLiveness = (change: LivenessChange) => handlers.onLiveness(change);
-  const join = () => s.emit('opc:subscribe', { plantId });
+  const join = () => {
+    s.emit('opc:subscribe', { plantId });
+    handlers.onConnectionChange?.(true);
+  };
+  const onDown = () => handlers.onConnectionChange?.(false);
 
   s.on('opc:snapshot', onSnapshot);
   s.on('opc:liveness', onLiveness);
   s.on('connect', join);
+  s.on('disconnect', onDown);
+  s.on('connect_error', onDown);
   if (s.connected) join();
+  else handlers.onConnectionChange?.(false);
 
   return () => {
+    if (s.connected) s.emit('opc:unsubscribe', { plantId }); // salir de la room en el servidor
     s.off('opc:snapshot', onSnapshot);
     s.off('opc:liveness', onLiveness);
     s.off('connect', join);
+    s.off('disconnect', onDown);
+    s.off('connect_error', onDown);
   };
-}
-
-/** Escucha SOLO los cambios de liveness (broadcast) para el tablero de plantas. */
-export function subscribeLiveness(onLiveness: (change: LivenessChange) => void): () => void {
-  const s = getSocket();
-  s.on('opc:liveness', onLiveness);
-  return () => s.off('opc:liveness', onLiveness);
 }

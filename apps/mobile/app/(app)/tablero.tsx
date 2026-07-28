@@ -1,8 +1,8 @@
+import { useMemo } from 'react';
 import { View, Text, ScrollView, RefreshControl, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useSnapshot } from '../../hooks/useSnapshot';
-import { useTanques } from '../../hooks/useTanques';
 import { useTime } from '../../hooks/useTime';
 import { usePlant } from '../../context/PlantContext';
 import { useAuth } from '../../context/AuthContext';
@@ -14,7 +14,7 @@ import { PlantSelector } from '../../components/PlantSelector';
 import { ConnectionBanner } from '../../components/ConnectionBanner';
 import Colors from '../../constants/colors';
 import type { SignalDto } from '../../services/api';
-import { isTankSignal } from '../../services/tanks';
+import { isTankSignal, tanksFromSnapshot } from '../../services/tanks';
 import { cardKindFor } from '../../services/signal-kind';
 
 /** Icono por domainKey conocido (cosmético). */
@@ -41,16 +41,22 @@ const ICONS: Record<string, string> = {
 export default function TableroScreen() {
   const { selectedPlant } = usePlant();
   const { hasPermission } = useAuth();
-  const { data: snapshot, isLoading, isError, refetch, isRefetching } = useSnapshot(selectedPlant.id);
-  const { tanks } = useTanques();
-  const time = useTime();
+  const canView = hasPermission('view_dashboard');
+  // Una SOLA suscripción por pantalla (antes tablero + useTanques abrían dos), y con `enabled`
+  // atado al permiso: el Civil que llegue por deep-link no dispara el fetch (403) ni el socket.
+  const { data: snapshot, isLoading, isError, refetch, isRefetching } = useSnapshot(selectedPlant.id, canView);
+  const tanks = useMemo(() => tanksFromSnapshot(snapshot), [snapshot]);
 
-  const timeStr = time.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const signals: [string, SignalDto][] = snapshot
     ? Object.entries(snapshot.signals).filter(([domainKey]) => !isTankSignal(domainKey))
     : [];
   const livenessState = snapshot?.liveness.state ?? 'frozen';
+  const frozen = livenessState === 'frozen';
   const hasContent = tanks.length > 0 || signals.length > 0;
+  // El servidor se considera alcanzable si NO hubo error REST, o si aún así el socket ya nos
+  // entregó datos (en React Query v5 `setQueryData` no limpia el estado 'error'): así el banner
+  // rojo no contradice a las tarjetas que ya muestran datos en vivo.
+  const apiReachable = !isError || (!!snapshot && !snapshot.pending);
 
   // Guard de rol: el tablero detallado es para operador/jefe/admin. El Civil (solo estado
   // básico) no entra aquí ni siquiera por navegación directa. El backend igual responde 403.
@@ -69,7 +75,7 @@ export default function TableroScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['bottom']}>
       <PlantSelector />
-      <ConnectionBanner apiReachable={!isError} bridgeStatus={snapshot?.bridgeStatus} />
+      <ConnectionBanner apiReachable={apiReachable} bridgeStatus={snapshot?.bridgeStatus} />
 
       <ScrollView
         contentContainerStyle={styles.content}
@@ -82,7 +88,7 @@ export default function TableroScreen() {
             <Text style={styles.plantName}>{snapshot?.displayName ?? selectedPlant.name}</Text>
             <Text style={styles.sectionSubtitle}>Tablero en tiempo real</Text>
           </View>
-          <Text style={styles.clock}>{timeStr}</Text>
+          <Clock />
         </View>
 
         {isLoading ? (
@@ -112,7 +118,7 @@ export default function TableroScreen() {
               <View style={styles.grid}>
                 {tanks.map((tank) => (
                   <View key={tank.id} style={styles.cell}>
-                    <TankGaugeCard tank={tank} />
+                    <TankGaugeCard tank={tank} frozen={frozen} />
                   </View>
                 ))}
               </View>
@@ -125,9 +131,9 @@ export default function TableroScreen() {
                   return (
                     <View key={domainKey} style={styles.cell}>
                       {cardKindFor(domainKey) === 'flow' ? (
-                        <FlowMeterCard signal={signal} name={domainKey} icon={icon} />
+                        <FlowMeterCard signal={signal} name={domainKey} icon={icon} frozen={frozen} />
                       ) : (
-                        <GaugeCard signal={signal} name={domainKey} icon={icon} />
+                        <GaugeCard signal={signal} name={domainKey} icon={icon} frozen={frozen} />
                       )}
                     </View>
                   );
@@ -138,8 +144,19 @@ export default function TableroScreen() {
         )}
       </ScrollView>
 
-      <LiveBadge state={livenessState} />
+      <LiveBadge state={livenessState} loading={isLoading && !snapshot} />
     </SafeAreaView>
+  );
+}
+
+/** Reloj aislado: el tick de 1 s re-renderiza SOLO este texto, no todo el tablero (antes
+ *  `useTime()` en la pantalla recomputaba señales/tanques cada segundo). */
+function Clock() {
+  const time = useTime();
+  return (
+    <Text style={styles.clock}>
+      {time.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+    </Text>
   );
 }
 

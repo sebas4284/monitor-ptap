@@ -1,10 +1,13 @@
-import { View, Text, StyleSheet, Animated } from 'react-native';
+import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
 import { useEffect, useRef } from 'react';
 import type { TankView } from '../services/tanks';
 import Colors from '../constants/colors';
 
 interface Props {
   tank: TankView;
+  /** La planta está congelada (sin conexión, mostrando la última lectura). Atenúa la tarjeta,
+   *  la marca como congelada y NO anima la barra (los valores son viejos, no deben "moverse"). */
+  frozen?: boolean;
 }
 
 function waterColor(pct: number): string {
@@ -19,21 +22,34 @@ function statusLabel(pct: number): string {
   return 'Bajo';
 }
 
-export function TankGaugeCard({ tank }: Props) {
+export function TankGaugeCard({ tank, frozen = false }: Props) {
   // percentage llega null hasta que la planta confirme la capacidad real del tanque;
   // en ese caso NO se dibuja % de llenado (sería inventado), solo nivel y volumen reales.
   const pct = tank.percentage !== null ? Math.min(100, Math.max(0, tank.percentage)) : null;
   const hasLevel = tank.levelM !== null;
+  // Fuera de rango: aviso del backend, o una lectura físicamente imposible (nivel negativo o
+  // por encima del 100 % del tanque). Se muestra el valor crudo + etiqueta roja (política acordada).
+  const outOfRange =
+    tank.outOfRange ||
+    (hasLevel && (tank.levelM as number) < 0) ||
+    (tank.percentage !== null && (tank.percentage < 0 || tank.percentage > 100));
   const fillAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     if (pct === null) return;
+    // Congelado: saltar al valor sin animar (el dato es viejo, no debe "moverse" en pantalla).
+    if (frozen) {
+      fillAnim.setValue(pct);
+      return;
+    }
+    // Tween corto para que la barra acompañe al número sin quedar 900 ms por detrás.
     Animated.timing(fillAnim, {
       toValue: pct,
-      duration: 900,
+      duration: 350,
+      easing: Easing.out(Easing.cubic),
       useNativeDriver: false,
     }).start();
-  }, [pct, fillAnim]);
+  }, [pct, frozen, fillAnim]);
 
   const fillWidth = fillAnim.interpolate({
     inputRange: [0, 100],
@@ -41,10 +57,15 @@ export function TankGaugeCard({ tank }: Props) {
   });
 
   return (
-    <View style={styles.card}>
+    <View style={[styles.card, frozen && styles.cardFrozen]}>
       <View style={styles.nameRow}>
         <Text style={styles.name}>{tank.name}</Text>
-        {tank.outOfRange && (
+        {frozen && (
+          <View style={styles.frozenTag}>
+            <Text style={styles.frozenTagText}>congelado</Text>
+          </View>
+        )}
+        {outOfRange && (
           <View style={styles.rangeTag}>
             <Text style={styles.rangeTagText}>fuera de rango</Text>
           </View>
@@ -110,17 +131,27 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.divider,
   },
-  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
+  cardFrozen: { opacity: 0.55 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10, flexWrap: 'wrap' },
   name: { fontSize: 13, fontWeight: '700', color: Colors.textPrimary },
   rangeTag: {
-    backgroundColor: Colors.warning + '22',
-    borderColor: Colors.warning,
+    backgroundColor: Colors.danger + '22',
+    borderColor: Colors.danger,
     borderWidth: 1,
     borderRadius: 6,
     paddingHorizontal: 6,
     paddingVertical: 2,
   },
-  rangeTagText: { fontSize: 9, fontWeight: '700', color: Colors.warning, letterSpacing: 0.5 },
+  rangeTagText: { fontSize: 9, fontWeight: '700', color: Colors.danger, letterSpacing: 0.5 },
+  frozenTag: {
+    backgroundColor: Colors.textSecondary + '22',
+    borderColor: Colors.textSecondary,
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  frozenTagText: { fontSize: 9, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.5 },
   chipsRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
   chip: {
     backgroundColor: Colors.surface,

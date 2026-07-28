@@ -29,7 +29,7 @@ export default function ReportesScreen() {
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState<string | null>(null); // metric en acción
 
-  const { data: reports, isLoading, refetch, isRefetching } = useQuery({
+  const { data: reports, isLoading, isError, refetch, isRefetching } = useQuery({
     queryKey: ['reports', selectedPlant.id],
     queryFn: () => fetchReports(selectedPlant.id),
     // No dispara la petición para quien no puede ver (evita un 403 inútil).
@@ -71,6 +71,9 @@ export default function ReportesScreen() {
     try {
       const ok = await downloadReport(selectedPlant.id, r.metric);
       if (!ok) alertWeb('No se pudo descargar', 'El informe aún no está disponible.');
+    } catch (err) {
+      // Sin este catch, un fallo de red dejaba un rechazo silencioso (a diferencia de Generar).
+      alertWeb('No se pudo descargar', err instanceof Error ? err.message : 'Revisa tu conexión e intenta de nuevo.');
     } finally {
       setBusy(null);
     }
@@ -96,6 +99,17 @@ export default function ReportesScreen() {
         {isLoading ? (
           <View style={styles.loadingWrap}>
             <Text style={styles.loadingText}>Cargando informes…</Text>
+          </View>
+        ) : isError ? (
+          // Distinto de "sin métricas": aquí la petición FALLÓ (backend caído/timeout). Antes esto
+          // se confundía con "planta vacía" y desinformaba.
+          <View style={styles.loadingWrap}>
+            <Ionicons name="cloud-offline-outline" size={34} color={Colors.textSecondary} />
+            <Text style={styles.loadingText}>No se pudieron cargar los informes.</Text>
+            <TouchableOpacity style={styles.retryBtn} onPress={() => refetch()} activeOpacity={0.8}>
+              <Ionicons name="refresh-outline" size={16} color={Colors.primary} />
+              <Text style={styles.retryText}>Reintentar</Text>
+            </TouchableOpacity>
           </View>
         ) : (reports?.length ?? 0) === 0 ? (
           <View style={styles.loadingWrap}>
@@ -195,8 +209,10 @@ const styles = StyleSheet.create({
   sectionHeader: { marginBottom: 14, paddingHorizontal: 2 },
   plantName: { fontSize: 17, fontWeight: '800', color: Colors.textPrimary },
   sectionSubtitle: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
-  loadingWrap: { paddingVertical: 48, alignItems: 'center' },
+  loadingWrap: { paddingVertical: 48, alignItems: 'center', gap: 10 },
   loadingText: { color: Colors.textSecondary, fontSize: 14, textAlign: 'center' },
+  retryBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 8 },
+  retryText: { fontSize: 13, fontWeight: '700', color: Colors.primary },
   note: { fontSize: 12, color: Colors.textSecondary, textAlign: 'center', marginTop: 12, fontStyle: 'italic' },
   card: {
     flexDirection: 'row',

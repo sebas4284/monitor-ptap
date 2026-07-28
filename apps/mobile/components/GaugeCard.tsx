@@ -10,43 +10,82 @@ const REASON_TEXT: Record<UnusableReason, string> = {
   BRIDGE_STALE: 'sin datos frescos',
 };
 
+/** Formato numérico es-CO (coma decimal + separador de miles), coherente con el reloj del tablero. */
+const fmt = (n: number, d = 2): string =>
+  n.toLocaleString('es-CO', { minimumFractionDigits: d, maximumFractionDigits: d });
+
 /**
  * Tarjeta simple de una señal de dominio (presión, pH, turbidez, temperatura, oxígeno,
- * conductividad, cloro). Política de datos (usuario, 2026-07-15): si hay valor numérico
- * SE MUESTRA tal cual; "sin dato" solo cuando value es null (rule: no fabricar números).
+ * conductividad, cloro, o una digital on/off). Política de datos (usuario, 2026-07-15): si hay
+ * valor SE MUESTRA tal cual; "sin dato" solo cuando value es null (no fabricar números). Marca
+ * `frozen` (planta sin conexión) y `outOfRange` (lectura fuera de límites) para no aparentar
+ * frescura ni normalidad cuando no las hay.
  */
-export function GaugeCard({ signal, name, icon }: { signal: SignalDto; name: string; icon: string }) {
+export function GaugeCard({
+  signal,
+  name,
+  icon,
+  frozen = false,
+}: {
+  signal: SignalDto;
+  name: string;
+  icon: string;
+  frozen?: boolean;
+}) {
   const numeric = typeof signal.value === 'number';
+  const isBool = typeof signal.value === 'boolean';
   const hasMin = typeof signal.opMin === 'number';
   const hasMax = typeof signal.opMax === 'number';
+  const outOfRange = Boolean(signal.outOfRange);
   const direction = directionFor(name);
   const accent =
     direction === 'inlet' ? Colors.accentInlet : direction === 'outlet' ? Colors.accentOutlet : Colors.textPrimary;
 
   return (
-    <View style={styles.card}>
+    <View style={[styles.card, frozen && styles.cardFrozen]}>
       <View style={styles.iconWrap}>
         <Ionicons name={icon as never} size={20} color={Colors.primary} />
       </View>
-      <Text style={styles.name}>{signal.label ?? name}</Text>
+      <Text style={styles.name} numberOfLines={2}>
+        {signal.label ?? name}
+      </Text>
+
+      {(frozen || outOfRange) && (
+        <View style={styles.tagsRow}>
+          {frozen && (
+            <View style={styles.frozenTag}>
+              <Text style={styles.frozenTagText}>congelado</Text>
+            </View>
+          )}
+          {outOfRange && (
+            <View style={styles.rangeTag}>
+              <Text style={styles.rangeTagText}>fuera de rango</Text>
+            </View>
+          )}
+        </View>
+      )}
 
       {numeric ? (
-        <Text style={[styles.value, { color: accent }]}>
-          {(signal.value as number).toFixed(2)}
+        <Text style={[styles.value, { color: outOfRange ? Colors.danger : accent }]} numberOfLines={1} adjustsFontSizeToFit>
+          {fmt(signal.value as number)}
           <Text style={styles.unit}> {signal.unit ?? ''}</Text>
+        </Text>
+      ) : isBool ? (
+        <Text style={[styles.value, { color: (signal.value as boolean) ? Colors.success : Colors.textSecondary }]}>
+          {(signal.value as boolean) ? 'Encendido' : 'Apagado'}
         </Text>
       ) : (
         <View style={styles.noData}>
           <Text style={styles.noDataValue}>sin dato</Text>
-          {signal.reason && <Text style={styles.noDataReason}>{REASON_TEXT[signal.reason]}</Text>}
+          {signal.reason && <Text style={styles.noDataReason}>{REASON_TEXT[signal.reason] ?? 'sin dato utilizable'}</Text>}
         </View>
       )}
 
       {(hasMin || hasMax) && (
         <Text style={styles.rangeText}>
-          {hasMin ? `Mín: ${(signal.opMin as number).toFixed(2)}` : ''}
+          {hasMin ? `Mín: ${fmt(signal.opMin as number)}` : ''}
           {hasMin && hasMax ? '   ' : ''}
-          {hasMax ? `Máx: ${(signal.opMax as number).toFixed(2)}` : ''}
+          {hasMax ? `Máx: ${fmt(signal.opMax as number)}` : ''}
         </Text>
       )}
     </View>
@@ -64,6 +103,7 @@ const styles = StyleSheet.create({
     borderColor: Colors.divider,
     alignItems: 'center',
   },
+  cardFrozen: { opacity: 0.55 },
   iconWrap: {
     width: 36,
     height: 36,
@@ -74,6 +114,25 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   name: { fontSize: 12, fontWeight: '600', color: Colors.textSecondary, marginBottom: 8, textAlign: 'center' },
+  tagsRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 6, marginBottom: 8 },
+  rangeTag: {
+    backgroundColor: Colors.danger + '22',
+    borderColor: Colors.danger,
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  rangeTagText: { fontSize: 9, fontWeight: '700', color: Colors.danger, letterSpacing: 0.5 },
+  frozenTag: {
+    backgroundColor: Colors.textSecondary + '22',
+    borderColor: Colors.textSecondary,
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  frozenTagText: { fontSize: 9, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.5 },
   value: { fontSize: 28, fontWeight: '800', marginBottom: 6, textAlign: 'center' },
   unit: { fontSize: 14, fontWeight: '400', color: Colors.textSecondary },
   rangeText: { fontSize: 11, fontWeight: '600', color: Colors.textSecondary },

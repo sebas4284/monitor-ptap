@@ -5,44 +5,79 @@ import type { SignalDto } from '../services/api';
 import { directionFor } from '../services/signal-kind';
 import { GaugeCard } from './GaugeCard';
 
+/** Formato numérico es-CO (coma decimal + separador de miles), coherente con el reloj del tablero. */
+const fmt = (n: number, d = 2): string =>
+  n.toLocaleString('es-CO', { minimumFractionDigits: d, maximumFractionDigits: d });
+
 /**
  * Tarjeta de caudal con barra de progreso 0-100%, estilo "Macromedidor" de xtio.
- * Requiere opMin y opMax numéricos para calcular el %; si faltan, o si el valor es null,
- * cae a GaugeCard — no hay con qué dibujar la barra (no es una decisión de UX).
+ * Requiere opMin y opMax numéricos y con rango > 0 para calcular el %; si faltan, o si el rango
+ * es degenerado (opMin === opMax → dividir por cero daría "NaN%"), o el valor es null, cae a
+ * GaugeCard — no hay con qué dibujar la barra.
  */
-export function FlowMeterCard({ signal, name, icon }: { signal: SignalDto; name: string; icon: string }) {
+export function FlowMeterCard({
+  signal,
+  name,
+  icon,
+  frozen = false,
+}: {
+  signal: SignalDto;
+  name: string;
+  icon: string;
+  frozen?: boolean;
+}) {
   const numeric = typeof signal.value === 'number';
-  const hasBothBounds = typeof signal.opMin === 'number' && typeof signal.opMax === 'number';
+  const opMin = signal.opMin;
+  const opMax = signal.opMax;
+  const hasSpan = typeof opMin === 'number' && typeof opMax === 'number' && opMax - opMin > 0;
 
-  if (!numeric || !hasBothBounds) {
-    return <GaugeCard signal={signal} name={name} icon={icon} />;
+  if (!numeric || !hasSpan) {
+    return <GaugeCard signal={signal} name={name} icon={icon} frozen={frozen} />;
   }
 
   const value = signal.value as number;
-  const opMin = signal.opMin as number;
-  const opMax = signal.opMax as number;
-  const pct = Math.min(100, Math.max(0, ((value - opMin) / (opMax - opMin)) * 100));
+  const rawPct = ((value - (opMin as number)) / ((opMax as number) - (opMin as number))) * 100;
+  const pct = Math.min(100, Math.max(0, rawPct));
+  // Aviso: fuera del rango operativo (del backend) o valor que se sale del 0–100% de la barra.
+  const outOfRange = Boolean(signal.outOfRange) || rawPct < 0 || rawPct > 100;
   const direction = directionFor(name);
   const accent = direction === 'inlet' ? Colors.accentInlet : direction === 'outlet' ? Colors.accentOutlet : Colors.primary;
 
   return (
-    <View style={styles.card}>
+    <View style={[styles.card, frozen && styles.cardFrozen]}>
       <View style={[styles.headerBar, { backgroundColor: accent + '22', borderColor: accent }]}>
         <Ionicons name={icon as never} size={16} color={accent} />
-        <Text style={[styles.headerText, { color: accent }]}>{(signal.label ?? name).toUpperCase()}</Text>
+        <Text style={[styles.headerText, { color: accent }]} numberOfLines={1}>
+          {(signal.label ?? name).toUpperCase()}
+        </Text>
       </View>
 
-      <Text style={styles.value}>
-        {value.toFixed(2)}
+      {(frozen || outOfRange) && (
+        <View style={styles.tagsRow}>
+          {frozen && (
+            <View style={styles.frozenTag}>
+              <Text style={styles.frozenTagText}>congelado</Text>
+            </View>
+          )}
+          {outOfRange && (
+            <View style={styles.rangeTag}>
+              <Text style={styles.rangeTagText}>fuera de rango</Text>
+            </View>
+          )}
+        </View>
+      )}
+
+      <Text style={styles.value} numberOfLines={1} adjustsFontSizeToFit>
+        {fmt(value)}
         <Text style={styles.unit}> {signal.unit ?? ''}</Text>
       </Text>
 
       <View style={styles.barOuter}>
-        <View style={[styles.barFill, { width: `${pct}%`, backgroundColor: accent }]} />
+        <View style={[styles.barFill, { width: `${pct}%`, backgroundColor: outOfRange ? Colors.danger : accent }]} />
       </View>
       <View style={styles.barLabels}>
         <Text style={styles.barLabelText}>0%</Text>
-        <Text style={styles.barLabelText}>{Math.round(pct)}%</Text>
+        <Text style={[styles.barLabelText, outOfRange && styles.barLabelAlert]}>{Math.round(pct)}%</Text>
         <Text style={styles.barLabelText}>100%</Text>
       </View>
     </View>
@@ -59,18 +94,39 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.divider,
   },
+  cardFrozen: { opacity: 0.55 },
   headerBar: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     alignSelf: 'flex-start',
+    maxWidth: '100%',
     borderWidth: 1,
     borderRadius: 8,
     paddingHorizontal: 8,
     paddingVertical: 4,
     marginBottom: 10,
   },
-  headerText: { fontSize: 11, fontWeight: '700', letterSpacing: 0.5 },
+  headerText: { fontSize: 11, fontWeight: '700', letterSpacing: 0.5, flexShrink: 1 },
+  tagsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 8 },
+  rangeTag: {
+    backgroundColor: Colors.danger + '22',
+    borderColor: Colors.danger,
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  rangeTagText: { fontSize: 9, fontWeight: '700', color: Colors.danger, letterSpacing: 0.5 },
+  frozenTag: {
+    backgroundColor: Colors.textSecondary + '22',
+    borderColor: Colors.textSecondary,
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  frozenTagText: { fontSize: 9, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.5 },
   value: { fontSize: 28, fontWeight: '800', color: Colors.textPrimary, marginBottom: 10 },
   unit: { fontSize: 14, fontWeight: '400', color: Colors.textSecondary },
   barOuter: {
@@ -83,4 +139,5 @@ const styles = StyleSheet.create({
   barFill: { height: '100%', borderRadius: 4 },
   barLabels: { flexDirection: 'row', justifyContent: 'space-between' },
   barLabelText: { fontSize: 10, color: Colors.textSecondary },
+  barLabelAlert: { color: Colors.danger, fontWeight: '700' },
 });

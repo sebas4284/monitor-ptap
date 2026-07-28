@@ -15,8 +15,10 @@ const LIVENESS: Record<LivenessState, { color: string; label: string }> = {
  *                      un tanque a nivel constante se ve así durante horas.
  *   rojo   CONGELADO → perdimos la conexión con el PLC; lo que se muestre ya no es fiable.
  */
-export function LiveBadge({ state }: { state: LivenessState }) {
-  const { color, label } = LIVENESS[state];
+export function LiveBadge({ state, loading = false }: { state: LivenessState; loading?: boolean }) {
+  // Durante la carga inicial (aún sin dato) NO alarmar con el rojo "CONGELADO · SIN CONEXIÓN":
+  // se muestra un estado neutro "CONECTANDO…" hasta que llegue el primer snapshot.
+  const { color, label } = loading ? { color: Colors.neutral, label: 'CONECTANDO…' } : LIVENESS[state];
   return (
     <View
       style={{

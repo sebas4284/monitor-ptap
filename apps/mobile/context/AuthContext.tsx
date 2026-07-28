@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import * as SecureStore from 'expo-secure-store';
-import { Platform } from 'react-native';
+import { Platform, AppState } from 'react-native';
 import type { AuthUser, Permission } from '@ptap/shared';
 import { hasPermission as checkPermission } from '@ptap/shared';
 import { setAuthToken, setOnUnauthorized } from '../services/api';
@@ -100,6 +100,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     const timer = setTimeout(() => void logout(), remaining);
     return () => clearTimeout(timer);
+  }, [token]);
+
+  // En nativo los timers de JS se estrangulan con la app en background: si el token vence estando
+  // en segundo plano, el setTimeout de arriba puede no haber disparado. Al volver a primer plano se
+  // re-evalúa la expiración para cerrar la sesión de inmediato (no esperar al 401 de la próxima
+  // petición, que podría no ocurrir si todo se sirve de cache/push).
+  useEffect(() => {
+    if (!token) return;
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      const exp = tokenExpiryMs(token);
+      if (exp !== null && exp <= Date.now()) void logout();
+    });
+    return () => sub.remove();
   }, [token]);
 
   async function login(newToken: string, newUser: AuthUser) {

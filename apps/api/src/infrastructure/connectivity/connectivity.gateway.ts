@@ -98,4 +98,14 @@ export class ConnectivityGateway implements OnGatewayConnection, OnModuleInit, O
     // Estado actual desde cache (nunca toca el PLC).
     client.emit('opc:snapshot', this.cache.get(plantId));
   }
+
+  /** Sale de la room de una planta: el cliente deja de recibir sus snapshots (al desmontar la
+   *  pantalla). Sin esto el servidor seguía empujando la planta a un socket que ya no la mira. */
+  @SubscribeMessage('opc:unsubscribe')
+  async unsubscribeFromPlant(
+    @MessageBody() payload: { plantId?: string },
+    @ConnectedSocket() client: Socket,
+  ): Promise<void> {
+    if (payload?.plantId) await client.leave(payload.plantId);
+  }
 }

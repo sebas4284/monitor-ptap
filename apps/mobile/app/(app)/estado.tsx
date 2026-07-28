@@ -52,7 +52,7 @@ export default function EstadoScreen() {
   // "¿el sistema funciona?" y "¿hay agua?". El veredicto del agua lo deriva el backend, que
   // es quien tiene las lecturas de tanque — aquí nunca llegan valores crudos del PLC.
   const { data: status } = useBasicStatus(plantId);
-  const system = systemHealth(status?.bridgeStatus, status?.liveness.state ?? 'frozen');
+  const system = systemHealth(status?.bridgeStatus, status?.liveness?.state ?? 'frozen');
 
   const water =
     status?.waterAvailable === true

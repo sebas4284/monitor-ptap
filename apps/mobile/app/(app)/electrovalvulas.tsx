@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { View, Text, ScrollView, RefreshControl, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { useElectrovalvulas } from '../../hooks/useElectrovalvulas';
 import { usePlant } from '../../context/PlantContext';
 import { useAuth } from '../../context/AuthContext';
@@ -13,9 +14,14 @@ export default function ElectrovalvulasScreen() {
   const { data: valves, isLoading, refetch, isRefetching } = useElectrovalvulas();
   const { selectedPlant } = usePlant();
   const { hasPermission } = useAuth();
+  const canView = hasPermission('view_dashboard'); // el Civil no ve electroválvulas
   const canControl = hasPermission('control_valves');
 
   const [overrides, setOverrides] = useState<Record<string, boolean>>({});
+
+  // Los overrides son por valve.id; al cambiar de planta hay que limpiarlos o un id que coincida
+  // entre plantas arrastraría el estado alterado de la planta anterior.
+  useEffect(() => setOverrides({}), [selectedPlant.id]);
 
   const effectiveValves = valves?.map(v => ({
     ...v,
@@ -24,6 +30,20 @@ export default function ElectrovalvulasScreen() {
 
   const openCount  = effectiveValves?.filter(v => v.isOpen).length  ?? 0;
   const closedCount = effectiveValves?.filter(v => !v.isOpen).length ?? 0;
+
+  // Guard de rol de pantalla (coherente con tablero/reportes): un Civil que llegue por deep-link
+  // no debe ver el estado de válvulas. Va tras TODOS los hooks (reglas de hooks).
+  if (!canView) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['bottom']}>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 10 }}>
+          <Ionicons name="lock-closed-outline" size={40} color={Colors.textSecondary} />
+          <Text style={styles.plantName}>Acceso restringido</Text>
+          <Text style={styles.sectionSubtitle}>Las electroválvulas no están disponibles para tu rol.</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe} edges={['bottom']}>

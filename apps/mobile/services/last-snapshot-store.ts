@@ -65,10 +65,14 @@ function hydrate(): void {
       const key = localStorage.key(i);
       if (!key) continue;
       try {
+        // No pisar una clave ya presente: un push en vivo pudo poblar el Map antes de que la
+        // hidratación (throttled/async) traiga un valor persistido MÁS VIEJO.
         if (key.startsWith(SNAPSHOT_PREFIX)) {
-          snapshots.set(key.slice(SNAPSHOT_PREFIX.length), JSON.parse(localStorage.getItem(key) ?? '') as PlantSnapshotDto);
+          const id = key.slice(SNAPSHOT_PREFIX.length);
+          if (!snapshots.has(id)) snapshots.set(id, JSON.parse(localStorage.getItem(key) ?? '') as PlantSnapshotDto);
         } else if (key.startsWith(BASIC_PREFIX)) {
-          basics.set(key.slice(BASIC_PREFIX.length), JSON.parse(localStorage.getItem(key) ?? '') as PlantBasicStatusDto);
+          const id = key.slice(BASIC_PREFIX.length);
+          if (!basics.has(id)) basics.set(id, JSON.parse(localStorage.getItem(key) ?? '') as PlantBasicStatusDto);
         }
       } catch {
         /* entrada corrupta: se ignora */
@@ -86,8 +90,13 @@ function hydrate(): void {
       for (const [key, value] of pairs) {
         if (!value) continue;
         try {
-          if (key.startsWith(SNAPSHOT_PREFIX)) snapshots.set(key.slice(SNAPSHOT_PREFIX.length), JSON.parse(value) as PlantSnapshotDto);
-          else basics.set(key.slice(BASIC_PREFIX.length), JSON.parse(value) as PlantBasicStatusDto);
+          if (key.startsWith(SNAPSHOT_PREFIX)) {
+            const id = key.slice(SNAPSHOT_PREFIX.length);
+            if (!snapshots.has(id)) snapshots.set(id, JSON.parse(value) as PlantSnapshotDto);
+          } else {
+            const id = key.slice(BASIC_PREFIX.length);
+            if (!basics.has(id)) basics.set(id, JSON.parse(value) as PlantBasicStatusDto);
+          }
         } catch {
           /* entrada corrupta: se ignora */
         }
