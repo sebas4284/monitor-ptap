@@ -43,6 +43,14 @@ export interface OpcUaConfig {
   subscriptionRecycleMaxAttempts: number;
   staleThresholdMs: number;
   writesEnabled: boolean; // OPCUA_WRITES_ENABLED (Fase 5); aquí solo se lee, nunca habilita write en Fase 1
+  /**
+   * ⚠️ EXCEPCIÓN DELIBERADA Y TEMPORAL a la regla 9 ("sin excepciones, ni para probar"): permite
+   * que `getWriteSecurity()` reporte `secure:true` aunque la sesión NO sea SignAndEncrypt+no-anónima.
+   * Existe SOLO porque el servidor real hoy únicamente acepta Anonymous+None (hallazgo P0) y se
+   * necesitó una prueba de campo controlada (válvula de Sirena, 2026-07-29). Default false — debe
+   * quedar en false salvo durante una prueba explícita, auditada y revertida al terminar.
+   */
+  allowInsecureWrites: boolean; // OPCUA_ALLOW_INSECURE_WRITES
 }
 
 export interface LivenessConfig {
@@ -140,6 +148,7 @@ export function loadConnectivityConfig(): ConnectivityConfig {
       subscriptionRecycleMaxAttempts: num('OPCUA_SUBSCRIPTION_RECYCLE_MAX_ATTEMPTS', 3),
       staleThresholdMs: num('OPCUA_STALE_THRESHOLD_MS', 300000), // 5 min (FASE 0.3: frescura de datos)
       writesEnabled: bool('OPCUA_WRITES_ENABLED', false),
+      allowInsecureWrites: bool('OPCUA_ALLOW_INSECURE_WRITES', false),
       autoAcceptUnknownCertificate: bool('OPC_AUTO_ACCEPT_UNKNOWN_CERTIFICATE', false),
     },
     liveness: {

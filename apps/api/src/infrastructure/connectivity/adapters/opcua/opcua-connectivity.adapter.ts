@@ -599,7 +599,13 @@ export class OpcUaConnectivityAdapter implements ConnectivityAdapter {
   // ANTES de llamar aquí. Estos métodos solo hacen el I/O OPC UA sobre un elemento.
 
   getWriteSecurity(): WriteSecurity {
-    const secure = this.config.securityMode === 'SignAndEncrypt' && this.config.identity.type !== 'anonymous';
+    // ⚠️ `allowInsecureWrites` es una excepción DELIBERADA y TEMPORAL a la regla 9 ("sin excepciones,
+    // ni para probar"), habilitada solo por OPCUA_ALLOW_INSECURE_WRITES=true — ver su doc en
+    // connectivity.config.ts. Debe estar en false salvo durante una prueba de campo auditada.
+    const secure = Boolean(
+      (this.config.securityMode === 'SignAndEncrypt' && this.config.identity.type !== 'anonymous') ||
+        this.config.allowInsecureWrites,
+    );
     return { secure, securityMode: this.config.securityMode, identity: this.config.identity.type };
   }
 

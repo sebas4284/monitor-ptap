@@ -2081,6 +2081,30 @@
       },
       "signals": [
         {
+          "buffer": "intOut",
+          "sourceBuffer": "INT_OUT_SIRENA",
+          "index": 0,
+          "domainKey": "valve1",
+          "label": "Válvula 1",
+          "mappingStatus": "mapped",
+          "confidence": "confirmed",
+          "writable": true,
+          "write": {
+            "target": { "channel": "intOut", "sourceBuffer": "INT_OUT_SIRENA", "index": 0 },
+            "commands": { "open": 4096 },
+            "readBack": {
+              "channel": "intIn",
+              "sourceBuffer": "INT_IN_SIRENA",
+              "index": 0,
+              "confirmsWrittenValue": false,
+              "expectedValue": 16385
+            },
+            "timeoutMs": 5000,
+            "rollbackValue": 0,
+            "permission": "control_valves"
+          }
+        },
+        {
           "buffer": "realIn",
           "sourceBuffer": "REAL_IN_SIRENA",
           "index": 0,

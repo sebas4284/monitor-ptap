@@ -60,6 +60,7 @@ function makeConfig(): ConnectivityConfig {
     subscriptionRecycleMaxAttempts: 3,
     staleThresholdMs: 300000,
     writesEnabled: false,
+    allowInsecureWrites: false,
   };
   return { provider: 'simulator', opcua, liveness: { liveSec: 10, windowSec: 300, sweepMs: 1000 } };
 }

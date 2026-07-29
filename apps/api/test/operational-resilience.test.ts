@@ -61,6 +61,7 @@ function makeConfig(over: Partial<OpcUaConfig> = {}, live: Partial<LivenessConfi
     subscriptionRecycleMaxAttempts: 2,
     staleThresholdMs: 300000,
     writesEnabled: false,
+    allowInsecureWrites: false,
     ...over,
   };
   return { provider: 'simulator', opcua, liveness: { liveSec: 10, windowSec: 300, sweepMs: 40, ...live } };

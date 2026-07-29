@@ -76,8 +76,17 @@ test('mapping: write.target.sourceBuffer inexistente es rechazado (validación s
   assert.ok(result.errors.some((e) => /NO_EXISTE/.test(e)));
 });
 
-test('mapping de PRODUCCIÓN: cero señales writable (seguro por defecto sin L5X)', () => {
-  const prod = loadJson(join(__dirname, '..', 'config', 'opc_mapping.json')) as { plants: Array<{ signals?: Array<{ writable?: boolean }> }> };
-  const writables = prod.plants.flatMap((p) => (p.signals ?? []).filter((s) => s.writable === true));
-  assert.equal(writables.length, 0, 'el mapping de producción NO debe tener señales writable hasta que llegue el L5X');
+test('mapping de PRODUCCIÓN: solo la señal writable field-verified de Sirena (seguro por defecto sin L5X)', () => {
+  // Invariante actualizada (2026-07-29, prueba de campo válvula Sirena, docs/PRUEBA_VALVULA_SIRENA.md):
+  // el mapping seguía "cero writable hasta el L5X" hasta que se confirmó por CAPTURA REAL en campo
+  // (monitor por suscripción mientras se disparaba el comando desde el HMI) que INT_OUT_SIRENA[0]=4096
+  // abre la válvula 1. Es la ÚNICA excepción — si aparece una segunda señal writable sin el mismo
+  // respaldo de evidencia, este test debe fallar y alguien debe justificarla explícitamente aquí.
+  const prod = loadJson(join(__dirname, '..', 'config', 'opc_mapping.json')) as {
+    plants: Array<{ plantId: string; signals?: Array<{ domainKey?: string; writable?: boolean }> }>;
+  };
+  const writables = prod.plants.flatMap((p) =>
+    (p.signals ?? []).filter((s) => s.writable === true).map((s) => `${p.plantId}/${s.domainKey}`),
+  );
+  assert.deepEqual(writables, ['sirena/valve1'], 'única señal writable esperada hoy en producción');
 });

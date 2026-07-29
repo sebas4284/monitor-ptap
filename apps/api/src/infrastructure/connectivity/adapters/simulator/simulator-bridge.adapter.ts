@@ -137,7 +137,12 @@ export class SimulatorBridgeAdapter implements ConnectivityAdapter {
   getWriteSecurity(): WriteSecurity {
     // El simulador no cifra nada, pero refleja la config para poder probar la precondición dura:
     // secure ⇔ SignAndEncrypt + identidad no anónima (mismos campos que el adaptador OPC UA real).
-    const secure = this.config.securityMode === 'SignAndEncrypt' && this.config.identity.type !== 'anonymous';
+    // Incluye la misma excepción DELIBERADA/TEMPORAL `allowInsecureWrites` (ver connectivity.config.ts)
+    // para que el simulador se comporte igual al adaptador real bajo ese flag.
+    const secure = Boolean(
+      (this.config.securityMode === 'SignAndEncrypt' && this.config.identity.type !== 'anonymous') ||
+        this.config.allowInsecureWrites,
+    );
     return { secure, securityMode: this.config.securityMode, identity: this.config.identity.type };
   }
 

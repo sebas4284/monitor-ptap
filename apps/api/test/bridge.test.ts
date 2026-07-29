@@ -39,6 +39,7 @@ function fastConfig(overrides: Partial<OpcUaConfig> = {}): OpcUaConfig {
     subscriptionRecycleMaxAttempts: 2,
     staleThresholdMs: 300000,
     writesEnabled: false,
+    allowInsecureWrites: false,
     ...overrides,
   };
 }
