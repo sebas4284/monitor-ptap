@@ -58,3 +58,4 @@ apps/mobile/android/
 
 # Subagent-driven-development scratch state
 .superpowers/
+apps/mobile/eas.json
