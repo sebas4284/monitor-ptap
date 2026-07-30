@@ -35,6 +35,20 @@ export interface BufferElementRef {
 export interface WriteSpec {
   target: BufferElementRef; // buffer de SALIDA donde se escribe
   commands: Record<string, number | boolean>; // verbo → valor a escribir
+  /**
+   * Cómo se aplica el valor sobre el elemento:
+   *  - `absolute` (default): se escribe el valor tal cual (pisa la palabra completa).
+   *  - `bitmask`: read-modify-write → activar = `actual | valor`, limpiar = `actual & ~valor`.
+   *    OBLIGATORIO cuando la palabra concentra VARIOS comandos/válvulas: escribir absoluto
+   *    apagaría los bits ajenos que estuvieran activos (p. ej. otra válvula del mismo sitio).
+   */
+  mode: 'absolute' | 'bitmask';
+  /**
+   * Si está presente, el comando es un PULSO: se activa, se sostiene `holdMs` y se limpia
+   * SIEMPRE (haya confirmado el estado o no). Sin esto, un comando `confirmed` dejaba el bit
+   * ENCLAVADO para siempre, porque el rollback solo corría al fallar el read-back.
+   */
+  pulse: { holdMs: number } | null;
   readBack: {
     channel: string;
     sourceBuffer: string | null;
@@ -109,6 +123,8 @@ function resolvePath(explicit?: string): string {
 interface RawWriteSpec {
   target?: { channel?: string; sourceBuffer?: string; index?: number };
   commands?: Record<string, number | boolean>;
+  mode?: string;
+  pulse?: { holdMs?: number };
   readBack?: { channel?: string; sourceBuffer?: string; index?: number; confirmsWrittenValue?: boolean; expectedValue?: number | boolean };
   timeoutMs?: number;
   rollbackValue?: number | boolean;
@@ -146,6 +162,8 @@ function parseWriteSpec(raw: RawWriteSpec | undefined): WriteSpec | undefined {
   return {
     target: { channel, sourceBuffer, index },
     commands: raw.commands,
+    mode: raw.mode === 'bitmask' ? 'bitmask' : 'absolute',
+    pulse: typeof raw.pulse?.holdMs === 'number' && raw.pulse.holdMs > 0 ? { holdMs: raw.pulse.holdMs } : null,
     readBack: {
       channel: raw.readBack.channel,
       sourceBuffer: typeof raw.readBack.sourceBuffer === 'string' ? raw.readBack.sourceBuffer : null,

@@ -31,13 +31,15 @@ const WRITE: WriteSpec = {
   timeoutMs: 60,
   rollbackValue: 0,
   permission: 'control_valves',
+  mode: 'absolute',
+  pulse: null,
 };
 
 interface FakeAdapter extends ConnectivityAdapter {
   writes: Array<{ value: number | boolean }>;
 }
 
-function fakeAdapter(opts: { secure: boolean; bridge: BridgeStatus; confirms?: boolean; writeThrows?: boolean }): FakeAdapter {
+function fakeAdapter(opts: { secure: boolean; bridge: BridgeStatus; confirms?: boolean; writeThrows?: boolean; preset?: number }): FakeAdapter {
   const store = new Map<string, number | boolean>();
   const confirms = opts.confirms !== false;
   const key = (t: { plantId: string; channel: string; sourceBuffer: string; index: number }) =>
@@ -58,7 +60,9 @@ function fakeAdapter(opts: { secure: boolean; bridge: BridgeStatus; confirms?: b
     },
     async readBufferElement(t: never) {
       const s = store.get(key(t));
-      const value = s === undefined ? 0 : confirms ? s : typeof s === 'boolean' ? !s : Number(s) + 1;
+      // `preset`: valor previo de la palabra (para probar que bitmask conserva bits ajenos).
+      const base = s === undefined ? (opts.preset ?? 0) : s;
+      const value = s === undefined ? base : confirms ? s : typeof s === 'boolean' ? !s : Number(s) + 1;
       return { value, quality: 'Good' as const, sourceTimestamp: null };
     },
   };
@@ -124,8 +128,8 @@ function fakeAudit(): { service: AuditLogService; calls: AuditEntry[] } {
 const OPERADOR: CommandActor = { userId: 'u1', userEmail: 'op@ptap.co', role: 'operador', ip: '10.0.0.1' };
 const JEFE: CommandActor = { userId: 'u2', userEmail: 'jefe@ptap.co', role: 'jefe', ip: '10.0.0.2' };
 
-function build(opts: { secure: boolean; bridge: BridgeStatus; confirms?: boolean; writesEnabled?: boolean; write?: WriteSpec | null; snapshot?: PlantSnapshotDto | null; writeThrows?: boolean }) {
-  const adapter = fakeAdapter({ secure: opts.secure, bridge: opts.bridge, confirms: opts.confirms, writeThrows: opts.writeThrows });
+function build(opts: { secure: boolean; bridge: BridgeStatus; confirms?: boolean; writesEnabled?: boolean; write?: WriteSpec | null; snapshot?: PlantSnapshotDto | null; writeThrows?: boolean; preset?: number }) {
+  const adapter = fakeAdapter({ secure: opts.secure, bridge: opts.bridge, confirms: opts.confirms, writeThrows: opts.writeThrows, preset: opts.preset });
   const audit = fakeAudit();
   const service = new WriteService(
     adapter,
@@ -216,6 +220,47 @@ test('write-service: el ECO del canal de comando verifica la escritura en el ins
   const r = await service.execute('voragine', { command: 'openValve', target: 'valveEV01' }, OPERADOR);
   assert.equal(r.writeVerified, true, 'el eco debe coincidir con el valor escrito');
   assert.equal(r.writeEcho, r.writtenValue);
+});
+
+// Hallazgo (revisión externa 2026-07-30): escribir el valor ABSOLUTO apaga los bits ajenos que
+// estuvieran activos en la misma palabra (otra válvula del mismo sitio). `bitmask` hace
+// read-modify-write y los conserva.
+test('write-service: modo bitmask CONSERVA los otros bits de la palabra', async () => {
+  const spec: WriteSpec = { ...WRITE, mode: 'bitmask', commands: { openValve: 4096 } };
+  const { service, adapter } = build({ secure: true, bridge: 'Connected', write: spec, preset: 32 });
+  await service.execute('voragine', { command: 'openValve', target: 'valveEV01' }, OPERADOR);
+  // 32 (bit5, de otro comando) debe seguir presente: 32 | 4096 = 4128
+  assert.equal(adapter.writes[0].value, 4128, 'debe escribir actual|máscara, no la máscara sola');
+});
+
+// Hallazgo: el rollback solo corría al FALLAR el read-back, así que un comando CONFIRMADO dejaba el
+// bit de comando enclavado para siempre. Un pulso debe limpiarse SIEMPRE.
+// Nota de diseño que este test hace explícita: un PULSO NO puede confirmarse releyendo el canal de
+// comando (el bit ya se limpió), así que su readBack debe apuntar al canal de ESTADO. El schema lo
+// exige (pulse ⇒ confirmsWrittenValue:false).
+test('write-service: un PULSO se limpia incluso cuando el estado CONFIRMA', async () => {
+  const spec: WriteSpec = {
+    ...WRITE,
+    mode: 'bitmask',
+    pulse: { holdMs: 5 },
+    commands: { openValve: 4096 },
+    readBack: { channel: 'intIn', sourceBuffer: 'INT_IN_TEST', index: 0, confirmsWrittenValue: false, expectedValue: 16385 },
+  };
+  // preset: la palabra ya trae 16385 (bit14+bit0 de otro uso) y el estado responde 16385.
+  const { service, adapter } = build({ secure: true, bridge: 'Connected', write: spec, preset: 16385 });
+  const r = await service.execute('voragine', { command: 'openValve', target: 'valveEV01' }, OPERADOR);
+  assert.equal(r.status, 'confirmed');
+  assert.equal(adapter.writes.length, 2, 'debe haber activación Y cierre del pulso');
+  assert.equal(adapter.writes[0].value, 16385 | 4096, 'activa el bit conservando los ajenos');
+  assert.equal(Number(adapter.writes[1].value) & 4096, 0, 'el bit del comando queda LIMPIO (sin enclavar)');
+  assert.equal(adapter.writes[1].value, 16385, 'y los bits ajenos se conservan');
+});
+
+test('write-service: un PULSO no se escribe dos veces cuando el estado NO confirma', async () => {
+  const spec: WriteSpec = { ...WRITE, mode: 'bitmask', pulse: { holdMs: 5 }, commands: { openValve: 4096 } };
+  const { service, adapter } = build({ secure: true, bridge: 'Connected', write: spec, confirms: false });
+  await service.execute('voragine', { command: 'openValve', target: 'valveEV01' }, OPERADOR);
+  assert.equal(adapter.writes.length, 2, 'activación + cierre; el rollback NO debe añadir un 3er write espurio');
 });
 
 test('write-service: camino feliz → confirmado con trazabilidad', async () => {

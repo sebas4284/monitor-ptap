@@ -2092,6 +2092,8 @@
           "write": {
             "target": { "channel": "intOut", "sourceBuffer": "INT_OUT_SIRENA", "index": 0 },
             "commands": { "open": 4096 },
+            "mode": "bitmask",
+            "pulse": { "holdMs": 300 },
             "readBack": {
               "channel": "intIn",
               "sourceBuffer": "INT_IN_SIRENA",

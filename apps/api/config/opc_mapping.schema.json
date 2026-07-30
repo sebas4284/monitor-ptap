@@ -159,6 +159,13 @@
       "additionalProperties": false,
       "description": "Fase 5: traducción de un comando de dominio a una escritura de buffer/bit. Solo en señales writable (⇒ confidence:confirmed). La semántica vive aquí, nunca en el código (regla 2).",
       "required": ["target", "commands", "readBack", "timeoutMs", "rollbackValue", "permission"],
+      "allOf": [
+        {
+          "description": "Un PULSO se limpia antes del read-back, así que NO puede confirmarse releyendo el valor escrito: su readBack debe apuntar al canal de ESTADO (confirmsWrittenValue:false + expectedValue).",
+          "if": { "required": ["pulse"] },
+          "then": { "properties": { "readBack": { "properties": { "confirmsWrittenValue": { "const": false } }, "required": ["confirmsWrittenValue"] } } }
+        }
+      ],
       "properties": {
         "target": {
           "type": "object",
@@ -181,6 +188,20 @@
           "minProperties": 1,
           "propertyNames": { "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" },
           "additionalProperties": { "type": ["number", "boolean"] }
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["absolute", "bitmask"],
+          "description": "Cómo aplicar el valor sobre el elemento. absolute (default): se escribe tal cual (pisa la palabra). bitmask: read-modify-write (activar = actual|valor, limpiar = actual&~valor) — OBLIGATORIO si la palabra concentra varios comandos, para no apagar bits ajenos."
+        },
+        "pulse": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Presente ⇒ el comando es un PULSO: se activa, se sostiene holdMs y se limpia SIEMPRE (confirme el estado o no). Sin esto, un comando confirmado dejaría el bit enclavado.",
+          "required": ["holdMs"],
+          "properties": {
+            "holdMs": { "type": "integer", "minimum": 1, "maximum": 60000, "description": "Duración del pulso en ms (típico 200–500 ms)." }
+          }
         },
         "readBack": {
           "type": "object",

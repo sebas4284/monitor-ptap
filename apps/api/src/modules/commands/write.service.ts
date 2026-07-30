@@ -117,8 +117,10 @@ export class WriteService {
       try {
         const prev = await this.adapter.readBufferElement(targetEl);
         base.previousValue = prev.value;
-        await this.adapter.writeBufferElement(targetEl, writtenValue);
-        base.writtenValue = writtenValue;
+        // `bitmask`: activar el bit SIN pisar los demás de la palabra (read-modify-write).
+        const toWrite = this.applyValue(write, prev.value, writtenValue);
+        await this.adapter.writeBufferElement(targetEl, toWrite);
+        base.writtenValue = toWrite;
       } catch (err) {
         this.logger.error(`write de ${req.command}/${req.target} RECHAZADO: ${err instanceof Error ? err.message : err}`);
         const rejected: CommandResult = { ...base, status: 'failed', reason: FAIL.WRITE_REJECTED };
@@ -135,10 +137,18 @@ export class WriteService {
       try {
         const echo = await this.adapter.readBufferElement(targetEl);
         base.writeEcho = echo.value;
-        base.writeVerified = echo.value === writtenValue;
+        base.writeVerified = echo.value === base.writtenValue;
       } catch {
         base.writeEcho = null;
         base.writeVerified = null; // no se pudo comprobar; no se afirma nada
+      }
+
+      // 7b-bis) PULSO: sostener y LIMPIAR SIEMPRE. Un comando de pulso que confirmara el estado
+      // dejaba antes el bit ENCLAVADO (el rollback solo corría al fallar) — con la válvula operativa
+      // eso habría dejado la orden puesta indefinidamente.
+      if (write.pulse) {
+        await sleep(write.pulse.holdMs);
+        await this.clearPulse(targetEl, write, writtenValue);
       }
 
       // 7c) Confirmación por el canal de ESTADO (que el equipo se movió).
@@ -148,7 +158,8 @@ export class WriteService {
       if (confirmation.confirmed) {
         result = { ...base, status: 'confirmed', reason: null };
       } else {
-        await this.rollback(targetEl, write); // best-effort
+        // Un pulso ya se limpió en 7b-bis: no volver a escribir (sería un segundo pulso espurio).
+        if (!write.pulse) await this.rollback(targetEl, write); // best-effort
         result = { ...base, status: 'failed', reason: FAIL.READBACK_UNCONFIRMED };
       }
     } catch (err) {
@@ -210,6 +221,38 @@ export class WriteService {
     } while (Date.now() < deadline);
 
     return { confirmed: false, value: last };
+  }
+
+  /**
+   * Valor a ESCRIBIR para activar el comando.
+   *  - `absolute`: el valor del mapping tal cual.
+   *  - `bitmask`:  `actual | valor` → activa los bits del comando y CONSERVA los demás de la palabra.
+   * Si el valor actual no es numérico (o es booleano) no hay aritmética de bits posible: absoluto.
+   */
+  private applyValue(write: WriteSpec, current: CommandValue, value: number | boolean): number | boolean {
+    if (write.mode !== 'bitmask' || typeof value !== 'number' || typeof current !== 'number') return value;
+    return (current | value) & 0xffff; // Int16 del PLC
+  }
+
+  /**
+   * Cierra el pulso: en `bitmask` limpia SOLO los bits del comando (`actual & ~valor`), releyendo el
+   * valor por si otro proceso tocó la palabra durante el pulso; en `absolute` escribe `rollbackValue`.
+   * Best-effort: si falla, se registra — dejar un bit puesto es peor que un log ruidoso.
+   */
+  private async clearPulse(targetEl: BufferElementTarget, write: WriteSpec, value: number | boolean): Promise<void> {
+    try {
+      if (write.mode === 'bitmask' && typeof value === 'number') {
+        const now = await this.adapter.readBufferElement(targetEl);
+        const cleared = typeof now.value === 'number' ? (now.value & ~value) & 0xffff : write.rollbackValue;
+        await this.adapter.writeBufferElement(targetEl, cleared);
+      } else {
+        await this.adapter.writeBufferElement(targetEl, write.rollbackValue);
+      }
+    } catch (err) {
+      this.logger.error(
+        `NO se pudo cerrar el pulso en ${targetEl.sourceBuffer}[${targetEl.index}] — puede quedar un bit ACTIVO: ${err instanceof Error ? err.message : err}`,
+      );
+    }
   }
 
   private async rollback(targetEl: BufferElementTarget, write: WriteSpec): Promise<void> {
