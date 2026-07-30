@@ -278,20 +278,35 @@ Sirena es la **única planta con mando remoto autorizado** (`PLANTAS_CON_MANDO` 
 [`electrovalvulas.tsx`](../apps/mobile/app/(app)/electrovalvulas.tsx)). Abrir **y cerrar** funcionan
 desde la plataforma.
 
-### Valor de CERRAR: `7194`
+### ⚠️ Valor de CERRAR: PENDIENTE DE CAPTURA (no se fabrica)
 
-De los tres valores que quedaron documentados sin confirmar en el protocolo de Vorágine
-(`3098`, `7194`, `1025`), el de cerrar es **`7194`**, y el razonamiento es consistente:
+**Corrección (2026-07-30):** se llegó a poner `close: 7194` con una justificación **equivocada** —se
+afirmó que el protocolo asociaba `7194` al «Array 0» del canal de comando, pero esos tres valores
+(`3098`, `7194`, `1025`) están listados bajo **«ESTADO — INT_IN_VORAGINE»**, es decir en el buffer de
+**estado**, no en el de comando. **Se revirtió.**
 
-| Evidencia | Por qué apunta a `7194` |
-|---|---|
-| El protocolo lo asocia a **«Array 0»** | Es justo el canal donde escribimos (canal 0 de `INT_OUT`) |
-| `7194` = bits {12, 11, 10, 4, **3**, 1} | Contiene **bit3 = 8 = CERRAR** de la tabla de comandos |
-| `7194` = `3098` + **`4096`** | Contiene el **bit12 de PULSO**, igual que el `4096` de abrir |
-| No es `4` ni `8` | Coincide con la indicación del operador |
+La descomposición refuerza que son palabras de ESTADO, no órdenes:
 
-Es decir: `7194` = «cerrar + pulso» — el **Modelo A (combinado)** que el propio protocolo planteaba
-como hipótesis. Cambiarlo es **una línea** en `opc_mapping.json` si en campo resulta ser otro.
+| Valor | Bits | Lectura |
+|---|---|---|
+| `1025` | bit10 + bit0 | Encaja con «válida + abierta» — mismo patrón que `16385` pero con bit10 en vez de bit14 |
+| `3098` | bit11 + bit10 + bit4 + bit3 + bit1 | palabra compuesta con bit10 otra vez |
+| `7194` | `3098` **+ bit12** | la misma palabra con el bit de pulso encendido |
+
+`bit10` aparece en los tres → coherente con un flag de «válvula válida/presente», **no** con un comando.
+
+**Candidatos reales para CERRAR** (dado que ABRIR = `4096` = **bit12 solo**, verificado en campo):
+
+| Candidato | Valor | Argumento |
+|---|---|---|
+| **bit13** | **`8192`** | El más probable: los PLC suelen usar **bits consecutivos** para abrir/cerrar del mismo equipo (bit12 abrir → bit13 cerrar). No es 4 ni 8 |
+| bit11 | `2048` | El bit inmediatamente inferior; misma lógica de par, en el otro sentido |
+| cerrar+pulso | `4104` | `bit3 (8, CERRAR)` + `bit12 (4096, PULSO)` — el «Modelo A» del protocolo. Pero rompería la simetría: abrir habría sido `4100`, y en campo se capturó `4096` **sin** bit2 |
+
+**No se elige por deducción.** El único método fiable es **capturar el pulso de cerrar desde el HMI**
+con el monitor por suscripción (`scripts/monitor-sirena-sub.ts`), igual que se capturó el `4096` de
+abrir. Hasta entonces `close` **no está declarado**: la app pide cerrar y el backend responde
+`UNKNOWN_COMMAND` (rechazo limpio, **sin escribir nada**).
 
 ### Estado esperado por verbo (limitación corregida)
 
