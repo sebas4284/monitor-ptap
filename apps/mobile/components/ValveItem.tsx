@@ -1,29 +1,33 @@
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import type { ValveView } from '../services/valves';
 import { FLOW_CLOSED_THRESHOLD } from '../services/valves';
+import type { SupervisedValve } from '../hooks/useValveSupervisor';
 import Colors from '../constants/colors';
 
 interface Props {
-  valve: ValveView;
+  valve: SupervisedValve;
   /** Acción de mando. Si falta, la fila es de solo lectura (rol sin permiso). */
   onToggle?: () => void;
-  /** El mando está bloqueado a nivel de sistema (aún no habilitado en planta). */
+  /** El mando está bloqueado a nivel de sistema (planta aún no autorizada). */
   disabled?: boolean;
   /** La planta perdió la conexión: los valores mostrados son la última lectura. */
   frozen?: boolean;
+  /** Hay una orden en vuelo para esta válvula. */
+  busy?: boolean;
 }
 
-const STATE_LABEL: Record<ValveView['state'], string> = {
+const STATE_LABEL: Record<SupervisedValve['state'], string> = {
   open: 'Abierta',
   closed: 'Cerrada',
   unknown: 'Sin dato',
 };
 
-export function ValveItem({ valve, onToggle, disabled = false, frozen = false }: Props) {
-  const color =
-    valve.state === 'open' ? Colors.success : valve.state === 'closed' ? Colors.danger : Colors.neutral;
-  const iconName = valve.state === 'open' ? 'toggle' : 'toggle-outline';
+export function ValveItem({ valve, onToggle, disabled = false, frozen = false, busy = false }: Props) {
+  // Se muestra el estado EFECTIVO: el que sigue al caudal si se detectó operación manual, para no
+  // mandar "abrir" a algo que ya abrieron a mano.
+  const shown = valve.effectiveState;
+  const color = shown === 'open' ? Colors.success : shown === 'closed' ? Colors.danger : Colors.neutral;
+  const iconName = shown === 'open' ? 'toggle' : 'toggle-outline';
 
   // Cómo se supo el estado, en lenguaje de operador.
   const fuente =
@@ -47,7 +51,12 @@ export function ValveItem({ valve, onToggle, disabled = false, frozen = false }:
               <Text style={styles.tagNeutralText}>congelado</Text>
             </View>
           )}
-          {valve.disagreement && (
+          {valve.manualOverride && (
+            <View style={styles.tagWarn}>
+              <Text style={styles.tagWarnText}>operada manualmente</Text>
+            </View>
+          )}
+          {valve.disagreement && !valve.manualOverride && (
             <View style={styles.tagWarn}>
               <Text style={styles.tagWarnText}>estado y caudal no coinciden</Text>
             </View>
@@ -65,21 +74,26 @@ export function ValveItem({ valve, onToggle, disabled = false, frozen = false }:
 
       <View style={styles.right}>
         <View style={[styles.badge, { backgroundColor: color + '18' }]}>
-          <Text style={[styles.badgeText, { color }]}>{STATE_LABEL[valve.state]}</Text>
+          <Text style={[styles.badgeText, { color }]}>{STATE_LABEL[shown]}</Text>
         </View>
         {onToggle && (
           <TouchableOpacity
             style={[styles.toggleBtn, disabled ? styles.toggleDisabled : { backgroundColor: Colors.primary + '15' }]}
             onPress={onToggle}
             activeOpacity={0.7}
+            disabled={busy}
           >
-            <Ionicons
-              name={disabled ? 'lock-closed-outline' : valve.state === 'open' ? 'close-circle-outline' : 'checkmark-circle-outline'}
-              size={16}
-              color={disabled ? Colors.textSecondary : Colors.primary}
-            />
+            {busy ? (
+              <ActivityIndicator size="small" color={Colors.primary} />
+            ) : (
+              <Ionicons
+                name={disabled ? 'lock-closed-outline' : shown === 'open' ? 'close-circle-outline' : 'checkmark-circle-outline'}
+                size={16}
+                color={disabled ? Colors.textSecondary : Colors.primary}
+              />
+            )}
             <Text style={[styles.toggleText, { color: disabled ? Colors.textSecondary : Colors.primary }]}>
-              {valve.state === 'open' ? 'Cerrar' : 'Abrir'}
+              {busy ? 'Enviando…' : shown === 'open' ? 'Cerrar' : 'Abrir'}
             </Text>
           </TouchableOpacity>
         )}

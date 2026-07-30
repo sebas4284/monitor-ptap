@@ -209,6 +209,13 @@
           "description": "Elemento a re-leer para confirmar la escritura. confirmsWrittenValue:true ⇒ éxito si el read-back == valor escrito; si es un feedback distinto, declarar expectedValue.",
           "required": ["channel", "index"],
           "properties": {
+            "expectedByCommand": {
+              "type": "object",
+              "description": "Estado esperado POR VERBO. Necesario cuando cada comando deja un estado distinto (abrir→16385, cerrar→16384): un único expectedValue no puede confirmar ambos. Manda sobre expectedValue.",
+              "minProperties": 1,
+              "propertyNames": { "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" },
+              "additionalProperties": { "type": ["number", "boolean"] }
+            },
             "channel": { "$ref": "#/$defs/channel" },
             "sourceBuffer": { "type": "string", "minLength": 1 },
             "index": { "type": "integer", "minimum": 0 },

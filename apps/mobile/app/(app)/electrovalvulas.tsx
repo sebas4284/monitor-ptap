@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { View, Text, ScrollView, RefreshControl, StyleSheet, Platform, Alert } from 'react-native';
+import { View, Text, ScrollView, RefreshControl, StyleSheet, Platform, Alert, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useSnapshot } from '../../hooks/useSnapshot';
@@ -10,15 +10,16 @@ import { PlantSelector } from '../../components/PlantSelector';
 import { ConnectionBanner } from '../../components/ConnectionBanner';
 import { LiveBadge } from '../../components/LiveBadge';
 import { valvesFromSnapshot } from '../../services/valves';
+import { useValveSupervisor, type SupervisedValve } from '../../hooks/useValveSupervisor';
 import Colors from '../../constants/colors';
 
 /**
- * El mando de válvulas está CABLEADO de punta a punta (canal oficial de comandos verificado en campo
- * el 2026-07-30: pulso de 4096 por el canal 0, con read-back y auditoría), pero permanece BLOQUEADO
- * en la app hasta que la planta autorice la operación remota. Se muestra el estado REAL y, si alguien
- * pulsa, se explica por qué no se envía — nunca un botón que parezca funcionar y no haga nada.
+ * Plantas donde el mando remoto está AUTORIZADO. Solo La Sirena por ahora: es la única cuyo canal se
+ * verificó en campo de punta a punta (docs/PRUEBA_VALVULA_SIRENA.md — pulso capturado por testigo
+ * independiente, MSG al PLC sin errores) y donde la planta autorizó operar. En el resto se ve el
+ * estado REAL pero el botón avisa que está deshabilitado, en vez de fingir que funciona.
  */
-const MANDO_HABILITADO = false;
+const PLANTAS_CON_MANDO = new Set(['sirena']);
 
 function aviso(title: string, message: string) {
   if (Platform.OS === 'web') window.alert(`${title}\n\n${message}`);
@@ -32,13 +33,15 @@ export default function ElectrovalvulasScreen() {
   const canControl = hasPermission('control_valves');
 
   const { data: snapshot, isLoading, isError, refetch, isRefetching } = useSnapshot(selectedPlant.id, canView);
-  const valves = useMemo(() => valvesFromSnapshot(snapshot), [snapshot]);
+  const rawValves = useMemo(() => valvesFromSnapshot(snapshot), [snapshot]);
+  const { valves, events, send, busy, dismiss } = useValveSupervisor(selectedPlant.id, rawValves);
   const livenessState = snapshot?.liveness.state ?? 'frozen';
   const frozen = livenessState === 'frozen';
   const apiReachable = !isError || (!!snapshot && !snapshot.pending);
+  const mandoHabilitado = PLANTAS_CON_MANDO.has(selectedPlant.id);
 
-  const openCount = valves.filter((v) => v.state === 'open').length;
-  const closedCount = valves.filter((v) => v.state === 'closed').length;
+  const openCount = valves.filter((v) => v.effectiveState === 'open').length;
+  const closedCount = valves.filter((v) => v.effectiveState === 'closed').length;
 
   // Guard de rol de pantalla (coherente con tablero/reportes). Va tras TODOS los hooks.
   if (!canView) {
@@ -53,18 +56,21 @@ export default function ElectrovalvulasScreen() {
     );
   }
 
-  function onToggle(valveName: string) {
-    if (!MANDO_HABILITADO) {
+  async function onToggle(valve: SupervisedValve) {
+    if (!mandoHabilitado) {
       aviso(
-        'Mando deshabilitado por ahora',
-        `El envío de órdenes a ${valveName} está bloqueado temporalmente.\n\n` +
+        'Mando deshabilitado en esta planta',
+        `El envío de órdenes a ${valve.name} está bloqueado temporalmente.\n\n` +
           'El canal de comando YA está funcionando y verificado contra el PLC (pulso por el canal 0, ' +
-          'con confirmación y auditoría). Queda bloqueado en la aplicación hasta que la planta autorice ' +
-          'la operación remota.\n\nMientras tanto, la válvula se opera desde el HMI de la planta.',
+          'con confirmación y auditoría). Hoy solo La Sirena está autorizada para operar en remoto.\n\n' +
+          'Mientras tanto, la válvula se opera desde el HMI de la planta.',
       );
       return;
     }
-    // Cuando se habilite: POST /api/plants/:plantId/commands { command:'open', target: valve.id }
+    // Si el estado es desconocido no se adivina: se ofrece explícitamente qué mandar.
+    const verb: 'open' | 'close' = valve.effectiveState === 'open' ? 'close' : 'open';
+    const verdict = await send(valve, verb);
+    aviso(verdict.title, verdict.message);
   }
 
   return (
@@ -92,15 +98,50 @@ export default function ElectrovalvulasScreen() {
           )}
         </View>
 
-        {/* Estado del mando: honesto y explícito. */}
-        <View style={styles.notice}>
-          <Ionicons name="information-circle-outline" size={18} color={Colors.primary} />
+        {/* Estado del mando: honesto y explícito, distinto según la planta. */}
+        <View style={[styles.notice, mandoHabilitado && styles.noticeOk]}>
+          <Ionicons
+            name={mandoHabilitado ? 'checkmark-circle-outline' : 'information-circle-outline'}
+            size={18}
+            color={mandoHabilitado ? Colors.success : Colors.primary}
+          />
           <Text style={styles.noticeText}>
-            <Text style={{ fontWeight: '700' }}>Mando remoto deshabilitado por ahora.</Text> El canal está
-            probado contra el PLC y listo; se habilitará cuando la planta lo autorice. Lo que ves abajo es el
-            estado REAL leído del equipo.
+            {mandoHabilitado ? (
+              <>
+                <Text style={{ fontWeight: '700' }}>Mando remoto ACTIVO en esta planta.</Text> Cada orden va por
+                el canal oficial (pulso por el canal 0, con confirmación y auditoría). El estado que ves es el
+                real, leído del equipo y corroborado con los caudales.
+              </>
+            ) : (
+              <>
+                <Text style={{ fontWeight: '700' }}>Mando remoto deshabilitado en esta planta.</Text> El canal
+                está probado y listo; hoy solo La Sirena está autorizada. Lo que ves abajo es el estado REAL
+                leído del equipo.
+              </>
+            )}
           </Text>
         </View>
+
+        {/* Avisos: operación manual detectada y resultados de órdenes. */}
+        {events.map((e) => (
+          <TouchableOpacity
+            key={e.id}
+            style={[styles.event, e.kind === 'manual' ? styles.eventManual : styles.eventCmd]}
+            onPress={() => dismiss(e.id)}
+            activeOpacity={0.8}
+          >
+            <Ionicons
+              name={e.kind === 'manual' ? 'hand-left-outline' : 'send-outline'}
+              size={16}
+              color={e.kind === 'manual' ? Colors.warning : Colors.primary}
+            />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.eventTitle}>{e.title}</Text>
+              <Text style={styles.eventMsg}>{e.message}</Text>
+            </View>
+            <Ionicons name="close" size={14} color={Colors.textSecondary} />
+          </TouchableOpacity>
+        ))}
 
         {isLoading && !snapshot ? (
           <View style={styles.loadingWrap}>
@@ -121,8 +162,9 @@ export default function ElectrovalvulasScreen() {
               key={valve.id}
               valve={valve}
               frozen={frozen}
-              disabled={!MANDO_HABILITADO}
-              onToggle={canControl ? () => onToggle(valve.name) : undefined}
+              disabled={!mandoHabilitado}
+              busy={busy === valve.id}
+              onToggle={canControl ? () => void onToggle(valve) : undefined}
             />
           ))
         )}
@@ -158,7 +200,21 @@ const styles = StyleSheet.create({
     padding: 10,
     marginBottom: 12,
   },
+  noticeOk: { backgroundColor: Colors.success + '10', borderLeftColor: Colors.success },
   noticeText: { flex: 1, fontSize: 12, lineHeight: 17, color: Colors.textSecondary },
+  event: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'flex-start',
+    borderRadius: 8,
+    borderLeftWidth: 3,
+    padding: 10,
+    marginBottom: 8,
+  },
+  eventManual: { backgroundColor: Colors.warning + '12', borderLeftColor: Colors.warning },
+  eventCmd: { backgroundColor: Colors.primary + '10', borderLeftColor: Colors.primary },
+  eventTitle: { fontSize: 12.5, fontWeight: '700', color: Colors.textPrimary },
+  eventMsg: { fontSize: 11.5, lineHeight: 16, color: Colors.textSecondary, marginTop: 2 },
   loadingWrap: { paddingVertical: 44, alignItems: 'center', gap: 8 },
   loadingText: { color: Colors.textSecondary, fontSize: 14, textAlign: 'center' },
   loadingSub: { color: Colors.textSecondary, fontSize: 12, textAlign: 'center', paddingHorizontal: 20 },

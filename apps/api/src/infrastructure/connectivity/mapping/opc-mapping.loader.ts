@@ -55,6 +55,12 @@ export interface WriteSpec {
     index: number;
     confirmsWrittenValue: boolean;
     expectedValue?: number | boolean;
+    /**
+     * Estado esperado POR VERBO. Necesario cuando cada comando deja un estado distinto: abrir espera
+     * `16385` y cerrar `16384`, así que un único `expectedValue` no puede confirmar ambos. Si el verbo
+     * no está aquí, se cae a `confirmsWrittenValue`/`expectedValue`.
+     */
+    expectedByCommand?: Record<string, number | boolean>;
   };
   timeoutMs: number;
   rollbackValue: number | boolean;
@@ -125,7 +131,14 @@ interface RawWriteSpec {
   commands?: Record<string, number | boolean>;
   mode?: string;
   pulse?: { holdMs?: number };
-  readBack?: { channel?: string; sourceBuffer?: string; index?: number; confirmsWrittenValue?: boolean; expectedValue?: number | boolean };
+  readBack?: {
+    channel?: string;
+    sourceBuffer?: string;
+    index?: number;
+    confirmsWrittenValue?: boolean;
+    expectedValue?: number | boolean;
+    expectedByCommand?: Record<string, number | boolean>;
+  };
   timeoutMs?: number;
   rollbackValue?: number | boolean;
   permission?: string;
@@ -170,6 +183,7 @@ function parseWriteSpec(raw: RawWriteSpec | undefined): WriteSpec | undefined {
       index: raw.readBack.index,
       confirmsWrittenValue: raw.readBack.confirmsWrittenValue !== false,
       expectedValue: raw.readBack.expectedValue,
+      expectedByCommand: raw.readBack.expectedByCommand,
     },
     timeoutMs: raw.timeoutMs,
     rollbackValue: raw.rollbackValue,

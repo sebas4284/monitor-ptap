@@ -2425,7 +2425,7 @@
           "writable": true,
           "write": {
             "target": { "channel": "intOut", "sourceBuffer": "INT_OUT_SIRENA", "index": 0 },
-            "commands": { "open": 4096 },
+            "commands": { "open": 4096, "close": 7194 },
             "mode": "bitmask",
             "pulse": { "holdMs": 300 },
             "readBack": {
@@ -2433,7 +2433,8 @@
               "sourceBuffer": "INT_IN_SIRENA",
               "index": 0,
               "confirmsWrittenValue": false,
-              "expectedValue": 16385
+              "expectedValue": 16385,
+              "expectedByCommand": { "open": 16385, "close": 16384 }
             },
             "timeoutMs": 5000,
             "rollbackValue": 0,

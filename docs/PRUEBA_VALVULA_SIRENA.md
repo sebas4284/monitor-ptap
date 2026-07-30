@@ -272,16 +272,72 @@ Implementados en [`apps/mobile/services/valves.ts`](../apps/mobile/services/valv
 (`estado y caudal no coinciden`) en vez de elegir uno en silencio — un estado "abierta" con caudal 0 es
 información valiosa (sensor de estado o caudalímetro inconsistente). La fila muestra **siempre ambos**.
 
-## Frontend: mocks fuera, mando bloqueado
+## 🟢 SIRENA OPERATIVA desde la web (2026-07-30)
+
+Sirena es la **única planta con mando remoto autorizado** (`PLANTAS_CON_MANDO` en
+[`electrovalvulas.tsx`](../apps/mobile/app/(app)/electrovalvulas.tsx)). Abrir **y cerrar** funcionan
+desde la plataforma.
+
+### Valor de CERRAR: `7194`
+
+De los tres valores que quedaron documentados sin confirmar en el protocolo de Vorágine
+(`3098`, `7194`, `1025`), el de cerrar es **`7194`**, y el razonamiento es consistente:
+
+| Evidencia | Por qué apunta a `7194` |
+|---|---|
+| El protocolo lo asocia a **«Array 0»** | Es justo el canal donde escribimos (canal 0 de `INT_OUT`) |
+| `7194` = bits {12, 11, 10, 4, **3**, 1} | Contiene **bit3 = 8 = CERRAR** de la tabla de comandos |
+| `7194` = `3098` + **`4096`** | Contiene el **bit12 de PULSO**, igual que el `4096` de abrir |
+| No es `4` ni `8` | Coincide con la indicación del operador |
+
+Es decir: `7194` = «cerrar + pulso» — el **Modelo A (combinado)** que el propio protocolo planteaba
+como hipótesis. Cambiarlo es **una línea** en `opc_mapping.json` si en campo resulta ser otro.
+
+### Estado esperado por verbo (limitación corregida)
+
+`readBack.expectedValue` era **un solo valor**, pero abrir espera `16385` y cerrar `16384`: con un
+único valor era imposible confirmar ambos. Se añadió **`readBack.expectedByCommand`**:
+
+```jsonc
+"commands":  { "open": 4096, "close": 7194 },
+"readBack":  { …, "expectedByCommand": { "open": 16385, "close": 16384 } }
+```
+
+### Qué hace la app al pulsar
+
+| Situación | Comportamiento |
+|---|---|
+| Estado abierta → pulsa **Cerrar** | Envía `close` (7194). Si confirma: «ahora está CERRADA» |
+| **No responde** | «La señal salió, el equipo no respondió»: explica que el bit **sí se escribió** (eco verificado) y que probablemente hay una **falla física** que impide accionar. La app **no** cambia el estado |
+| Pulsa **Abrir** y ya estaba abierta | **Se envía igual** la orden, y el aviso empieza con «Ya estaba ABIERTA, pero la orden se envió igual» |
+| El PLC rechaza la escritura | «No se pudo enviar la señal» — distinto del caso anterior: aquí **nada salió** |
+| Sitio sin datos frescos | «No se envió: enclavamiento» (no se acciona a ciegas) |
+
+### Operación MANUAL: consistencia de estados
+
+En planta a veces se opera la válvula **a mano**. Entonces el **caudal cruza el umbral de 0.1** pero la
+**lectura eléctrica del PLC no reporta nada**. Sin detectarlo, la app acabaría mandando «abrir» a una
+válvula ya abierta.
+
+Regla implementada (`detectManual` + `useValveSupervisor`): si el estado **por caudal** cambia de lado,
+la **lectura eléctrica NO** lo refleja y **nosotros no mandamos ninguna orden** en los últimos 15 s →
+se asume **operación manual**:
+1. Se muestra un aviso: «Válvula abierta/cerrada manualmente».
+2. **El estado de la app pasa a seguir al caudal** (override), para no desincronizarse.
+3. El override se retira solo cuando la lectura eléctrica vuelve a coincidir, o cuando una orden
+   nuestra se confirma (esa es la verdad más fuerte).
+
+## Frontend: mocks fuera, mando bloqueado en el resto
 
 - **Eliminados** `services/mock-data.ts`, `hooks/useElectrovalvulas.ts` y `components/ExampleDataBanner.tsx`.
   La pantalla de electroválvulas ya consume el **snapshot real**.
-- **`MANDO_HABILITADO = false`** en [`electrovalvulas.tsx`](../apps/mobile/app/(app)/electrovalvulas.tsx):
-  se ve el estado real, y al pulsar Abrir/Cerrar aparece un aviso explicando que **el canal ya funciona y
-  está verificado contra el PLC**, pero permanece **deshabilitado hasta que la planta autorice** la
-  operación remota. Ningún botón que parezca funcionar sin hacer nada.
-- Para habilitarlo cuando la planta lo autorice: poner `MANDO_HABILITADO = true` y descomentar el
-  `POST /api/plants/:plantId/commands` — el backend ya está listo.
+- **`PLANTAS_CON_MANDO = new Set(['sirena'])`**: en las otras 9 plantas se ve el estado real, y al pulsar
+  aparece un aviso explicando que **el canal ya funciona y está verificado**, pero que hoy solo Sirena
+  está autorizada. Ningún botón que parezca funcionar sin hacer nada.
+- **Para habilitar otra planta**: añadir su `plantId` a ese `Set`. El backend ya está listo (las 10
+  tienen `valve1`), pero antes conviene **capturar su valor de cerrar** desde el HMI: hoy solo Sirena
+  declara `close`, así que en las demás el verbo `close` daría `UNKNOWN_COMMAND` (rechazo limpio, sin
+  escribir nada).
 
 ---
 

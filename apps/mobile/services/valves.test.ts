@@ -7,8 +7,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { valvesFromSnapshot, isValveSignal, FLOW_CLOSED_THRESHOLD } from './valves';
-import type { PlantSnapshotDto, SignalDto } from './api';
+import { valvesFromSnapshot, isValveSignal, FLOW_CLOSED_THRESHOLD, interpretCommand, detectManual } from './valves';
+import type { PlantSnapshotDto, SignalDto, ValveCommandResult } from './api';
 
 function sig(value: number | null, over: Partial<SignalDto> = {}): SignalDto {
   return {
@@ -121,4 +121,70 @@ test('valves: isValveSignal reconoce comando y estado (para no duplicar en el ta
   assert.equal(isValveSignal('valve1'), true);
   assert.equal(isValveSignal('valve1State'), true);
   assert.equal(isValveSignal('inletFlow1'), false);
+});
+
+// ── Interpretación del resultado de un comando ──
+// Lo crítico: distinguir "la señal salió" de "el equipo respondió". Un 502 con eco verificado NO es
+// "no funcionó" — es "salió y el equipo no acusó el cambio" (probable falla física).
+function res(over: Partial<ValveCommandResult>): ValveCommandResult {
+  return {
+    http: 200, status: 'confirmed', reason: null, previousValue: 0, writtenValue: 4096,
+    confirmedValue: 16385, writeEcho: 4096, writeVerified: true, ...over,
+  };
+}
+
+test('interpretCommand: confirmado → ok y señal enviada', () => {
+  const v = interpretCommand(res({}), 'open', 'Válvula 1');
+  assert.equal(v.ok, true);
+  assert.equal(v.signalSent, true);
+});
+
+test('interpretCommand: 502 con eco verificado → la señal SÍ salió, avisa de posible falla física', () => {
+  const v = interpretCommand(
+    res({ http: 502, status: 'failed', reason: 'READBACK_UNCONFIRMED', confirmedValue: 16384, writeVerified: true }),
+    'open',
+    'Válvula 1',
+  );
+  assert.equal(v.ok, false, 'no se puede afirmar que la válvula se movió');
+  assert.equal(v.signalSent, true, 'pero el bit se escribió: eso NO es un fallo del canal');
+  assert.match(v.message, /FALLA FÍSICA/);
+});
+
+test('interpretCommand: WRITE_REJECTED → la señal NO salió', () => {
+  const v = interpretCommand(res({ http: 502, status: 'failed', reason: 'WRITE_REJECTED', writeVerified: null, writtenValue: null }), 'close', 'Válvula 1');
+  assert.equal(v.signalSent, false);
+  assert.match(v.message, /RECHAZÓ/);
+});
+
+test('interpretCommand: interlock y permisos se explican sin culpar al equipo', () => {
+  const il = interpretCommand(res({ http: 409, status: 'rejected', reason: 'INTERLOCK_FAILED: snapshot frozen' }), 'open', 'V1');
+  assert.equal(il.signalSent, false);
+  assert.match(il.title, /enclavamiento/i);
+  const fb = interpretCommand(res({ http: 403, status: 'rejected', reason: 'FORBIDDEN' }), 'open', 'V1');
+  assert.match(fb.title, /permiso/i);
+});
+
+test('interpretCommand: fallo de red NO afirma que la orden salió', () => {
+  const v = interpretCommand(res({ http: 0, status: 'error', reason: 'NETWORK' }), 'close', 'V1');
+  assert.equal(v.ok, false);
+  assert.equal(v.signalSent, false);
+});
+
+// ── Detección de operación manual ──
+test('detectManual: el caudal cruza el umbral y el PLC no reporta nada → MANUAL', () => {
+  assert.equal(detectManual('closed', 'open', 'closed', 'closed', false), 'opened');
+  assert.equal(detectManual('open', 'closed', 'open', 'open', false), 'closed');
+});
+
+test('detectManual: si NOSOTROS mandamos la orden hace poco, no es manual', () => {
+  assert.equal(detectManual('closed', 'open', 'closed', 'closed', true), null);
+});
+
+test('detectManual: si el PLC SÍ reportó el cambio, fue eléctrico (no manual)', () => {
+  assert.equal(detectManual('closed', 'open', 'closed', 'open', false), null);
+});
+
+test('detectManual: sin cambio de lado del caudal no hay evento', () => {
+  assert.equal(detectManual('open', 'open', 'open', 'open', false), null);
+  assert.equal(detectManual(null, 'open', null, null, false), null, 'sin lectura previa no se juzga');
 });

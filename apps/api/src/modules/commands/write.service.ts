@@ -152,7 +152,7 @@ export class WriteService {
       }
 
       // 7c) Confirmación por el canal de ESTADO (que el equipo se movió).
-      const confirmation = await this.confirmReadBack(plantId, write, writtenValue);
+      const confirmation = await this.confirmReadBack(plantId, write, writtenValue, req.command);
       base.confirmedValue = confirmation.value;
 
       if (confirmation.confirmed) {
@@ -198,10 +198,21 @@ export class WriteService {
   }
 
   /** Re-lee el elemento de confirmación hasta que coincida con el valor esperado o venza el timeout. */
-  private async confirmReadBack(plantId: string, write: WriteSpec, writtenValue: CommandValue): Promise<{ confirmed: boolean; value: CommandValue }> {
-    const expected: CommandValue = write.readBack.confirmsWrittenValue
-      ? writtenValue
-      : write.readBack.expectedValue ?? writtenValue;
+  private async confirmReadBack(
+    plantId: string,
+    write: WriteSpec,
+    writtenValue: CommandValue,
+    command: string,
+  ): Promise<{ confirmed: boolean; value: CommandValue }> {
+    // El estado esperado depende del VERBO cuando cada comando deja un estado distinto
+    // (abrir → 16385, cerrar → 16384). `expectedByCommand` manda sobre el valor único.
+    const perCommand = write.readBack.expectedByCommand?.[command];
+    const expected: CommandValue =
+      perCommand !== undefined
+        ? perCommand
+        : write.readBack.confirmsWrittenValue
+          ? writtenValue
+          : write.readBack.expectedValue ?? writtenValue;
     const rbTarget: BufferElementTarget = {
       plantId,
       channel: write.readBack.channel,

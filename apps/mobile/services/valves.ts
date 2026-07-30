@@ -1,4 +1,4 @@
-import type { PlantSnapshotDto, SignalDto } from './api';
+import type { PlantSnapshotDto, SignalDto, ValveCommandResult } from './api';
 
 /**
  * Electroválvulas REALES derivadas del snapshot de dominio (PLC → mapping → snapshot.signals).
@@ -122,4 +122,145 @@ export function valvesFromSnapshot(snapshot: PlantSnapshotDto | undefined): Valv
 /** true si el domainKey lo consume la pantalla de válvulas (para no duplicarlo en el tablero). */
 export function isValveSignal(domainKey: string): boolean {
   return /^valve\d+(State)?$/.test(domainKey);
+}
+
+// ── Interpretación del resultado de un comando ────────────────────────────────────────────────
+
+export interface CommandVerdict {
+  /** Éxito real: el equipo confirmó el cambio de estado. */
+  ok: boolean;
+  /** La orden salió al PLC (el bit se escribió), aunque el equipo no haya respondido. */
+  signalSent: boolean;
+  title: string;
+  message: string;
+}
+
+/**
+ * Traduce el resultado del canal oficial a algo que un operador entienda, distinguiendo lo que de
+ * verdad importa: **¿salió la señal?** vs **¿respondió el equipo?**. Un `502` con el eco verificado
+ * NO es "no funcionó": es "la orden salió y el equipo no acusó el cambio" — típicamente una falla
+ * física que impide accionar.
+ */
+export function interpretCommand(r: ValveCommandResult, verb: 'open' | 'close', valveName: string): CommandVerdict {
+  const accion = verb === 'open' ? 'abrir' : 'cerrar';
+  const nuevoEstado = verb === 'open' ? 'ABIERTA' : 'CERRADA';
+
+  if (r.status === 'confirmed') {
+    return {
+      ok: true,
+      signalSent: true,
+      title: `Orden confirmada`,
+      message: `${valveName}: el equipo confirmó el cambio. Ahora está ${nuevoEstado}.`,
+    };
+  }
+
+  if (r.status === 'failed' && r.reason === 'WRITE_REJECTED') {
+    return {
+      ok: false,
+      signalSent: false,
+      title: 'No se pudo enviar la señal',
+      message:
+        `${valveName}: el PLC RECHAZÓ la escritura, así que la orden de ${accion} no salió. ` +
+        `Revisa la conexión con el equipo y vuelve a intentar.`,
+    };
+  }
+
+  if (r.status === 'failed') {
+    // READBACK_UNCONFIRMED (u otro fallo tras escribir).
+    const eco = r.writeVerified === true;
+    return {
+      ok: false,
+      signalSent: eco,
+      title: eco ? 'La señal salió, el equipo no respondió' : 'La orden no se pudo confirmar',
+      message: eco
+        ? `${valveName}: la señal de ${accion} SÍ se escribió en el PLC (bit ${r.writtenValue} verificado), ` +
+          `pero el equipo no reportó el cambio de estado. Es probable que exista una FALLA FÍSICA que impida ` +
+          `accionar la válvula. La app mantiene el último estado real leído.`
+        : `${valveName}: no se pudo verificar que la orden de ${accion} llegara al equipo. No se asume ningún cambio.`,
+    };
+  }
+
+  // Rechazos ANTES de escribir: nada llegó al PLC.
+  const reason = r.reason ?? '';
+  if (reason.startsWith('INTERLOCK_FAILED')) {
+    return {
+      ok: false,
+      signalSent: false,
+      title: 'No se envió: enclavamiento',
+      message:
+        `${valveName}: por seguridad no se acciona sin datos frescos del sitio. ` +
+        `Espera a que la planta vuelva a reportar y reintenta. (${reason})`,
+    };
+  }
+  if (reason === 'FORBIDDEN') {
+    return { ok: false, signalSent: false, title: 'Sin permiso', message: `Tu rol no puede operar válvulas.` };
+  }
+  if (reason === 'WRITES_DISABLED_INSECURE_SESSION') {
+    return {
+      ok: false,
+      signalSent: false,
+      title: 'Escritura deshabilitada',
+      message: `El servidor tiene el canal de escritura bloqueado por configuración. Avisa al administrador.`,
+    };
+  }
+  if (reason === 'UNKNOWN_COMMAND') {
+    return {
+      ok: false,
+      signalSent: false,
+      title: `Comando no disponible`,
+      message: `${valveName}: la orden de ${accion} no está definida para esta válvula.`,
+    };
+  }
+  if (reason === 'TARGET_NOT_WRITABLE') {
+    return {
+      ok: false,
+      signalSent: false,
+      title: 'Válvula no operable',
+      message: `${valveName} no tiene canal de mando configurado.`,
+    };
+  }
+  if (reason === 'IN_PROGRESS') {
+    return { ok: false, signalSent: false, title: 'Orden en curso', message: `${valveName}: ya hay una orden ejecutándose. Espera el resultado.` };
+  }
+  if (reason === 'SESSION_EXPIRED') {
+    return { ok: false, signalSent: false, title: 'Sesión vencida', message: 'Vuelve a iniciar sesión.' };
+  }
+  if (reason === 'NETWORK') {
+    return {
+      ok: false,
+      signalSent: false,
+      title: 'Sin conexión con el servidor',
+      message: `No se pudo enviar la orden de ${accion}. No se sabe si salió: verifica el estado antes de reintentar.`,
+    };
+  }
+  return { ok: false, signalSent: false, title: 'La orden no se ejecutó', message: `${valveName}: ${reason || 'motivo desconocido'}.` };
+}
+
+// ── Detección de operación MANUAL ─────────────────────────────────────────────────────────────
+
+export type ManualEvent = 'opened' | 'closed' | null;
+
+/**
+ * ¿La válvula se operó A MANO? La pista es física: el estado según el CAUDAL cambió (cruzó el umbral
+ * de 0.1) mientras la lectura eléctrica del PLC NO lo reflejó y nosotros no mandamos ninguna orden.
+ * En ese caso el estado de la app debe seguir al caudal, o quedaría desincronizado y mandaríamos
+ * "abrir" a algo ya abierto.
+ *
+ * @param prevFlow  estado por caudal en la lectura anterior
+ * @param currFlow  estado por caudal ahora
+ * @param prevState estado eléctrico anterior (método 1)
+ * @param currState estado eléctrico ahora (método 1)
+ * @param commandRecently true si NOSOTROS mandamos una orden hace poco (entonces no es manual)
+ */
+export function detectManual(
+  prevFlow: ValveState | null,
+  currFlow: ValveState | null,
+  prevState: ValveState | null,
+  currState: ValveState | null,
+  commandRecently: boolean,
+): ManualEvent {
+  if (commandRecently) return null; // el cambio lo provocamos nosotros
+  if (prevFlow === null || currFlow === null || prevFlow === currFlow) return null; // el caudal no cambió de lado
+  if (prevState !== null && currState !== null && prevState !== currState) return null; // el PLC sí lo reportó → fue eléctrico
+  return currFlow === 'open' ? 'opened' : 'closed';
 }
