@@ -20,6 +20,10 @@ import 'reflect-metadata';
 import '../src/config/load-env';
 import { NestFactory } from '@nestjs/core';
 import { createPool, type RowDataPacket } from 'mysql2/promise';
+import {
+  OPCUAClient, MessageSecurityMode, SecurityPolicy, AttributeIds,
+  ClientSubscription, ClientMonitoredItem, TimestampsToReturn,
+} from 'node-opcua';
 import { AppModule } from '../src/modules/app.module';
 import { readDatabaseConfig } from '../src/infrastructure/database/database.config';
 import { JwtService } from '../src/modules/auth/jwt.service';
@@ -66,6 +70,66 @@ async function mintJwt(email: string): Promise<{ token: string; role: string; pl
   }
 }
 
+// ── TESTIGO INDEPENDIENTE del canal 0 ────────────────────────────────────────────────────────
+// Segunda sesión OPC UA, SEPARADA del puente de la app: observa INT_OUT_SIRENA (comando) e
+// INT_IN_SIRENA (estado) con muestreo de 20 ms en el servidor. Es la prueba de que el pulso
+// REALMENTE apareció en el canal — independiente de lo que reporte el propio WriteService.
+const OUT_GUID = '4AB6ECB4-D019-D4F1-A8A8-6177C3FE3278';
+const IN_GUID = '184E4071-DC15-213A-3DE8-442A4E0A354B';
+
+interface WitnessEvent { tMs: number; node: 'OUT' | 'IN'; value: number }
+
+async function startWitness(): Promise<{ events: WitnessEvent[]; t0: number; stop: () => Promise<void> }> {
+  const client = OPCUAClient.create({
+    endpointMustExist: false,
+    securityMode: MessageSecurityMode.None,
+    securityPolicy: SecurityPolicy.None,
+    connectionStrategy: { maxRetry: 1, initialDelay: 500, maxDelay: 1500 },
+    requestedSessionTimeout: 600000,
+  });
+  await client.connect(process.env.OPC_ENDPOINT ?? 'opc.tcp://181.204.165.66:59100');
+  const session = await client.createSession();
+  const nsArray = await session.readNamespaceArray();
+  const aq = nsArray.indexOf('AQUATECH');
+  if (aq < 0) throw new Error('testigo: namespace AQUATECH no encontrado');
+
+  const sub = ClientSubscription.create(session, {
+    requestedPublishingInterval: 100,
+    requestedLifetimeCount: 60000,
+    requestedMaxKeepAliveCount: 20,
+    maxNotificationsPerPublish: 2000,
+    publishingEnabled: true,
+    priority: 10,
+  });
+
+  const events: WitnessEvent[] = [];
+  const t0 = Date.now();
+  for (const [tag, guid] of [['OUT', OUT_GUID], ['IN', IN_GUID]] as const) {
+    const item = ClientMonitoredItem.create(
+      sub,
+      { nodeId: `ns=${aq};g=${guid}`, attributeId: AttributeIds.Value },
+      { samplingInterval: 20, discardOldest: false, queueSize: 200 },
+      TimestampsToReturn.Both,
+    );
+    item.on('changed', (dv) => {
+      const arr = Array.from((dv.value?.value ?? []) as ArrayLike<number>).map(Number);
+      const v = arr[0] ?? 0;
+      const ev: WitnessEvent = { tMs: Date.now() - t0, node: tag, value: v };
+      events.push(ev);
+      console.log(`   [testigo] +${(ev.tMs / 1000).toFixed(2)}s  ${tag}[0]=${v} ${bits(v)}`);
+    });
+  }
+  return {
+    events,
+    t0,
+    stop: async () => {
+      await sub.terminate().catch(() => undefined);
+      await session.close().catch(() => undefined);
+      await client.disconnect().catch(() => undefined);
+    },
+  };
+}
+
 interface CallResult { n: number; at: string; http: number; status?: string; reason?: string | null; written?: unknown; confirmed?: unknown; prev?: unknown; seq?: number | null; ms: number }
 
 async function callCommand(token: string, n: number): Promise<CallResult> {
@@ -99,6 +163,7 @@ async function main(): Promise<void> {
 
   const adapter = app.get<ConnectivityAdapter>(CONNECTIVITY_ADAPTER);
   const cache = app.get(PlantCache);
+  let witness: Awaited<ReturnType<typeof startWitness>> | null = null;
 
   try {
     // ── 1. esperar puente ──
@@ -150,6 +215,12 @@ async function main(): Promise<void> {
     const { token, role, plant } = await mintJwt(EMAIL);
     console.log(`${now()}  JWT de ${EMAIL} (rol=${role}, planta=${plant}) listo`);
 
+    // ── 4b. TESTIGO: lectura del canal 0 ESTABLECIDA ANTES de comandar ──
+    console.log(`\n${now()}  estableciendo TESTIGO independiente sobre INT_OUT_SIRENA[0] (canal 0)...`);
+    witness = await startWitness();
+    await sleep(2500); // línea base antes del primer pulso
+    console.log(`${now()}  testigo activo (${witness.events.length} lecturas de línea base). A partir de aquí, todo cambio del canal 0 queda registrado.\n`);
+
     const results: CallResult[] = [];
 
     // ── 5. comando único ──
@@ -175,6 +246,34 @@ async function main(): Promise<void> {
       }
     }
 
+    // ── 6b. VEREDICTO DEL TESTIGO: ¿se vio el pulso en el canal 0? ──
+    if (witness) {
+      await sleep(1500); // dejar llegar las últimas notificaciones
+      const out = witness.events.filter((e) => e.node === 'OUT');
+      const inn = witness.events.filter((e) => e.node === 'IN');
+      let pulsos = 0;
+      let retornos = 0;
+      let prev: number | null = null;
+      for (const e of out) {
+        if (prev !== null && prev !== 4096 && e.value === 4096) pulsos++;
+        if (prev === 4096 && e.value === 0) retornos++;
+        prev = e.value;
+      }
+      // el primer evento es la línea base, no una transición
+      if (out.length > 0 && out[0].value === 4096) pulsos++;
+      console.log(`\n════════ VEREDICTO DEL TESTIGO (canal 0, sesión OPC UA independiente) ════════`);
+      console.log(`  eventos observados en INT_OUT_SIRENA[0]: ${out.length}   ·   en INT_IN_SIRENA[0]: ${inn.length}`);
+      console.log(`  valores distintos vistos en el canal 0: ${[...new Set(out.map((e) => e.value))].join(', ')}`);
+      console.log(`  PULSOS 4096 observados: ${pulsos}   ·   retornos a 0 (rollback): ${retornos}`);
+      console.log(`  comandos enviados: ${results.length}`);
+      const ok = pulsos >= results.length && results.length > 0;
+      console.log(`  ${ok ? '✅ CONFIRMADO' : '⚠️  DISCREPANCIA'}: el testigo ${ok ? 'vio' : 'NO vio'} un pulso 4096 por cada comando enviado.`);
+      if (inn.length > 0) {
+        console.log(`  estado INT_IN[0] durante toda la prueba: ${[...new Set(inn.map((e) => e.value))].map((v) => `${v} ${bits(v)}`).join(', ')} (sin cambio = canal sin actuador, esperado)`);
+      }
+      console.log(`  timeline OUT (primeros 12): ${out.slice(0, 12).map((e) => `+${(e.tMs / 1000).toFixed(1)}s=${e.value}`).join('  ')}`);
+    }
+
     // ── 7. verificación final: nada latente ──
     const outEnd = await adapter.readBufferElement(OUT_EL);
     const inEnd = await adapter.readBufferElement(IN_EL);
@@ -191,8 +290,9 @@ async function main(): Promise<void> {
       console.log(`  JSON: ${JSON.stringify(results)}`);
     }
   } finally {
+    if (witness) await witness.stop().catch(() => undefined);
     await app.close().catch(() => undefined);
-    console.log(`${now()}  instancia de prueba cerrada.`);
+    console.log(`${now()}  testigo e instancia de prueba cerrados.`);
   }
   process.exit(0);
 }

@@ -154,6 +154,27 @@ FINAL   INT_OUT[0]=0 {}          INT_IN[0]=16384 {14}     bit latente: NO ✅
 RESUMEN: 25 llamadas · 25× HTTP 502 failed/READBACK_UNCONFIRMED · por llamada min 5307ms / mediana 5474ms / max 5694ms
 ```
 
+### 🔬 Verificación con TESTIGO INDEPENDIENTE del canal 0 (2ª corrida, 2026-07-30)
+
+La 1ª corrida probaba `written=4096` **según el propio `WriteService`**. Para *rectificar* que el pulso
+sale de verdad al canal, la 2ª corrida establece —**antes** de comandar— una **segunda sesión OPC UA
+separada del puente de la app**, suscrita a `INT_OUT_SIRENA` con muestreo de **20 ms en el servidor**:
+
+```
+VEREDICTO DEL TESTIGO (canal 0, sesión OPC UA independiente)
+  eventos observados en INT_OUT_SIRENA[0]: 51   ·   en INT_IN_SIRENA[0]: 1
+  valores distintos vistos en el canal 0: 0, 4096
+  PULSOS 4096 observados: 25   ·   retornos a 0 (rollback): 25
+  comandos enviados: 25
+  ✅ CONFIRMADO: un pulso 4096 por cada comando enviado
+  INT_IN[0] durante toda la prueba: 16384 {14} (sin cambio = canal sin actuador, esperado)
+  timeline: +3.0s=4096  +8.1s=0  +8.5s=4096  +13.7s=0  +14.0s=4096  +19.1s=0  +19.4s=4096 ...
+```
+
+**Correspondencia 1:1 entre comandos y pulsos en el cable**, con su retorno a 0 (rollback) en cada
+ciclo. El patrón del timeline muestra el pulso sostenido ~5 s (lo que tarda el read-back en agotar su
+timeout) y luego el retorno a reposo. **Esta es la prueba de que podemos escribir por el canal.**
+
 Auditoría en MySQL: **25 filas en `command_log`** (todas `failed/READBACK_UNCONFIRMED`, con
 `user_email=loresjoshua@gmail.com`, `role=admin`, `target=valve1`, `command=open`, `prev=0`,
 `written=4096`, `confirmed=16384`, `interlock_sequence`) y **26 eventos `command.execute` en
@@ -164,8 +185,10 @@ Auditoría en MySQL: **25 filas en `command_log`** (todas `failed/READBACK_UNCON
 1. **El canal oficial completo funciona**: HTTP → `JwtAuthGuard` + `PermissionGuard` +
    `PlantScopeGuard` → `WriteService` → resolver del mapping → precondición de seguridad → RBAC
    (`control_valves`) → interlock → **escritura OPC UA real** → read-back → rollback → auditoría.
-2. **La escritura al PLC SE EJECUTA**: `written=4096` en `INT_OUT_SIRENA[0]` (canal 0), 25 de 25 veces,
-   sobre el PLC real vía FactoryTalk Optix. `AccessLevel=3` (CurrentWrite) permitido.
+2. **La escritura al PLC SE EJECUTA — verificado por un TERCERO**: `written=4096` en
+   `INT_OUT_SIRENA[0]` (canal 0), 25 de 25 veces, y un **testigo OPC UA independiente observó los 25
+   pulsos** con sus 25 retornos a 0 (ver §Verificación con testigo). `AccessLevel=3` (CurrentWrite).
+   No es autorreporte del servicio: es evidencia externa sobre el canal.
 3. **La excepción de sesión insegura funciona y es visible**: `secure=true` con `mode=None`/`anonymous`
    solo porque `OPCUA_ALLOW_INSECURE_WRITES=true`; en producción está ausente → `false` → bloqueado.
 4. **NO queda bit latente**: `INT_OUT[0]=0` al final de las 25 ráfagas. El rollback del `WriteService`
