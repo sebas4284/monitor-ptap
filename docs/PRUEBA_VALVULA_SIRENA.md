@@ -230,6 +230,61 @@ Auditoría en MySQL: **25 filas en `command_log`** (todas `failed/READBACK_UNCON
 
 ---
 
+# 🌐 RÉPLICA A TODAS LAS PLANTAS (2026-07-30)
+
+Validada la ruta en Sirena, se replicó **sin probar en ninguna otra planta** (instrucción del operador:
+«mín. 1 válvula, se escribe por el canal 0, abrir = 4096 en todas»).
+
+## Alcance: 10 de 12 plantas
+
+| Con válvula (`intOut` + `intIn`) | Sin válvula |
+|---|---|
+| voragine · soledad · montebello · cascajal · km18 · alto-los-mangos · campoalegre · pichinde · carbonero · sirena | **san-antonio · quijote** |
+
+⚠️ **`san-antonio` y `quijote` quedan FUERA a propósito**: **no tienen buffers `intOut`/`intIn`**. Son los
+tanques retransmitidos en el buffer de Soledad, sin canal de comando propio. Inventarles una válvula
+sería escribir en un buffer inexistente. La pantalla lo dice explícitamente en vez de mostrar nada.
+
+## Qué se añadió por planta
+
+Con [`scripts/add-valve-signals.ts`](../apps/api/scripts/add-valve-signals.ts) — idempotente, e inserta
+como **texto** para no reformatear las 2.400 líneas del JSON hecho a mano:
+
+1. **`valve1`** (comando, writable): `intOut[0]`, `open: 4096`, `mode: "bitmask"`, `pulse.holdMs: 300`,
+   read-back en `intIn[0]` con `expectedValue: 16385`, `timeoutMs: 5000`, `permission: control_valves`.
+2. **`valve1State`** (solo lectura): `intIn[0]` — expone la palabra de estado para que el front la decodifique.
+
+**Honestidad sobre la confianza:** en Sirena el `4096` está **verificado en campo**. En las otras 9 viene de
+la **instrucción del operador**, no de una captura por planta. El `expectedValue: 16385` es **inferido** del
+patrón de Vorágine (nunca se ha observado un `16385` real). Si en alguna planta el estado viviera en otro
+índice, el read-back simplemente **no confirmará** → reporta `failed`, **nunca un falso éxito**: degrada seguro.
+
+## Estado de la válvula: los DOS métodos
+
+Implementados en [`apps/mobile/services/valves.ts`](../apps/mobile/services/valves.ts):
+
+| Método | Cómo | Disponibilidad |
+|---|---|---|
+| **1 · Lectura del PLC** | `valve1State` es máscara de bits: **bit14** = estado válido, **bit0** = abierta → **`16384` CERRADA**, **`16385` ABIERTA** | las 10 plantas |
+| **2 · Caudal** | caudal **≤ 0.1 → CERRADA**; por encima → ABIERTA. Prefiere el de **salida**; si no hay, usa el de entrada | 9 de 10 (**pichinde** no tiene caudales mapeados) |
+
+**Cruce:** manda el método 1 (es la lectura del propio equipo) y el 2 corrobora. **Si discrepan se avisa**
+(`estado y caudal no coinciden`) en vez de elegir uno en silencio — un estado "abierta" con caudal 0 es
+información valiosa (sensor de estado o caudalímetro inconsistente). La fila muestra **siempre ambos**.
+
+## Frontend: mocks fuera, mando bloqueado
+
+- **Eliminados** `services/mock-data.ts`, `hooks/useElectrovalvulas.ts` y `components/ExampleDataBanner.tsx`.
+  La pantalla de electroválvulas ya consume el **snapshot real**.
+- **`MANDO_HABILITADO = false`** en [`electrovalvulas.tsx`](../apps/mobile/app/(app)/electrovalvulas.tsx):
+  se ve el estado real, y al pulsar Abrir/Cerrar aparece un aviso explicando que **el canal ya funciona y
+  está verificado contra el PLC**, pero permanece **deshabilitado hasta que la planta autorice** la
+  operación remota. Ningún botón que parezca funcionar sin hacer nada.
+- Para habilitarlo cuando la planta lo autorice: poner `MANDO_HABILITADO = true` y descomentar el
+  `POST /api/plants/:plantId/commands` — el backend ya está listo.
+
+---
+
 # 🧭 GUÍA: cómo interpretar el resultado de un comando
 
 **El defecto que se corrigió (commit `af03e57`):** antes, **cualquier** excepción (write rechazado por
