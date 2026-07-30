@@ -122,6 +122,111 @@ nuestro sistema queda para el Paso 5 (canal oficial, vía la instancia de prueba
   (`write.service.ts:163-186`); una confirmación OR (estado-bit **O** caudal) requeriría extender esa
   función — se deja como mejora futura explícita, fuera de esta prueba.
 
+---
+
+# ✅ RESULTADO DE LA PRUEBA POR EL CANAL OFICIAL (2026-07-30)
+
+**Ejecutada desde la VM**, por el canal oficial de comandos (Fase 5), con la cuenta real
+**`loresjoshua@gmail.com` (admin)**. Dato del operador que habilitó la prueba: **el canal está
+habilitado pero NO hay componente que energice físicamente** → no hay actuador, los pulsos no mueven
+ninguna válvula, se puede ejercitar libremente.
+
+## Montaje: instancia AISLADA en la VM (producción intacta)
+
+| Elemento | Cómo se aisló |
+|---|---|
+| Código | `git worktree` en `~/ptap-fieldtest` sobre la rama `fieldtest` (commit `59115eb`), empujada directo al repo de la VM. `dev` **NO** se tocó (sigue en `dd03fbc`). |
+| `.env` | Propio en `~/ptap-fieldtest/.env` — `load-env.ts:6` resuelve el `.env` relativo a `__dirname`, así que **cada árbol lee el suyo**. Overrides: `PORT=4001`, `OPCUA_WRITES_ENABLED=true`, `OPCUA_ALLOW_INSECURE_WRITES=true`, `OPC_MAPPING_PATH` explícito, `REPORTS_DIR` aparte, rate-limit holgado. |
+| `node_modules` | **Hardlinks** (`cp -al`) del de producción → 1.8 GB sin duplicar disco (uso del disco quedó igual: 8.5 G). `@ptap/shared` resolvió **dentro** del árbol de prueba (symlink relativo). |
+| Proceso | Ejecutado en **primer plano y autoterminante** (`scripts/fieldtest-valve-run.ts`), **sin pm2** a propósito → imposible contaminar el dump de pm2 ni resucitar en un reboot. |
+| PKI / reports | `process.cwd()`-based → directorios propios del árbol de prueba. |
+
+## Evidencia
+
+```
+bridge=Connected   writeSecurity: secure=true  mode=None  identity=anonymous
+snapshot sirena: sequence=1  señales=22
+liveness: stable (+0s, +5s) → live a los +7s  (lastChangeAt=2026-07-30T14:22:05Z, antigüedad 2.9s)
+PREVIO  INT_OUT[0]=0 {}          INT_IN[0]=16384 {14}
+COMANDO ÚNICO   HTTP 502  failed/READBACK_UNCONFIRMED  prev=0 written=4096 confirmed=16384  (5635ms)
+RÁFAGA          24 comandos, 1 cada 5 s durante 120 s → 24× idéntico
+FINAL   INT_OUT[0]=0 {}          INT_IN[0]=16384 {14}     bit latente: NO ✅
+RESUMEN: 25 llamadas · 25× HTTP 502 failed/READBACK_UNCONFIRMED · por llamada min 5307ms / mediana 5474ms / max 5694ms
+```
+
+Auditoría en MySQL: **25 filas en `command_log`** (todas `failed/READBACK_UNCONFIRMED`, con
+`user_email=loresjoshua@gmail.com`, `role=admin`, `target=valve1`, `command=open`, `prev=0`,
+`written=4096`, `confirmed=16384`, `interlock_sequence`) y **26 eventos `command.execute` en
+`audit_log`** (25 + el rechazo del preflight). El canal audita SIEMPRE, incluso los rechazos.
+
+## Qué quedó PROBADO
+
+1. **El canal oficial completo funciona**: HTTP → `JwtAuthGuard` + `PermissionGuard` +
+   `PlantScopeGuard` → `WriteService` → resolver del mapping → precondición de seguridad → RBAC
+   (`control_valves`) → interlock → **escritura OPC UA real** → read-back → rollback → auditoría.
+2. **La escritura al PLC SE EJECUTA**: `written=4096` en `INT_OUT_SIRENA[0]` (canal 0), 25 de 25 veces,
+   sobre el PLC real vía FactoryTalk Optix. `AccessLevel=3` (CurrentWrite) permitido.
+3. **La excepción de sesión insegura funciona y es visible**: `secure=true` con `mode=None`/`anonymous`
+   solo porque `OPCUA_ALLOW_INSECURE_WRITES=true`; en producción está ausente → `false` → bloqueado.
+4. **NO queda bit latente**: `INT_OUT[0]=0` al final de las 25 ráfagas. El rollback del `WriteService`
+   (`rollbackValue: 0`) hace su trabajo — crítico para que nada se ejecute cuando llegue el actuador.
+5. **El sistema NO miente**: sin actuador, el estado nunca pasa a `16385`, y el canal reporta
+   `failed/READBACK_UNCONFIRMED` (HTTP 502) en vez de un falso "exitoso".
+6. **Producción intacta**: pm2 `ptap-api` online, `/api/health` y `/api/health/opc` en `:4000` → 200,
+   `dev` en `dd03fbc`, puerto 4001 libre al terminar, ningún proceso de prueba vivo.
+
+## Qué NO quedó probado (y por qué)
+
+- **Que la válvula se mueva**: imposible hoy, **falta el componente que energiza** (dato del operador).
+  El read-back seguirá sin confirmar hasta que exista el actuador. `status: failed` aquí **NO significa
+  "el canal no sirve"** — significa "se escribió y el estado no cambió", que es lo correcto reportar.
+- **El pulso de CERRAR**: nunca se capturó (solo se observó `4096`). El mapping **no** declara `close`
+  a propósito: no se fabrica un valor sin evidencia.
+- **`expectedValue: 16385`** (abierta) sigue siendo **inferido** del patrón de Voragine, nunca observado
+  en Sirena.
+
+## Hallazgos operativos
+
+1. **El interlock exige `liveness === 'live'`, y eso requiere ver MOVERSE el dato.** Es una decisión
+   deliberada de seguridad (documentada en `test/write-service.test.ts:183`), no un bug. Consecuencia
+   práctica: al arrancar en frío el snapshot nace `stable`/`frozen` y **hay que esperar** a que el
+   puente observe un cambio real de valor (en esta prueba: **7 segundos**). El primer intento —hecho
+   3 s después de arrancar— fue rechazado con `409 INTERLOCK_FAILED: snapshot frozen`. Al comandar
+   desde la app esto no se nota (el puente lleva horas corriendo), pero **cualquier script o instancia
+   recién arrancada debe esperar a `live`**.
+2. **Cada comando tarda ~5.4 s** porque el read-back agota su `timeoutMs: 5000` (sin actuador nunca
+   confirma). Con un intervalo de 5 s las llamadas quedan **encadenadas** (no solapadas): la ráfaga de
+   24 tomó ~126 s. Cuando exista el actuador y el estado confirme, la respuesta será casi inmediata.
+3. **Los `sourceTimestamp` del servidor vienen desfasados** entre nodos (se vieron marcas de minutos de
+   diferencia). No afectó a esta prueba porque `REAL_IN_SIRENA` sí trae marcas frescas, pero conviene
+   **sincronizar NTP** en la VM y no usar ese KPI como medida de rendimiento.
+
+## Cómo re-ejecutar (queda LISTO en la VM)
+
+```bash
+# la instancia NO queda corriendo; se arranca sola, ejecuta y se cierra
+ssh ptap
+cd ptap-fieldtest/apps/api
+FT_EMAIL=loresjoshua@gmail.com FT_MODE=single+burst \
+  FT_WAIT_LIVE_S=150 FT_BURST_SECONDS=120 FT_BURST_INTERVAL_MS=5000 \
+  ../../node_modules/.bin/tsx scripts/fieldtest-valve-run.ts
+# modos: preflight (diagnóstico + 1 comando) | single | burst | single+burst
+```
+El árbol de prueba ocupa **11 MB** de datos reales (node_modules son hardlinks → 0 disco adicional).
+Para eliminarlo: `git -C ~/monitor-ptap worktree remove --force ~/ptap-fieldtest && git -C ~/monitor-ptap branch -D fieldtest`.
+
+## Pendiente para cerrar la válvula de verdad
+
+1. **Conectar el componente de energía (actuador)** → repetir: el read-back debería pasar
+   `16384 → 16385` y el estado a `confirmed` (HTTP 200).
+2. **Capturar el pulso de CERRAR** desde el HMI (monitor por suscripción ya está listo) y añadir
+   `commands.close` al mapping con ese valor real.
+3. **Cablear el botón de la app** al canal (hoy la pantalla de electroválvulas es demo): el flujo que
+   pediste ya existe de extremo a extremo — botón → `POST /api/plants/:plantId/commands` → backend →
+   OPC UA → `INT_OUT_SIRENA[0]`.
+
+---
+
 ## 3. CANDADOS DE SEGURIDAD (todos deben cumplirse para poder escribir)
 
 El `WriteService` (Fase 5) rechaza el comando si falla cualquiera:
@@ -132,7 +237,7 @@ El `WriteService` (Fase 5) rechaza el comando si falla cualquiera:
 | 2 | **`OPCUA_WRITES_ENABLED=true`** | ⚙️ Se activa en el `.env` de la **instancia de prueba aislada** (no en producción) | Paso 5 |
 | 3 | **Sesión SEGURA**: OPC UA `SignAndEncrypt` + identidad no-anónima | ✅ **Excepción implementada**: `OPCUA_ALLOW_INSECURE_WRITES` (`connectivity.config.ts`, `getWriteSecurity()` en el adaptador real y el simulador) — deliberada, documentada como desviación de la regla 9, default `false`. Se activa SOLO en la instancia de prueba. | Activarla en esa instancia (Paso 5) |
 | 4 | **AccessLevel del nodo** `INT_OUT_SIRENA` permite `CurrentWrite` | ✅ **Confirmado por lectura**: `AccessLevel=3` (CurrentRead+CurrentWrite) | — |
-| 5 | **Interlock**: bridge `Connected` + snapshot `live` + `connectionStatus` OK | ✅ **PLC de Sirena EN VIVO** (corregido §0) → debería pasar sin tocar el interlock | Confirmar en la ejecución real |
+| 5 | **Interlock**: bridge `Connected` + snapshot `live` + `connectionStatus` OK | ✅ **VERIFICADO en la ejecución (2026-07-30)**: pasó cuando el snapshot alcanzó `live` a los ~7 s de arrancar; el intento a los 3 s fue rechazado (`409 INTERLOCK_FAILED: snapshot frozen`). El interlock NO se debilitó. | — |
 | 6 | **RBAC**: rol con permiso `control_valves` | ✅ Cuenta **Joshua Lores (admin)** — JWT vía `mint-test-jwt.ts` | — |
 | 7 | **Físico**: personal en la válvula confirmando que es seguro accionar | 👷 campo | Coordinación en sitio antes de cada envío |
 
