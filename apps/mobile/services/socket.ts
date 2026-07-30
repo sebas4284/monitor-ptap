@@ -16,7 +16,10 @@ let socket: Socket | null = null;
 export function getSocket(): Socket {
   if (!socket) {
     socket = io(API_BASE_URL, {
-      transports: ['websocket'],
+      // Con `websocket` a secas, cualquier proxy/túnel que no negocie el upgrade deja el socket
+      // MUERTO en silencio (y antes eso hacía que la app declarara la planta "congelada" aunque el
+      // REST funcionara). Se permite el fallback a polling: peor latencia, pero datos que llegan.
+      transports: ['websocket', 'polling'],
       reconnection: true,
       auth: { token: getAuthToken() },
     });

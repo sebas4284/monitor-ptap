@@ -196,11 +196,38 @@ test('write-service: interlock snapshot congelado → rechazado', async () => {
   assert.equal(adapter.writes.length, 0);
 });
 
-test('write-service: interlock snapshot estable (sin movimiento) → rechazado', async () => {
+test('write-service: interlock snapshot estable (sin movimiento) → rechazado por defecto', async () => {
+  delete process.env.COMMAND_REQUIRE_LIVE;
   const { service, adapter } = build({ secure: true, bridge: 'Connected', snapshot: snap('stable') });
   const r = await service.execute('voragine', { command: 'openValve', target: 'valveEV01' }, OPERADOR);
   assert.ok(r.reason?.startsWith(REJECT.INTERLOCK_FAILED));
   assert.equal(adapter.writes.length, 0);
+});
+
+// Un sitio en régimen estable (sesión sana, proceso quieto) no podía comandarse nunca, y con los
+// relojes del PLC desfasados el `live` tampoco es fiable. La excepción es EXPLÍCITA y auditable.
+test('write-service: con COMMAND_REQUIRE_LIVE=false un snapshot estable SÍ puede comandarse', async () => {
+  process.env.COMMAND_REQUIRE_LIVE = 'false';
+  try {
+    const { service, adapter } = build({ secure: true, bridge: 'Connected', snapshot: snap('stable'), confirms: true });
+    const r = await service.execute('voragine', { command: 'openValve', target: 'valveEV01' }, OPERADOR);
+    assert.equal(r.status, 'confirmed');
+    assert.equal(adapter.writes.length, 1);
+  } finally {
+    delete process.env.COMMAND_REQUIRE_LIVE;
+  }
+});
+
+test('write-service: `frozen` bloquea SIEMPRE, incluso con COMMAND_REQUIRE_LIVE=false', async () => {
+  process.env.COMMAND_REQUIRE_LIVE = 'false';
+  try {
+    const { service, adapter } = build({ secure: true, bridge: 'Connected', snapshot: snap('frozen') });
+    const r = await service.execute('voragine', { command: 'openValve', target: 'valveEV01' }, OPERADOR);
+    assert.ok(r.reason?.startsWith(REJECT.INTERLOCK_FAILED), 'sin fuente viva no se acciona jamás');
+    assert.equal(adapter.writes.length, 0);
+  } finally {
+    delete process.env.COMMAND_REQUIRE_LIVE;
+  }
 });
 
 // Hallazgo de campo 2026-07-30: antes, un write RECHAZADO por el servidor y un write EXITOSO sin

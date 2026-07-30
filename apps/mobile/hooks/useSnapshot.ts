@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { fetchSnapshot, type PlantSnapshotDto } from '../services/api';
 import { subscribePlant } from '../services/socket';
@@ -23,6 +23,9 @@ export function useSnapshot(plantId: string, enabled = true) {
   const queryClient = useQueryClient();
   const queryKey = ['snapshot', plantId];
   const lastSeq = useRef<number>(0);
+  /** true si el push por Socket.IO no está disponible → hay que refrescar por REST para no quedarse
+   *  con un dato viejo (sin mentir diciendo que la planta está congelada). */
+  const [socketDown, setSocketDown] = useState(false);
   // Re-lee el respaldo cuando la hidratación del storage termina (nativo llega async).
   const storeVersion = useSyncExternalStore(subscribeLastData, lastDataVersion, lastDataVersion);
 
@@ -34,10 +37,10 @@ export function useSnapshot(plantId: string, enabled = true) {
       return snapshot;
     },
     staleTime: Infinity, // el push mantiene el dato fresco; no re-fetch por tiempo
-    // Normalmente sin poll (el push mantiene fresco y evita duplicar el socket). PERO si la carga
-    // REST falló, reintentar solo cada 5 s para que el banner "servidor caído" se despegue solo
-    // cuando el servidor vuelva, sin depender de un pull-to-refresh manual.
-    refetchInterval: (query) => (query.state.status === 'error' ? 5000 : false),
+    // Normalmente sin poll (el push mantiene fresco y evita duplicar el socket). Se activa solo en
+    // dos casos: si la carga REST falló (para que el banner "servidor caído" se despegue solo), o si
+    // el socket está caído (sin push, el REST es la única forma de no mostrar un dato viejo).
+    refetchInterval: (query) => (query.state.status === 'error' ? 5000 : socketDown ? 10000 : false),
     // `enabled=false` para roles sin view_dashboard (Civil): NO se pide el snapshot detallado
     // (el backend responde 403) NI se abre la suscripción de socket (el gateway aún no valida
     // permisos por planta, así que suscribir al Civil filtraría datos que su rol no debe ver).
@@ -70,19 +73,14 @@ export function useSnapshot(plantId: string, enabled = true) {
         );
       },
       onConnectionChange: (connected) => {
-        if (!connected) {
-          // Socket caído/handshake rechazado: los datos ya no llegan → marcar frozen de inmediato
-          // (nunca aparentar frescura). Se conservan los valores; solo se degrada el liveness.
-          lastSeq.current = 0;
-          queryClient.setQueryData<PlantSnapshotDto>(queryKey, (prev) =>
-            prev && prev.liveness.state !== 'frozen'
-              ? { ...prev, liveness: { ...prev.liveness, state: 'frozen' } }
-              : prev,
-          );
-        } else {
-          // (Re)conectado: resincronizar por REST para recuperar liveness/valores frescos.
-          void queryClient.invalidateQueries({ queryKey });
-        }
+        // Un socket caído significa "no hay PUSH", NO que la planta esté congelada: el REST sigue
+        // siendo fuente de verdad. Marcar `frozen` aquí hacía que la app dijera "CONGELADO" con el
+        // puente perfectamente Connected (bug observado en planta el 2026-07-30). En su lugar se
+        // pasa a refrescar por REST cada pocos segundos, así el dato sigue siendo fresco de verdad;
+        // si el REST TAMBIÉN falla, el fallback de abajo ya marca `frozen` con la última lectura.
+        lastSeq.current = 0;
+        setSocketDown(!connected);
+        if (connected) void queryClient.invalidateQueries({ queryKey });
       },
     });
     return unsubscribe;

@@ -187,8 +187,22 @@ export class WriteService {
 
     const snap = this.cache.get(plantId);
     if (!snap) return { ok: false, reason: 'sin snapshot del sitio (sin datos)', sequence: null };
-    if (snap.liveness.state !== 'live') {
-      return { ok: false, reason: `snapshot ${snap.liveness.state} (se requiere fresco/live)`, sequence: snap.sequence };
+
+    // `frozen` SIEMPRE bloquea: perdimos la fuente y el estado del sitio no está respaldado.
+    if (snap.liveness.state === 'frozen') {
+      return { ok: false, reason: `snapshot frozen (sin fuente viva)`, sequence: snap.sequence };
+    }
+    // `stable` = sesión sana con el proceso quieto. Por defecto TAMBIÉN bloquea (postura deliberada:
+    // para accionar equipo no basta sesión viva, hay que estar viendo moverse el dato). Pero en un
+    // sitio en régimen estable eso hace IMPOSIBLE comandar, y con relojes del PLC desfasados el
+    // `live` no es fiable (visto en planta: lastChangeAt de 27 h atrás con el puente Connected). Se
+    // puede autorizar explícitamente con COMMAND_REQUIRE_LIVE=false, y queda en la auditoría.
+    if (snap.liveness.state !== 'live' && process.env.COMMAND_REQUIRE_LIVE !== 'false') {
+      return {
+        ok: false,
+        reason: `snapshot ${snap.liveness.state} (se requiere fresco/live; autorizar con COMMAND_REQUIRE_LIVE=false)`,
+        sequence: snap.sequence,
+      };
     }
     const conn = snap.signals['connectionStatus'];
     if (conn && conn.usable === false) {
