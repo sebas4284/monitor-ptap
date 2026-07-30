@@ -274,18 +274,49 @@ En orden de lo que probaría, de más simple a más invasivo:
    tiene **paridad** con él. Si UaExpert lograra algo que nosotros no, comparar el `Variant`
    (dataType/arrayType) que envía cada uno.
 
-## ⚠️ El único tramo que sigue SIN probar: FTOptix → PLC
+## ✅ Tramo FTOptix → PLC: VERIFICADO (4ª corrida, 2026-07-30)
 
-Lo demostrado es que el valor llega a la **variable del servidor OPC UA (FactoryTalk Optix)**. Que
-Optix lo **reenvíe al PLC Allen-Bradley por EtherNet/IP** es **otro salto** y **no está verificado**.
-La evidencia estaría en `MSG_WRITE_INT_SIRENA` (instrucción MSG con bits `EN/ST/DN/ER/TO` y
-`path=10.10.51.25`), que en el monitoreo pasivo ya se vio ciclando. Pendiente: **correlacionar en el
-tiempo** cada write con un ciclo `DN` (done) o un `ER` (error) de ese nodo.
-Nota técnica: suscribirse a ese nodo tumbó una sesión antes (`Connection Break` al resolver su
-`dataType ns=6;i=70`); hay que leerlo con `read()` puntual y capturar el error, no por suscripción.
+Era el último eslabón sin probar. **Resuelto**: con `scripts/browse-msg-sirena.ts` se descubrió que los
+bits de la instrucción MSG **son nodos hijos direccionables** (no hace falta decodificar el
+ExtensionObject completo, que era lo que tumbaba la sesión con `Connection Break`):
 
-Con el canal físico dañado, este tramo **no se puede cerrar hoy**: aunque el MSG se enviara, no hay
-forma de distinguir "el PLC lo recibió y no pudo energizar" de "el PLC no lo recibió".
+| Bit | NodeId (ns=9) | Significado |
+|---|---|---|
+| `DN` | `g=37D4AE55-3731-D313-BF74-E71D54D2A5F9` | Done — el mensaje CIP se completó |
+| `ER` | `g=9940D02E-157D-03CA-C179-240C8DA0E5A1` | Error de mensaje |
+| `TO` | `g=39003436-2EFD-47BD-2CDD-3FA3B49A82BE` | Timeout |
+| `ERR` | `g=86703B23-8C2B-56A5-BEDB-AF0BC4D4C667` | Código de error CIP |
+
+Vigilados por el testigo durante los comandos (`path=10.10.51.25`):
+
+```
+──── TRAMO FTOptix → PLC (MSG_WRITE_INT_SIRENA, EtherNet/IP) ────
+  ciclos DN (mensaje completado) : 9        (eventos DN: 18)
+  ER en alto (error de mensaje)  : 0
+  TO en alto (timeout)           : 0
+  ERR != 0 (código de error CIP) : 0
+  ✅ El transporte al PLC está SANO
+```
+
+**Interpretación honesta:** la instrucción MSG corre de forma **cíclica** (~9 ciclos en la ventana, uno
+cada ~8 s), no una vez por write. Por tanto `DN` **no** demuestra una correspondencia 1:1
+write→entrega; lo que demuestra es que **el transporte al Allen-Bradley está sano y entrega el buffer
+`INT_OUT` continuamente, sin errores ni timeouts**. Combinado con que el valor **persiste** en
+`INT_OUT[0]` (eco verificado), la conclusión es sólida: **el valor llega al PLC**. Lo que no ocurre es
+la **energización** de la válvula — de ahí que `INT_IN[0]` siga en `16384`.
+
+### Cadena de custodia del write — completa
+
+| # | Eslabón | Evidencia | Estado |
+|---|---|---|---|
+| 1 | App → backend | `POST /api/plants/sirena/commands` con JWT admin, guards + RBAC | ✅ |
+| 2 | Backend → servidor OPC UA | `write` con `StatusCode Good`, `AccessLevel=3` | ✅ |
+| 3 | El valor **queda** en el canal | **eco** `writeVerified=true` (25/25 y 13/13) | ✅ |
+| 4 | Visible para un **tercero** | testigo OPC UA independiente: 1 pulso por comando | ✅ |
+| 5 | Servidor → **PLC** (EtherNet/IP) | MSG `DN` ciclando, `ER/TO/ERR = 0` | ✅ |
+| 6 | PLC → **energiza la válvula** | `INT_IN[0]` nunca pasa a `16385` | ❌ **canal físico dañado** |
+
+**El write está resuelto de punta a punta.** El único eslabón roto es el #6, que es hardware.
 
 ## Hallazgos operativos
 

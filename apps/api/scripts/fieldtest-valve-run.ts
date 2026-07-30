@@ -77,7 +77,23 @@ async function mintJwt(email: string): Promise<{ token: string; role: string; pl
 const OUT_GUID = '4AB6ECB4-D019-D4F1-A8A8-6177C3FE3278';
 const IN_GUID = '184E4071-DC15-213A-3DE8-442A4E0A354B';
 
-interface WitnessEvent { tMs: number; node: 'OUT' | 'IN'; value: number }
+/**
+ * Nodos vigilados por el testigo. Los bits de MSG_WRITE_INT_SIRENA son el TRAMO FTOptix → PLC
+ * (instrucción MSG por EtherNet/IP hacia el Allen-Bradley): DN=done, ER=error, TO=timeout, ERR=código.
+ * Se leen como hijos ESCALARES direccionables (descubiertos con scripts/browse-msg-sirena.ts) — mucho
+ * más robusto que decodificar el ExtensionObject completo, que ya tumbó una sesión antes.
+ */
+const WITNESS_NODES: Array<{ tag: WitnessTag; guid: string; kind: 'array0' | 'scalar' }> = [
+  { tag: 'OUT', guid: OUT_GUID, kind: 'array0' },
+  { tag: 'IN', guid: IN_GUID, kind: 'array0' },
+  { tag: 'MSG.DN', guid: '37D4AE55-3731-D313-BF74-E71D54D2A5F9', kind: 'scalar' },
+  { tag: 'MSG.ER', guid: '9940D02E-157D-03CA-C179-240C8DA0E5A1', kind: 'scalar' },
+  { tag: 'MSG.TO', guid: '39003436-2EFD-47BD-2CDD-3FA3B49A82BE', kind: 'scalar' },
+  { tag: 'MSG.ERR', guid: '86703B23-8C2B-56A5-BEDB-AF0BC4D4C667', kind: 'scalar' },
+];
+
+type WitnessTag = 'OUT' | 'IN' | 'MSG.DN' | 'MSG.ER' | 'MSG.TO' | 'MSG.ERR';
+interface WitnessEvent { tMs: number; node: WitnessTag; value: number }
 
 async function startWitness(): Promise<{ events: WitnessEvent[]; t0: number; stop: () => Promise<void> }> {
   const client = OPCUAClient.create({
@@ -104,7 +120,7 @@ async function startWitness(): Promise<{ events: WitnessEvent[]; t0: number; sto
 
   const events: WitnessEvent[] = [];
   const t0 = Date.now();
-  for (const [tag, guid] of [['OUT', OUT_GUID], ['IN', IN_GUID]] as const) {
+  for (const { tag, guid, kind } of WITNESS_NODES) {
     const item = ClientMonitoredItem.create(
       sub,
       { nodeId: `ns=${aq};g=${guid}`, attributeId: AttributeIds.Value },
@@ -112,12 +128,19 @@ async function startWitness(): Promise<{ events: WitnessEvent[]; t0: number; sto
       TimestampsToReturn.Both,
     );
     item.on('changed', (dv) => {
-      const arr = Array.from((dv.value?.value ?? []) as ArrayLike<number>).map(Number);
-      const v = arr[0] ?? 0;
+      const raw = dv.value?.value;
+      const v =
+        kind === 'array0'
+          ? Number((Array.from((raw ?? []) as ArrayLike<number>)[0]) ?? 0)
+          : typeof raw === 'boolean'
+            ? (raw ? 1 : 0)
+            : Number(raw ?? 0);
       const ev: WitnessEvent = { tMs: Date.now() - t0, node: tag, value: v };
       events.push(ev);
-      console.log(`   [testigo] +${(ev.tMs / 1000).toFixed(2)}s  ${tag}[0]=${v} ${bits(v)}`);
+      const shown = kind === 'array0' ? `[0]=${v} ${bits(v)}` : `=${v}`;
+      console.log(`   [testigo] +${(ev.tMs / 1000).toFixed(2)}s  ${tag}${shown}`);
     });
+    item.on('err', (m: string) => console.log(`   [testigo] aviso en ${tag}: ${m}`));
   }
   return {
     events,
@@ -274,6 +297,30 @@ async function main(): Promise<void> {
         console.log(`  estado INT_IN[0] durante toda la prueba: ${[...new Set(inn.map((e) => e.value))].map((v) => `${v} ${bits(v)}`).join(', ')} (sin cambio = canal sin actuador, esperado)`);
       }
       console.log(`  timeline OUT (primeros 12): ${out.slice(0, 12).map((e) => `+${(e.tMs / 1000).toFixed(1)}s=${e.value}`).join('  ')}`);
+
+      // ── TRAMO FTOptix → PLC (instrucción MSG por EtherNet/IP) ──
+      const dn = witness.events.filter((e) => e.node === 'MSG.DN');
+      const er = witness.events.filter((e) => e.node === 'MSG.ER');
+      const to = witness.events.filter((e) => e.node === 'MSG.TO');
+      const errCodes = witness.events.filter((e) => e.node === 'MSG.ERR');
+      const dnCiclos = dn.filter((e, i) => e.value === 1 && (i === 0 || dn[i - 1].value === 0)).length;
+      const erAlto = er.filter((e) => e.value === 1).length;
+      const toAlto = to.filter((e) => e.value === 1).length;
+      const errNoCero = errCodes.filter((e) => e.value !== 0).length;
+      console.log(`\n──── TRAMO FTOptix → PLC (MSG_WRITE_INT_SIRENA, EtherNet/IP) ────`);
+      console.log(`  ciclos DN (mensaje completado) : ${dnCiclos}   (eventos DN: ${dn.length})`);
+      console.log(`  ER en alto (error de mensaje)  : ${erAlto}`);
+      console.log(`  TO en alto (timeout)           : ${toAlto}`);
+      console.log(`  ERR != 0 (código de error CIP) : ${errNoCero}${errNoCero ? '  ⚠️' : ''}`);
+      if (dnCiclos > 0 && erAlto === 0 && toAlto === 0 && errNoCero === 0) {
+        console.log(`  ✅ El transporte al PLC está SANO: la MSG se completa (DN) sin errores ni timeouts.`);
+        console.log(`     → el buffer INT_OUT se está entregando al Allen-Bradley; lo que no ocurre es la`);
+        console.log(`       ENERGIZACIÓN de la válvula (canal físico dañado), por eso INT_IN no cambia.`);
+      } else if (erAlto > 0 || toAlto > 0 || errNoCero > 0) {
+        console.log(`  ⚠️  HAY ERRORES en el tramo al PLC → el valor puede NO estar llegando al Allen-Bradley.`);
+      } else {
+        console.log(`  ⚠️  No se observaron ciclos DN en la ventana: no se puede afirmar que la MSG corriera.`);
+      }
     }
 
     // ── 7. verificación final: nada latente ──
