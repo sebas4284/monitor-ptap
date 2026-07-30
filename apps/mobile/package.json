@@ -38,7 +38,7 @@
     "web": "expo start --web",
     "web:fast": "expo start --web --clear",
     "lint": "expo lint",
-    "test": "node --import tsx --test services/signal-kind.test.ts",
+    "test": "node --import tsx --test services/signal-kind.test.ts services/valves.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "prebuild:android": "expo prebuild -p android",
     "build:android": "expo prebuild -p android && cd android && gradlew.bat assembleRelease"

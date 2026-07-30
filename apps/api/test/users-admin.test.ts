@@ -250,12 +250,16 @@ test('users-admin: el admin puede desactivar a OTRO usuario y queda auditado', a
   }
 });
 
-test('users-admin: NO se puede ACTIVAR una cuenta con el correo sin verificar → 400', async () => {
+// La exigencia de correo verificado para activar es OPCIONAL: sin proveedor de correo/SMS dejaría
+// TODAS las cuentas imposibles de activar, así que el muro anti-bot pasó a ser la aprobación MANUAL
+// del admin y la barrera vive detrás de REQUIRE_EMAIL_VERIFICATION (default off, ver users.service).
+test('users-admin: con REQUIRE_EMAIL_VERIFICATION=true NO se puede activar una cuenta sin verificar → 400', async () => {
   const repo = fakeRepo();
   // Cuenta pendiente Y sin verificar el correo (el caso anti-bot).
   const PENDING = 'pending-id';
   repo.store.set(PENDING, summary(PENDING, 'civil', false, false));
   const { app, jwt } = await buildApp(repo, fakeAudit().service);
+  process.env.REQUIRE_EMAIL_VERIFICATION = 'true';
   try {
     await request(app.getHttpServer())
       .patch(`/api/users/${PENDING}/active`)
@@ -263,6 +267,25 @@ test('users-admin: NO se puede ACTIVAR una cuenta con el correo sin verificar �
       .send({ isActive: true })
       .expect(400);
     assert.equal(repo.store.get(PENDING)?.isActive, false, 'sigue inactiva');
+  } finally {
+    delete process.env.REQUIRE_EMAIL_VERIFICATION;
+    await app.close();
+  }
+});
+
+test('users-admin: con el flag APAGADO (default) el admin SÍ aprueba una cuenta sin verificar → 200', async () => {
+  const repo = fakeRepo();
+  const PENDING = 'pending-noflag-id';
+  repo.store.set(PENDING, summary(PENDING, 'civil', false, false));
+  const { app, jwt } = await buildApp(repo, fakeAudit().service);
+  delete process.env.REQUIRE_EMAIL_VERIFICATION;
+  try {
+    await request(app.getHttpServer())
+      .patch(`/api/users/${PENDING}/active`)
+      .set('Authorization', `Bearer ${tokenFor(jwt, 'admin', ADMIN_ID)}`)
+      .send({ isActive: true })
+      .expect(200);
+    assert.equal(repo.store.get(PENDING)?.isActive, true, 'la aprobación manual del admin es el muro anti-bot');
   } finally {
     await app.close();
   }

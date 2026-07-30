@@ -15,6 +15,7 @@ import { ConnectionBanner } from '../../components/ConnectionBanner';
 import Colors from '../../constants/colors';
 import type { SignalDto } from '../../services/api';
 import { isTankSignal, tanksFromSnapshot } from '../../services/tanks';
+import { isValveSignal } from '../../services/valves';
 import { cardKindFor } from '../../services/signal-kind';
 
 /** Icono por domainKey conocido (cosmético). */
@@ -48,7 +49,8 @@ export default function TableroScreen() {
   const tanks = useMemo(() => tanksFromSnapshot(snapshot), [snapshot]);
 
   const signals: [string, SignalDto][] = snapshot
-    ? Object.entries(snapshot.signals).filter(([domainKey]) => !isTankSignal(domainKey))
+    // Tanques y válvulas tienen su propia pantalla/tarjeta: no duplicarlos como gauges genéricos.
+    ? Object.entries(snapshot.signals).filter(([k]) => !isTankSignal(k) && !isValveSignal(k))
     : [];
   const livenessState = snapshot?.liveness.state ?? 'frozen';
   const frozen = livenessState === 'frozen';

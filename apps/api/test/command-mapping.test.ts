@@ -76,17 +76,63 @@ test('mapping: write.target.sourceBuffer inexistente es rechazado (validación s
   assert.ok(result.errors.some((e) => /NO_EXISTE/.test(e)));
 });
 
-test('mapping de PRODUCCIÓN: solo la señal writable field-verified de Sirena (seguro por defecto sin L5X)', () => {
-  // Invariante actualizada (2026-07-29, prueba de campo válvula Sirena, docs/PRUEBA_VALVULA_SIRENA.md):
-  // el mapping seguía "cero writable hasta el L5X" hasta que se confirmó por CAPTURA REAL en campo
-  // (monitor por suscripción mientras se disparaba el comando desde el HMI) que INT_OUT_SIRENA[0]=4096
-  // abre la válvula 1. Es la ÚNICA excepción — si aparece una segunda señal writable sin el mismo
-  // respaldo de evidencia, este test debe fallar y alguien debe justificarla explícitamente aquí.
+test('mapping de PRODUCCIÓN: la válvula 1 está en las 10 plantas CON canal de comando, y en ninguna más', () => {
+  // Invariante (2026-07-30): la ruta de la válvula se replicó a todas las plantas por instrucción
+  // del operador («mín. 1 válvula, se escribe por el canal 0, abrir = 4096 en todas»), tras
+  // verificarla en campo en Sirena (docs/PRUEBA_VALVULA_SIRENA.md: pulso capturado por testigo
+  // independiente + MSG al PLC sin errores).
+  //
+  // El límite que este test protege: SOLO las plantas que tienen buffers intOut+intIn pueden tener
+  // válvula. `san-antonio` y `quijote` NO los tienen (son tanques retransmitidos en el buffer de
+  // Soledad, sin canal propio) → inventarles una válvula escribiría en un buffer inexistente.
+  // Si aparece una writable en una planta sin canal, o de otro tipo, este test debe fallar.
   const prod = loadJson(join(__dirname, '..', 'config', 'opc_mapping.json')) as {
-    plants: Array<{ plantId: string; signals?: Array<{ domainKey?: string; writable?: boolean }> }>;
+    plants: Array<{
+      plantId: string;
+      opcBuffers?: Record<string, Array<{ browseName?: string }>>;
+      signals?: Array<{ domainKey?: string; writable?: boolean }>;
+    }>;
   };
+
+  const conCanal = prod.plants.filter((p) => p.opcBuffers?.intOut?.[0] && p.opcBuffers?.intIn?.[0]).map((p) => p.plantId);
   const writables = prod.plants.flatMap((p) =>
     (p.signals ?? []).filter((s) => s.writable === true).map((s) => `${p.plantId}/${s.domainKey}`),
   );
-  assert.deepEqual(writables, ['sirena/valve1'], 'única señal writable esperada hoy en producción');
+
+  assert.deepEqual(writables, conCanal.map((id) => `${id}/valve1`), 'una valve1 por planta con canal de comando, y nada más');
+  assert.equal(conCanal.length, 10, 'hoy son 10 plantas con canal (san-antonio y quijote no tienen intOut/intIn)');
+  for (const sinCanal of ['san-antonio', 'quijote']) {
+    assert.ok(!writables.some((w) => w.startsWith(`${sinCanal}/`)), `${sinCanal} NO debe tener válvula: no tiene canal donde escribir`);
+  }
+});
+
+test('mapping de PRODUCCIÓN: cada válvula escribe en el canal 0 con pulso y máscara de bits', () => {
+  // Protege la forma verificada en campo: si alguien cambia el índice, el modo o quita el pulso,
+  // el comando podría pisar bits ajenos o quedar ENCLAVADO (ver docs/PRUEBA_VALVULA_SIRENA.md).
+  const prod = loadJson(join(__dirname, '..', 'config', 'opc_mapping.json')) as {
+    plants: Array<{
+      plantId: string;
+      signals?: Array<{
+        domainKey?: string;
+        writable?: boolean;
+        write?: {
+          target?: { index?: number };
+          commands?: Record<string, number>;
+          mode?: string;
+          pulse?: { holdMs?: number };
+          readBack?: { channel?: string; confirmsWrittenValue?: boolean };
+        };
+      }>;
+    }>;
+  };
+  const valves = prod.plants.flatMap((p) => (p.signals ?? []).filter((s) => s.writable).map((s) => ({ plantId: p.plantId, w: s.write })));
+  assert.ok(valves.length > 0);
+  for (const { plantId, w } of valves) {
+    assert.equal(w?.target?.index, 0, `${plantId}: se escribe por el canal 0`);
+    assert.equal(w?.commands?.open, 4096, `${plantId}: abrir = 4096 (bit12)`);
+    assert.equal(w?.mode, 'bitmask', `${plantId}: modo bitmask (no pisar bits ajenos de la palabra)`);
+    assert.ok((w?.pulse?.holdMs ?? 0) > 0, `${plantId}: debe declarar pulso (si no, el bit queda enclavado al confirmar)`);
+    assert.equal(w?.readBack?.channel, 'intIn', `${plantId}: el read-back va por el canal de ESTADO`);
+    assert.equal(w?.readBack?.confirmsWrittenValue, false, `${plantId}: un pulso no se confirma releyendo lo escrito`);
+  }
 });

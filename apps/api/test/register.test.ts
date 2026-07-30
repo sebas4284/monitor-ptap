@@ -115,11 +115,13 @@ test('register-schema: exige password de al menos 8 caracteres', () => {
   assert.equal(registerSchema.safeParse({ ...VALID, password: 'Corta1' }).success, false);
 });
 
-test('register-schema: exige complejidad de contraseña (mayúscula, minúscula y dígito)', () => {
-  assert.equal(registerSchema.safeParse({ ...VALID, password: 'todominuscula1' }).success, false, 'sin mayúscula');
-  assert.equal(registerSchema.safeParse({ ...VALID, password: 'TODOMAYUSCULA1' }).success, false, 'sin minúscula');
-  assert.equal(registerSchema.safeParse({ ...VALID, password: 'SinNumeros' }).success, false, 'sin dígito');
-  assert.equal(registerSchema.safeParse({ ...VALID, password: 'Valida123' }).success, true);
+test('register-schema: exige complejidad de contraseña (mayúscula, minúscula, dígito Y símbolo)', () => {
+  assert.equal(registerSchema.safeParse({ ...VALID, password: 'todominuscula1!' }).success, false, 'sin mayúscula');
+  assert.equal(registerSchema.safeParse({ ...VALID, password: 'TODOMAYUSCULA1!' }).success, false, 'sin minúscula');
+  assert.equal(registerSchema.safeParse({ ...VALID, password: 'SinNumeros!' }).success, false, 'sin dígito');
+  // El símbolo se añadió al endurecer el registro (commit dd03fbc): una contraseña sin él ya no pasa.
+  assert.equal(registerSchema.safeParse({ ...VALID, password: 'Valida123' }).success, false, 'sin símbolo');
+  assert.equal(registerSchema.safeParse({ ...VALID, password: 'Valida123!' }).success, true);
 });
 
 test('register-schema: exige email válido, sin desechables, y plant REAL', () => {
@@ -134,10 +136,15 @@ test('register-schema: normaliza email (trim + minúsculas)', () => {
   assert.equal(parsed.email, 'ana@ptap.co');
 });
 
-test('register-schema: rechaza nombre con URL y teléfono inválido', () => {
+test('register-schema: rechaza nombre con URL y exige celular de 10 dígitos', () => {
   assert.equal(registerSchema.safeParse({ ...VALID, name: 'Compra en www.spam.com' }).success, false, 'URL en el nombre');
   assert.equal(registerSchema.safeParse({ ...VALID, phone: 'abc' }).success, false, 'teléfono no numérico');
-  assert.equal(registerSchema.safeParse({ ...VALID, phone: '' }).success, true, 'teléfono vacío = omitido');
+  // El celular pasó a OBLIGATORIO y de EXACTAMENTE 10 dígitos (commit dd03fbc): la aprobación manual
+  // del admin necesita un contacto real, porque no hay verificación por correo/SMS.
+  assert.equal(registerSchema.safeParse({ ...VALID, phone: '' }).success, false, 'vacío ya NO se acepta');
+  assert.equal(registerSchema.safeParse({ ...VALID, phone: '312345' }).success, false, 'menos de 10 dígitos');
+  assert.equal(registerSchema.safeParse({ ...VALID, phone: '31234567890' }).success, false, 'más de 10 dígitos');
+  assert.equal(registerSchema.safeParse({ ...VALID, phone: '3123456789' }).success, true, 'exactamente 10');
 });
 
 test('register-schema: honeypot con contenido → rechazado', () => {

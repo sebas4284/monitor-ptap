@@ -147,6 +147,42 @@
       },
       "signals": [
         {
+          "buffer": "intIn",
+          "sourceBuffer": "INT_IN_VORAGINE",
+          "index": 0,
+          "domainKey": "valve1State",
+          "label": "Estado de la válvula 1",
+          "mappingStatus": "mapped",
+          "confidence": "inferred",
+          "writable": false
+        },
+        {
+          "buffer": "intOut",
+          "sourceBuffer": "INT_OUT_VORAGINE",
+          "index": 0,
+          "domainKey": "valve1",
+          "label": "Válvula 1",
+          "mappingStatus": "mapped",
+          "confidence": "confirmed",
+          "writable": true,
+          "write": {
+            "target": { "channel": "intOut", "sourceBuffer": "INT_OUT_VORAGINE", "index": 0 },
+            "commands": { "open": 4096 },
+            "mode": "bitmask",
+            "pulse": { "holdMs": 300 },
+            "readBack": {
+              "channel": "intIn",
+              "sourceBuffer": "INT_IN_VORAGINE",
+              "index": 0,
+              "confirmsWrittenValue": false,
+              "expectedValue": 16385
+            },
+            "timeoutMs": 5000,
+            "rollbackValue": 0,
+            "permission": "control_valves"
+          }
+        },
+        {
           "buffer": "realIn",
           "index": 0,
           "domainKey": "inletFlow1",
@@ -330,6 +366,42 @@
         "confidence": "confirmed"
       },
       "signals": [
+        {
+          "buffer": "intIn",
+          "sourceBuffer": "INT_IN_SOLEDAD",
+          "index": 0,
+          "domainKey": "valve1State",
+          "label": "Estado de la válvula 1",
+          "mappingStatus": "mapped",
+          "confidence": "inferred",
+          "writable": false
+        },
+        {
+          "buffer": "intOut",
+          "sourceBuffer": "INT_OUT_SOLEDAD",
+          "index": 0,
+          "domainKey": "valve1",
+          "label": "Válvula 1",
+          "mappingStatus": "mapped",
+          "confidence": "confirmed",
+          "writable": true,
+          "write": {
+            "target": { "channel": "intOut", "sourceBuffer": "INT_OUT_SOLEDAD", "index": 0 },
+            "commands": { "open": 4096 },
+            "mode": "bitmask",
+            "pulse": { "holdMs": 300 },
+            "readBack": {
+              "channel": "intIn",
+              "sourceBuffer": "INT_IN_SOLEDAD",
+              "index": 0,
+              "confirmsWrittenValue": false,
+              "expectedValue": 16385
+            },
+            "timeoutMs": 5000,
+            "rollbackValue": 0,
+            "permission": "control_valves"
+          }
+        },
         {
           "buffer": "realIn",
           "sourceBuffer": "REAL_IN_SOLEDAD",
@@ -755,6 +827,42 @@
       },
       "signals": [
         {
+          "buffer": "intIn",
+          "sourceBuffer": "INT_IN_MONTEBELLO",
+          "index": 0,
+          "domainKey": "valve1State",
+          "label": "Estado de la válvula 1",
+          "mappingStatus": "mapped",
+          "confidence": "inferred",
+          "writable": false
+        },
+        {
+          "buffer": "intOut",
+          "sourceBuffer": "INT_OUT_MONTEBELLO",
+          "index": 0,
+          "domainKey": "valve1",
+          "label": "Válvula 1",
+          "mappingStatus": "mapped",
+          "confidence": "confirmed",
+          "writable": true,
+          "write": {
+            "target": { "channel": "intOut", "sourceBuffer": "INT_OUT_MONTEBELLO", "index": 0 },
+            "commands": { "open": 4096 },
+            "mode": "bitmask",
+            "pulse": { "holdMs": 300 },
+            "readBack": {
+              "channel": "intIn",
+              "sourceBuffer": "INT_IN_MONTEBELLO",
+              "index": 0,
+              "confirmsWrittenValue": false,
+              "expectedValue": 16385
+            },
+            "timeoutMs": 5000,
+            "rollbackValue": 0,
+            "permission": "control_valves"
+          }
+        },
+        {
           "buffer": "realIn",
           "sourceBuffer": "REAL_IN_MONTEBELLO",
           "index": 0,
@@ -922,6 +1030,42 @@
         "confidence": "confirmed"
       },
       "signals": [
+        {
+          "buffer": "intIn",
+          "sourceBuffer": "INT_IN_CASCAJAL",
+          "index": 0,
+          "domainKey": "valve1State",
+          "label": "Estado de la válvula 1",
+          "mappingStatus": "mapped",
+          "confidence": "inferred",
+          "writable": false
+        },
+        {
+          "buffer": "intOut",
+          "sourceBuffer": "INT_OUT_CASCAJAL",
+          "index": 0,
+          "domainKey": "valve1",
+          "label": "Válvula 1",
+          "mappingStatus": "mapped",
+          "confidence": "confirmed",
+          "writable": true,
+          "write": {
+            "target": { "channel": "intOut", "sourceBuffer": "INT_OUT_CASCAJAL", "index": 0 },
+            "commands": { "open": 4096 },
+            "mode": "bitmask",
+            "pulse": { "holdMs": 300 },
+            "readBack": {
+              "channel": "intIn",
+              "sourceBuffer": "INT_IN_CASCAJAL",
+              "index": 0,
+              "confirmsWrittenValue": false,
+              "expectedValue": 16385
+            },
+            "timeoutMs": 5000,
+            "rollbackValue": 0,
+            "permission": "control_valves"
+          }
+        },
         {
           "buffer": "realIn",
           "index": 0,
@@ -1098,6 +1242,42 @@
         "confidence": "confirmed"
       },
       "signals": [
+        {
+          "buffer": "intIn",
+          "sourceBuffer": "INT_IN_KM18",
+          "index": 0,
+          "domainKey": "valve1State",
+          "label": "Estado de la válvula 1",
+          "mappingStatus": "mapped",
+          "confidence": "inferred",
+          "writable": false
+        },
+        {
+          "buffer": "intOut",
+          "sourceBuffer": "INT_OUT_KM18",
+          "index": 0,
+          "domainKey": "valve1",
+          "label": "Válvula 1",
+          "mappingStatus": "mapped",
+          "confidence": "confirmed",
+          "writable": true,
+          "write": {
+            "target": { "channel": "intOut", "sourceBuffer": "INT_OUT_KM18", "index": 0 },
+            "commands": { "open": 4096 },
+            "mode": "bitmask",
+            "pulse": { "holdMs": 300 },
+            "readBack": {
+              "channel": "intIn",
+              "sourceBuffer": "INT_IN_KM18",
+              "index": 0,
+              "confirmsWrittenValue": false,
+              "expectedValue": 16385
+            },
+            "timeoutMs": 5000,
+            "rollbackValue": 0,
+            "permission": "control_valves"
+          }
+        },
         {
           "buffer": "realIn",
           "index": 0,
@@ -1289,6 +1469,42 @@
       },
       "signals": [
         {
+          "buffer": "intIn",
+          "sourceBuffer": "INT_IN_ALTO_MANGOS",
+          "index": 0,
+          "domainKey": "valve1State",
+          "label": "Estado de la válvula 1",
+          "mappingStatus": "mapped",
+          "confidence": "inferred",
+          "writable": false
+        },
+        {
+          "buffer": "intOut",
+          "sourceBuffer": "INT_OUT_ALTO_MANGOS",
+          "index": 0,
+          "domainKey": "valve1",
+          "label": "Válvula 1",
+          "mappingStatus": "mapped",
+          "confidence": "confirmed",
+          "writable": true,
+          "write": {
+            "target": { "channel": "intOut", "sourceBuffer": "INT_OUT_ALTO_MANGOS", "index": 0 },
+            "commands": { "open": 4096 },
+            "mode": "bitmask",
+            "pulse": { "holdMs": 300 },
+            "readBack": {
+              "channel": "intIn",
+              "sourceBuffer": "INT_IN_ALTO_MANGOS",
+              "index": 0,
+              "confirmsWrittenValue": false,
+              "expectedValue": 16385
+            },
+            "timeoutMs": 5000,
+            "rollbackValue": 0,
+            "permission": "control_valves"
+          }
+        },
+        {
           "buffer": "realIn",
           "index": 0,
           "domainKey": "inletFlow1",
@@ -1455,6 +1671,42 @@
         "confidence": "confirmed"
       },
       "signals": [
+        {
+          "buffer": "intIn",
+          "sourceBuffer": "INT_IN_CAMPOALEGRE",
+          "index": 0,
+          "domainKey": "valve1State",
+          "label": "Estado de la válvula 1",
+          "mappingStatus": "mapped",
+          "confidence": "inferred",
+          "writable": false
+        },
+        {
+          "buffer": "intOut",
+          "sourceBuffer": "INT_OUT_CAMPOALEGRE",
+          "index": 0,
+          "domainKey": "valve1",
+          "label": "Válvula 1",
+          "mappingStatus": "mapped",
+          "confidence": "confirmed",
+          "writable": true,
+          "write": {
+            "target": { "channel": "intOut", "sourceBuffer": "INT_OUT_CAMPOALEGRE", "index": 0 },
+            "commands": { "open": 4096 },
+            "mode": "bitmask",
+            "pulse": { "holdMs": 300 },
+            "readBack": {
+              "channel": "intIn",
+              "sourceBuffer": "INT_IN_CAMPOALEGRE",
+              "index": 0,
+              "confirmsWrittenValue": false,
+              "expectedValue": 16385
+            },
+            "timeoutMs": 5000,
+            "rollbackValue": 0,
+            "permission": "control_valves"
+          }
+        },
         {
           "buffer": "realIn",
           "index": 0,
@@ -1666,6 +1918,42 @@
       },
       "signals": [
         {
+          "buffer": "intIn",
+          "sourceBuffer": "INT_IN_PICHINDE",
+          "index": 0,
+          "domainKey": "valve1State",
+          "label": "Estado de la válvula 1",
+          "mappingStatus": "mapped",
+          "confidence": "inferred",
+          "writable": false
+        },
+        {
+          "buffer": "intOut",
+          "sourceBuffer": "INT_OUT_PICHINDE",
+          "index": 0,
+          "domainKey": "valve1",
+          "label": "Válvula 1",
+          "mappingStatus": "mapped",
+          "confidence": "confirmed",
+          "writable": true,
+          "write": {
+            "target": { "channel": "intOut", "sourceBuffer": "INT_OUT_PICHINDE", "index": 0 },
+            "commands": { "open": 4096 },
+            "mode": "bitmask",
+            "pulse": { "holdMs": 300 },
+            "readBack": {
+              "channel": "intIn",
+              "sourceBuffer": "INT_IN_PICHINDE",
+              "index": 0,
+              "confirmsWrittenValue": false,
+              "expectedValue": 16385
+            },
+            "timeoutMs": 5000,
+            "rollbackValue": 0,
+            "permission": "control_valves"
+          }
+        },
+        {
           "buffer": "realIn",
           "index": 10,
           "domainKey": "inletPressure1",
@@ -1779,6 +2067,42 @@
         "confidence": "confirmed"
       },
       "signals": [
+        {
+          "buffer": "intIn",
+          "sourceBuffer": "INT_IN_CARBONERO",
+          "index": 0,
+          "domainKey": "valve1State",
+          "label": "Estado de la válvula 1",
+          "mappingStatus": "mapped",
+          "confidence": "inferred",
+          "writable": false
+        },
+        {
+          "buffer": "intOut",
+          "sourceBuffer": "INT_OUT_CARBONERO",
+          "index": 0,
+          "domainKey": "valve1",
+          "label": "Válvula 1",
+          "mappingStatus": "mapped",
+          "confidence": "confirmed",
+          "writable": true,
+          "write": {
+            "target": { "channel": "intOut", "sourceBuffer": "INT_OUT_CARBONERO", "index": 0 },
+            "commands": { "open": 4096 },
+            "mode": "bitmask",
+            "pulse": { "holdMs": 300 },
+            "readBack": {
+              "channel": "intIn",
+              "sourceBuffer": "INT_IN_CARBONERO",
+              "index": 0,
+              "confirmsWrittenValue": false,
+              "expectedValue": 16385
+            },
+            "timeoutMs": 5000,
+            "rollbackValue": 0,
+            "permission": "control_valves"
+          }
+        },
         {
           "buffer": "realIn",
           "index": 0,
@@ -2080,6 +2404,16 @@
         "confidence": "confirmed"
       },
       "signals": [
+        {
+          "buffer": "intIn",
+          "sourceBuffer": "INT_IN_SIRENA",
+          "index": 0,
+          "domainKey": "valve1State",
+          "label": "Estado de la válvula 1",
+          "mappingStatus": "mapped",
+          "confidence": "inferred",
+          "writable": false
+        },
         {
           "buffer": "intOut",
           "sourceBuffer": "INT_OUT_SIRENA",
