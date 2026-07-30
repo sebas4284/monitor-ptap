@@ -175,6 +175,26 @@ VEREDICTO DEL TESTIGO (canal 0, sesión OPC UA independiente)
 ciclo. El patrón del timeline muestra el pulso sostenido ~5 s (lo que tarda el read-back en agotar su
 timeout) y luego el retorno a reposo. **Esta es la prueba de que podemos escribir por el canal.**
 
+### 🎯 3ª corrida (2026-07-30, commit `af03e57`) — TRIPLE verificación del write
+
+Se corrigió un defecto que impedía *interpretar* el resultado (ver §Guía de errores) y se añadió el
+**eco instantáneo**. Resultado de repetir el proceso completo:
+
+```
+COMANDO ÚNICO   HTTP 502  failed/READBACK_UNCONFIRMED
+   prev=0  written=4096  ECO=4096 verificado=true  confirmed(estado)=16384  seq=4
+RÁFAGA          24 comandos → 24× idéntico (eco=4096 verificado=true en todos)
+ESCRITURA VERIFICADA POR ECO (canal de comando, en el instante): 25/25
+TESTIGO: 25 pulsos 4096 · 25 retornos a 0 · comandos enviados 25 → ✅ CONFIRMADO
+FINAL   INT_OUT[0]=0     bit latente: NO ✅
+```
+
+**El write queda probado por tres vías independientes:**
+1. `written=4096` — el `WriteService` ejecutó la escritura sin excepción (StatusCode Good).
+2. **`ECO=4096 verificado=true` (25/25)** — el backend re-leyó *el mismo elemento* inmediatamente
+   después de escribir: **el valor SÍ quedó en el canal, en ese instante**.
+3. **Testigo externo** — una 2ª sesión OPC UA (20 ms de muestreo) vio los 25 pulsos y sus 25 retornos.
+
 Auditoría en MySQL: **25 filas en `command_log`** (todas `failed/READBACK_UNCONFIRMED`, con
 `user_email=loresjoshua@gmail.com`, `role=admin`, `target=valve1`, `command=open`, `prev=0`,
 `written=4096`, `confirmed=16384`, `interlock_sequence`) y **26 eventos `command.execute` en
@@ -207,6 +227,65 @@ Auditoría en MySQL: **25 filas en `command_log`** (todas `failed/READBACK_UNCON
   a propósito: no se fabrica un valor sin evidencia.
 - **`expectedValue: 16385`** (abierta) sigue siendo **inferido** del patrón de Voragine, nunca observado
   en Sirena.
+
+---
+
+# 🧭 GUÍA: cómo interpretar el resultado de un comando
+
+**El defecto que se corrigió (commit `af03e57`):** antes, **cualquier** excepción (write rechazado por
+el servidor, buffer faulted, red caída) se reportaba con el **mismo** `reason: READBACK_UNCONFIRMED`
+que un write exitoso sin confirmación de estado → era **imposible saber si se había escrito**. Ahora la
+escritura está aislada (`WRITE_REJECTED`) y todo comando trae el **eco** (`writeEcho`/`writeVerified`).
+
+## Tabla de interpretación
+
+| Respuesta | Qué significa REALMENTE | Dónde falló | Acción |
+|---|---|---|---|
+| `200` `confirmed` | Se escribió **y** el equipo respondió | — | nada |
+| `502` `READBACK_UNCONFIRMED` + **`verificado=true`** | **SE ESCRIBIÓ** (el eco lo prueba); el canal de ESTADO no confirmó | actuador / equipo / lógica del PLC | **← CASO ACTUAL de Sirena.** No es un fallo del canal |
+| `502` `READBACK_UNCONFIRMED` + `verificado=false` | El write fue aceptado pero el valor **no quedó** en el canal | ¿índice equivocado? ¿otro maestro pisando el valor? ¿el PLC lo resetea al instante? | revisar índice y quién más escribe |
+| `502` `READBACK_UNCONFIRMED` + `verificado=null` | Se escribió pero **no se pudo leer el eco** | lectura fallida tras el write | revisar sesión/red |
+| `502` **`WRITE_REJECTED`** | **NO se escribió nada** | write OPC UA rechazado, buffer faulted, sin sesión | ver el `StatusCode` en el log del backend |
+| `403` `WRITES_DISABLED_INSECURE_SESSION` | Candado de seguridad activo | config | `OPCUA_WRITES_ENABLED` / `OPCUA_ALLOW_INSECURE_WRITES` |
+| `403` `FORBIDDEN` | El rol no tiene `control_valves` | RBAC | usar operador/admin (jefe NO puede) |
+| `409` `INTERLOCK_FAILED: snapshot frozen/stable` | No se está viendo **moverse** el dato | interlock (deliberado) | esperar `live` (~7 s tras arranque) |
+| `409` `INTERLOCK_FAILED: bridge X` | El puente no está `Connected` | conectividad OPC UA | revisar `/api/health/opc` |
+| `409` `IN_PROGRESS` | Misma `idempotencyKey` en vuelo | idempotencia | esperar / usar otra clave |
+| `404` `TARGET_NOT_WRITABLE` | La señal no es `writable` en el mapping | mapping | declarar `writable:true` + `confidence:"confirmed"` |
+| `400` `UNKNOWN_COMMAND` | El verbo no existe en `write.commands` | mapping | p. ej. `close` **aún no existe** para Sirena |
+
+## Soluciones alternas para el write (si algún día falla)
+
+En orden de lo que probaría, de más simple a más invasivo:
+
+1. **Forma de la escritura** — hoy el adaptador escribe **un elemento** con `IndexRange`
+   (`opcua-connectivity.adapter.ts:617`). Si un servidor lo rechazara, la alternativa es
+   **read-modify-write del array completo** (es lo que hace `scripts/write-sirena-pulse.ts`). Ambas
+   probadas: las dos funcionan contra este servidor.
+2. **Duración del pulso** — hoy el bit queda en `4096` unos **5.5 s** (mientras el read-back agota su
+   `timeoutMs: 5000`) y luego el rollback lo devuelve a 0. Si el PLC esperara un pulso **corto**
+   (200–500 ms), bajar `timeoutMs` en el mapping o añadir un `pulseMs` explícito.
+3. **Bit/valor alternativo** — si `4096` (bit12) fuera solo el "disparo" y faltara la **dirección**,
+   probar la combinación estilo Vorágine: `4100` (=`4` abrir + `4096` pulso) o `4104` (=`8` cerrar +
+   pulso). **No inventar**: capturar primero el valor real desde el HMI con el monitor por suscripción.
+4. **Handshake por `MSG_WRITE_INT_SIRENA`** — si el buffer se escribe pero el PLC no lo recoge, forzar
+   el envío CIP por el nodo MSG (ver punto siguiente).
+5. **Comparar con UaExpert** — ya se sabe que UaExpert escribe; con el eco verificado, nuestro backend
+   tiene **paridad** con él. Si UaExpert lograra algo que nosotros no, comparar el `Variant`
+   (dataType/arrayType) que envía cada uno.
+
+## ⚠️ El único tramo que sigue SIN probar: FTOptix → PLC
+
+Lo demostrado es que el valor llega a la **variable del servidor OPC UA (FactoryTalk Optix)**. Que
+Optix lo **reenvíe al PLC Allen-Bradley por EtherNet/IP** es **otro salto** y **no está verificado**.
+La evidencia estaría en `MSG_WRITE_INT_SIRENA` (instrucción MSG con bits `EN/ST/DN/ER/TO` y
+`path=10.10.51.25`), que en el monitoreo pasivo ya se vio ciclando. Pendiente: **correlacionar en el
+tiempo** cada write con un ciclo `DN` (done) o un `ER` (error) de ese nodo.
+Nota técnica: suscribirse a ese nodo tumbó una sesión antes (`Connection Break` al resolver su
+`dataType ns=6;i=70`); hay que leerlo con `read()` puntual y capturar el error, no por suscripción.
+
+Con el canal físico dañado, este tramo **no se puede cerrar hoy**: aunque el MSG se enviara, no hay
+forma de distinguir "el PLC lo recibió y no pudo energizar" de "el PLC no lo recibió".
 
 ## Hallazgos operativos
 
