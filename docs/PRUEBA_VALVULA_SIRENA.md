@@ -305,6 +305,41 @@ write→entrega; lo que demuestra es que **el transporte al Allen-Bradley está 
 `INT_OUT[0]` (eco verificado), la conclusión es sólida: **el valor llega al PLC**. Lo que no ocurre es
 la **energización** de la válvula — de ahí que `INT_IN[0]` siga en `16384`.
 
+## 🔧 5ª corrida (commit `3091d1f`) — pulso real de 300 ms y escritura por máscara de bits
+
+Una revisión externa señaló dos defectos **reales** en cómo se aplicaba el pulso. Ambos corregidos:
+
+**Defecto 1 — se escribía el valor ABSOLUTO.** Escribíamos `4096` y limpiábamos con `0` absolutos. Si en
+esa palabra hubiera **otro bit activo** (otra válvula/comando del mismo sitio), lo habríamos **apagado**.
+Hoy el canal está siempre en 0, así que era inofensivo, pero es un **bug latente peligroso**.
+→ Nuevo `write.mode: "bitmask"`: activar = `actual | valor`, limpiar = `actual & ~valor`
+(read-modify-write). Conserva los bits ajenos.
+
+**Defecto 2 (más grave) — el bit quedaba ENCLAVADO al confirmar.** El rollback solo corría cuando el
+read-back **fallaba**. En cuanto la válvula funcione y el estado confirme (`16385`), el código **nunca**
+habría limpiado el bit → **la orden quedaría puesta indefinidamente**. Además el bit se sostenía ~5.5 s
+(atado al `timeoutMs` del read-back), no los 200–500 ms típicos de un pulso.
+→ Nuevo `write.pulse.holdMs` (300 ms en `sirena/valve1`): se activa, se sostiene y **se limpia SIEMPRE**,
+confirme o no. Desacoplado del `timeoutMs`.
+
+**Regla nueva en el schema:** un pulso **no puede** confirmarse releyendo el valor escrito (el bit ya está
+limpio cuando se relee), así que `pulse` ⇒ `readBack.confirmsWrittenValue: false` — debe confirmar por el
+canal de **estado**.
+
+Evidencia del testigo en el PLC real (pulso ahora **~0.8 s** extremo a extremo, vs 5.5 s antes):
+```
+[testigo] +2.98s  OUT[0]=4096 {12}     ← activación
+[testigo] +3.08s  MSG.DN=1             ← la MSG al PLC se completa JUSTO después del write
+[testigo] +3.38s  MSG.DN=0
+[testigo] +3.78s  OUT[0]=0 {}          ← cierre del pulso (garantizado)
+...
+PULSOS 4096 observados: 9 · retornos a 0: 9 · comandos enviados: 9 → ✅ 1:1
+ESCRITURA VERIFICADA POR ECO: 9/9      ·  ER/TO/ERR: 0
+FINAL INT_OUT[0]=0 · bit latente: NO ✅
+```
+El `MSG.DN` subiendo **100 ms después** de cada write refuerza la conclusión del §tramo: el buffer se
+entrega al Allen-Bradley sin error.
+
 ### Cadena de custodia del write — completa
 
 | # | Eslabón | Evidencia | Estado |
