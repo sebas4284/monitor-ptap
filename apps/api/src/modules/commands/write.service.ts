@@ -50,6 +50,8 @@ export class WriteService {
       previousValue: null as CommandValue,
       writtenValue: null as CommandValue,
       confirmedValue: null as CommandValue,
+      writeEcho: null as CommandValue,
+      writeVerified: null as boolean | null,
       interlockSequence: null as number | null,
       idempotent: false,
       at: new Date().toISOString(),
@@ -110,11 +112,36 @@ export class WriteService {
 
     let result: CommandResult;
     try {
-      const prev = await this.adapter.readBufferElement(targetEl);
-      base.previousValue = prev.value;
-      await this.adapter.writeBufferElement(targetEl, writtenValue);
-      base.writtenValue = writtenValue;
+      // 7a) La ESCRITURA, aislada: si falla aquí, el motivo es WRITE_REJECTED (no se escribió),
+      // nunca READBACK_UNCONFIRMED (que significa "se escribió y el equipo no respondió").
+      try {
+        const prev = await this.adapter.readBufferElement(targetEl);
+        base.previousValue = prev.value;
+        await this.adapter.writeBufferElement(targetEl, writtenValue);
+        base.writtenValue = writtenValue;
+      } catch (err) {
+        this.logger.error(`write de ${req.command}/${req.target} RECHAZADO: ${err instanceof Error ? err.message : err}`);
+        const rejected: CommandResult = { ...base, status: 'failed', reason: FAIL.WRITE_REJECTED };
+        await this.repo.finalize(reservation.id, {
+          status: 'failed', reason: rejected.reason, previousValue: rejected.previousValue,
+          writtenValue: rejected.writtenValue, confirmedValue: rejected.confirmedValue,
+          interlockSequence: rejected.interlockSequence,
+        });
+        return this.audit(actor, req, rejected);
+      }
 
+      // 7b) ECO INSTANTÁNEO del canal de comando: prueba, en el momento, que el valor SÍ quedó
+      // escrito — independiente del canal de estado (que necesita al equipo respondiendo).
+      try {
+        const echo = await this.adapter.readBufferElement(targetEl);
+        base.writeEcho = echo.value;
+        base.writeVerified = echo.value === writtenValue;
+      } catch {
+        base.writeEcho = null;
+        base.writeVerified = null; // no se pudo comprobar; no se afirma nada
+      }
+
+      // 7c) Confirmación por el canal de ESTADO (que el equipo se movió).
       const confirmation = await this.confirmReadBack(plantId, write, writtenValue);
       base.confirmedValue = confirmation.value;
 
@@ -125,8 +152,8 @@ export class WriteService {
         result = { ...base, status: 'failed', reason: FAIL.READBACK_UNCONFIRMED };
       }
     } catch (err) {
-      // Un fallo de I/O tras reservar NUNCA se reporta como 'exitoso'.
-      this.logger.error(`comando ${req.command}/${req.target} falló: ${err instanceof Error ? err.message : err}`);
+      // Fallo de I/O DESPUÉS de haber escrito: nunca se reporta como 'exitoso'.
+      this.logger.error(`comando ${req.command}/${req.target} falló tras escribir: ${err instanceof Error ? err.message : err}`);
       result = { ...base, status: 'failed', reason: FAIL.READBACK_UNCONFIRMED };
     }
 
@@ -234,6 +261,9 @@ export class WriteService {
         previousValue: result.previousValue,
         writtenValue: result.writtenValue,
         confirmedValue: result.confirmedValue,
+        // Eco del canal de comando: distingue "no se escribió" de "se escribió y no confirmó".
+        writeEcho: result.writeEcho,
+        writeVerified: result.writeVerified,
         interlockSequence: result.interlockSequence,
         idempotencyKey: req.idempotencyKey ?? null,
         idempotent: result.idempotent,

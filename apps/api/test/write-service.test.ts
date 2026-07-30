@@ -37,7 +37,7 @@ interface FakeAdapter extends ConnectivityAdapter {
   writes: Array<{ value: number | boolean }>;
 }
 
-function fakeAdapter(opts: { secure: boolean; bridge: BridgeStatus; confirms?: boolean }): FakeAdapter {
+function fakeAdapter(opts: { secure: boolean; bridge: BridgeStatus; confirms?: boolean; writeThrows?: boolean }): FakeAdapter {
   const store = new Map<string, number | boolean>();
   const confirms = opts.confirms !== false;
   const key = (t: { plantId: string; channel: string; sourceBuffer: string; index: number }) =>
@@ -51,6 +51,8 @@ function fakeAdapter(opts: { secure: boolean; bridge: BridgeStatus; confirms?: b
     }),
     getBridgeStatus: () => opts.bridge,
     async writeBufferElement(t: never, v: number | boolean) {
+      // Emula un write RECHAZADO por el servidor OPC UA (StatusCode != Good) o un buffer faulted.
+      if (opts.writeThrows) throw new Error('write OPC UA rechazado (BadUserAccessDenied)');
       adapter.writes.push({ value: v });
       store.set(key(t), v);
     },
@@ -122,8 +124,8 @@ function fakeAudit(): { service: AuditLogService; calls: AuditEntry[] } {
 const OPERADOR: CommandActor = { userId: 'u1', userEmail: 'op@ptap.co', role: 'operador', ip: '10.0.0.1' };
 const JEFE: CommandActor = { userId: 'u2', userEmail: 'jefe@ptap.co', role: 'jefe', ip: '10.0.0.2' };
 
-function build(opts: { secure: boolean; bridge: BridgeStatus; confirms?: boolean; writesEnabled?: boolean; write?: WriteSpec | null; snapshot?: PlantSnapshotDto | null }) {
-  const adapter = fakeAdapter({ secure: opts.secure, bridge: opts.bridge, confirms: opts.confirms });
+function build(opts: { secure: boolean; bridge: BridgeStatus; confirms?: boolean; writesEnabled?: boolean; write?: WriteSpec | null; snapshot?: PlantSnapshotDto | null; writeThrows?: boolean }) {
+  const adapter = fakeAdapter({ secure: opts.secure, bridge: opts.bridge, confirms: opts.confirms, writeThrows: opts.writeThrows });
   const audit = fakeAudit();
   const service = new WriteService(
     adapter,
@@ -195,6 +197,25 @@ test('write-service: interlock snapshot estable (sin movimiento) → rechazado',
   const r = await service.execute('voragine', { command: 'openValve', target: 'valveEV01' }, OPERADOR);
   assert.ok(r.reason?.startsWith(REJECT.INTERLOCK_FAILED));
   assert.equal(adapter.writes.length, 0);
+});
+
+// Hallazgo de campo 2026-07-30: antes, un write RECHAZADO por el servidor y un write EXITOSO sin
+// confirmación de estado daban el MISMO reason (READBACK_UNCONFIRMED), así que era imposible saber
+// si el valor había llegado al canal. Ahora se distinguen.
+test('write-service: write rechazado por el servidor → WRITE_REJECTED (no READBACK_UNCONFIRMED)', async () => {
+  const { service } = build({ secure: true, bridge: 'Connected', writeThrows: true });
+  const r = await service.execute('voragine', { command: 'openValve', target: 'valveEV01' }, OPERADOR);
+  assert.equal(r.status, 'failed');
+  assert.equal(r.reason, FAIL.WRITE_REJECTED, 'debe decir que la ESCRITURA falló, no que no se confirmó');
+  assert.equal(r.writtenValue, null, 'no se llegó a escribir nada');
+  assert.equal(r.writeVerified, null, 'sin escritura no hay eco que verificar');
+});
+
+test('write-service: el ECO del canal de comando verifica la escritura en el instante', async () => {
+  const { service } = build({ secure: true, bridge: 'Connected', confirms: true });
+  const r = await service.execute('voragine', { command: 'openValve', target: 'valveEV01' }, OPERADOR);
+  assert.equal(r.writeVerified, true, 'el eco debe coincidir con el valor escrito');
+  assert.equal(r.writeEcho, r.writtenValue);
 });
 
 test('write-service: camino feliz → confirmado con trazabilidad', async () => {

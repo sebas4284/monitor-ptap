@@ -130,7 +130,7 @@ async function startWitness(): Promise<{ events: WitnessEvent[]; t0: number; sto
   };
 }
 
-interface CallResult { n: number; at: string; http: number; status?: string; reason?: string | null; written?: unknown; confirmed?: unknown; prev?: unknown; seq?: number | null; ms: number }
+interface CallResult { n: number; at: string; http: number; status?: string; reason?: string | null; written?: unknown; confirmed?: unknown; prev?: unknown; echo?: unknown; verified?: boolean | null; seq?: number | null; ms: number }
 
 async function callCommand(token: string, n: number): Promise<CallResult> {
   const t0 = Date.now();
@@ -147,6 +147,7 @@ async function callCommand(token: string, n: number): Promise<CallResult> {
     n, at: now(), http: res.status, ms: Date.now() - t0,
     status: inner.status as string, reason: (inner.reason as string) ?? null,
     written: inner.writtenValue, confirmed: inner.confirmedValue, prev: inner.previousValue,
+    echo: inner.writeEcho, verified: (inner.writeVerified as boolean | null) ?? null,
     seq: (inner.interlockSequence as number) ?? null,
   };
 }
@@ -228,7 +229,8 @@ async function main(): Promise<void> {
       console.log(`\n──── COMANDO ÚNICO por el canal oficial ────`);
       const r = await callCommand(token, 0);
       results.push(r);
-      console.log(`${r.at}  HTTP ${r.http}  status=${r.status}  reason=${r.reason}  prev=${r.prev} written=${r.written} confirmed=${r.confirmed}  seq=${r.seq}  (${r.ms}ms)`);
+      console.log(`${r.at}  HTTP ${r.http}  status=${r.status}  reason=${r.reason}`);
+      console.log(`         prev=${r.prev}  written=${r.written}  ECO=${r.echo} verificado=${r.verified}  confirmed(estado)=${r.confirmed}  seq=${r.seq}  (${r.ms}ms)`);
     }
 
     // ── 6. ráfaga ──
@@ -240,7 +242,7 @@ async function main(): Promise<void> {
         const tick = Date.now();
         const r = await callCommand(token, i);
         results.push(r);
-        console.log(`  #${String(i).padStart(2)} t=${((tick - t0) / 1000).toFixed(1).padStart(5)}s  HTTP ${r.http}  ${r.status}/${r.reason ?? '-'}  written=${r.written} confirmed=${r.confirmed}  (${r.ms}ms)`);
+        console.log(`  #${String(i).padStart(2)} t=${((tick - t0) / 1000).toFixed(1).padStart(5)}s  HTTP ${r.http}  ${r.status}/${r.reason ?? '-'}  written=${r.written} eco=${r.echo} verificado=${r.verified} confirmed=${r.confirmed}  (${r.ms}ms)`);
         const elapsed = Date.now() - tick;
         if (i < total && elapsed < BURST_INTERVAL_MS) await sleep(BURST_INTERVAL_MS - elapsed);
       }
@@ -285,6 +287,8 @@ async function main(): Promise<void> {
       const byStatus = results.reduce<Record<string, number>>((a, r) => { const k = `${r.http} ${r.status}/${r.reason ?? '-'}`; a[k] = (a[k] ?? 0) + 1; return a; }, {});
       console.log(`\n════════ RESUMEN (${results.length} llamadas) ════════`);
       for (const [k, v] of Object.entries(byStatus)) console.log(`  ${v}×  ${k}`);
+      const verificados = results.filter((r) => r.verified === true).length;
+      console.log(`  ESCRITURA VERIFICADA POR ECO (canal de comando, en el instante): ${verificados}/${results.length}`);
       const ms = results.map((r) => r.ms).sort((a, b) => a - b);
       console.log(`  duración por llamada: min=${ms[0]}ms  mediana=${ms[Math.floor(ms.length / 2)]}ms  max=${ms[ms.length - 1]}ms`);
       console.log(`  JSON: ${JSON.stringify(results)}`);

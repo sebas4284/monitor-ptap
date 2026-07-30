@@ -25,7 +25,15 @@ export const REJECT = {
 } as const;
 
 export const FAIL = {
+  /** Se escribió (write aceptado) pero el canal de ESTADO no confirmó dentro del timeout. */
   READBACK_UNCONFIRMED: 'READBACK_UNCONFIRMED',
+  /**
+   * La ESCRITURA MISMA falló: el servidor OPC UA la rechazó (StatusCode != Good), no había sesión,
+   * el buffer estaba faulted o se cayó la red. Antes esto se reportaba como READBACK_UNCONFIRMED,
+   * lo que hacía imposible distinguir "no pude escribir" de "escribí y el equipo no respondió"
+   * (hallazgo de campo 2026-07-30).
+   */
+  WRITE_REJECTED: 'WRITE_REJECTED',
 } as const;
 
 export interface CommandResult {
@@ -37,6 +45,14 @@ export interface CommandResult {
   previousValue: CommandValue;
   writtenValue: CommandValue;
   confirmedValue: CommandValue;
+  /**
+   * ECO del canal de COMANDO leído INMEDIATAMENTE después de escribir (el mismo elemento que se
+   * escribió). Responde "¿se escribió en ese instante?" de forma independiente del canal de estado.
+   * null = no se pudo leer el eco.
+   */
+  writeEcho: CommandValue;
+  /** true si el eco coincide con el valor escrito → la escritura SÍ llegó al canal. */
+  writeVerified: boolean | null;
   /** sequence del snapshot usado para el interlock (trazabilidad). */
   interlockSequence: number | null;
   /** true si es una respuesta idempotente (comando ya ejecutado con la misma idempotencyKey). */
