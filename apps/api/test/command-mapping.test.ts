@@ -106,6 +106,20 @@ test('mapping de PRODUCCIÓN: la válvula 1 está en las 10 plantas CON canal de
   }
 });
 
+// Hallazgo de campo 2026-07-30: replicar `valve1State` (intIn[0]) a ciegas publicaba un estado
+// INVENTADO. Leyendo INT_IN[0] real: solo sirena tiene el patrón limpio 16384 (bit14); montebello
+// (30250) y km18 (30101) tienen bit14 encendido por casualidad y habrían afirmado CERRADA/ABIERTA en
+// falso. Este test impide que vuelva a colarse un estado sin verificar.
+test('mapping de PRODUCCIÓN: solo las plantas con estado VERIFICADO exponen valve1State', () => {
+  const prod = loadJson(join(__dirname, '..', 'config', 'opc_mapping.json')) as {
+    plants: Array<{ plantId: string; signals?: Array<{ domainKey?: string }> }>;
+  };
+  const conEstado = prod.plants
+    .filter((p) => (p.signals ?? []).some((s) => s.domainKey === 'valve1State'))
+    .map((p) => p.plantId);
+  assert.deepEqual(conEstado, ['sirena'], 'añadir otra planta exige confirmar su índice/patrón en campo primero');
+});
+
 test('mapping de PRODUCCIÓN: cada válvula escribe en el canal 0 con pulso y máscara de bits', () => {
   // Protege la forma verificada en campo: si alguien cambia el índice, el modo o quita el pulso,
   // el comando podría pisar bits ajenos o quedar ENCLAVADO (ver docs/PRUEBA_VALVULA_SIRENA.md).

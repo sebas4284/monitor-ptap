@@ -62,6 +62,15 @@ function valveBlock(intOut: string, intIn: string, eol: string): string {
 }
 
 /**
+ * Plantas cuyo ESTADO de válvula está verificado en campo. Solo a estas se les añade `valve1State`.
+ * Motivo (hallazgo 2026-07-30): leer `INT_IN[0]` en las 10 plantas mostró que solo Sirena tiene el
+ * patrón limpio `16384` (bit14). En `montebello` (30250) y `km18` (30101) el bit14 está encendido por
+ * casualidad, así que publicar ese estado afirmaba "CERRADA"/"ABIERTA" FALSAMENTE. Ver
+ * scripts/fix-valve-state.ts. Añadir una planta aquí SOLO tras confirmar su índice y patrón en campo.
+ */
+const ESTADO_VERIFICADO = new Set(['sirena']);
+
+/**
  * Señal de SOLO LECTURA con el estado de la válvula (método 1 de la interpretación de válvulas):
  * `intIn[0]` es una máscara de bits → bit14 = estado válido/presente, bit0 = abierta(1)/cerrada(0).
  * Es decir 16384 = CERRADA y 16385 = ABIERTA. `confidence: inferred` porque el patrón viene de las
@@ -96,7 +105,8 @@ function main(): void {
     const intIn = plant.opcBuffers?.intIn?.[0]?.browseName;
 
     const hasCmd = plant.signals?.some((s) => s.domainKey === 'valve1');
-    const hasState = plant.signals?.some((s) => s.domainKey === 'valve1State');
+    // Solo se considera "falta el estado" si la planta lo tiene verificado; si no, NO se añade.
+    const hasState = plant.signals?.some((s) => s.domainKey === 'valve1State') || !ESTADO_VERIFICADO.has(plant.plantId);
     if (hasCmd && hasState) {
       skipped.push({ plantId: plant.plantId, why: 'ya tiene valve1 + valve1State' });
       continue;

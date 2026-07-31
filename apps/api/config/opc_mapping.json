@@ -147,16 +147,6 @@
       },
       "signals": [
         {
-          "buffer": "intIn",
-          "sourceBuffer": "INT_IN_VORAGINE",
-          "index": 0,
-          "domainKey": "valve1State",
-          "label": "Estado de la válvula 1",
-          "mappingStatus": "mapped",
-          "confidence": "inferred",
-          "writable": false
-        },
-        {
           "buffer": "intOut",
           "sourceBuffer": "INT_OUT_VORAGINE",
           "index": 0,
@@ -366,16 +356,6 @@
         "confidence": "confirmed"
       },
       "signals": [
-        {
-          "buffer": "intIn",
-          "sourceBuffer": "INT_IN_SOLEDAD",
-          "index": 0,
-          "domainKey": "valve1State",
-          "label": "Estado de la válvula 1",
-          "mappingStatus": "mapped",
-          "confidence": "inferred",
-          "writable": false
-        },
         {
           "buffer": "intOut",
           "sourceBuffer": "INT_OUT_SOLEDAD",
@@ -827,16 +807,6 @@
       },
       "signals": [
         {
-          "buffer": "intIn",
-          "sourceBuffer": "INT_IN_MONTEBELLO",
-          "index": 0,
-          "domainKey": "valve1State",
-          "label": "Estado de la válvula 1",
-          "mappingStatus": "mapped",
-          "confidence": "inferred",
-          "writable": false
-        },
-        {
           "buffer": "intOut",
           "sourceBuffer": "INT_OUT_MONTEBELLO",
           "index": 0,
@@ -1030,16 +1000,6 @@
         "confidence": "confirmed"
       },
       "signals": [
-        {
-          "buffer": "intIn",
-          "sourceBuffer": "INT_IN_CASCAJAL",
-          "index": 0,
-          "domainKey": "valve1State",
-          "label": "Estado de la válvula 1",
-          "mappingStatus": "mapped",
-          "confidence": "inferred",
-          "writable": false
-        },
         {
           "buffer": "intOut",
           "sourceBuffer": "INT_OUT_CASCAJAL",
@@ -1242,16 +1202,6 @@
         "confidence": "confirmed"
       },
       "signals": [
-        {
-          "buffer": "intIn",
-          "sourceBuffer": "INT_IN_KM18",
-          "index": 0,
-          "domainKey": "valve1State",
-          "label": "Estado de la válvula 1",
-          "mappingStatus": "mapped",
-          "confidence": "inferred",
-          "writable": false
-        },
         {
           "buffer": "intOut",
           "sourceBuffer": "INT_OUT_KM18",
@@ -1469,16 +1419,6 @@
       },
       "signals": [
         {
-          "buffer": "intIn",
-          "sourceBuffer": "INT_IN_ALTO_MANGOS",
-          "index": 0,
-          "domainKey": "valve1State",
-          "label": "Estado de la válvula 1",
-          "mappingStatus": "mapped",
-          "confidence": "inferred",
-          "writable": false
-        },
-        {
           "buffer": "intOut",
           "sourceBuffer": "INT_OUT_ALTO_MANGOS",
           "index": 0,
@@ -1671,16 +1611,6 @@
         "confidence": "confirmed"
       },
       "signals": [
-        {
-          "buffer": "intIn",
-          "sourceBuffer": "INT_IN_CAMPOALEGRE",
-          "index": 0,
-          "domainKey": "valve1State",
-          "label": "Estado de la válvula 1",
-          "mappingStatus": "mapped",
-          "confidence": "inferred",
-          "writable": false
-        },
         {
           "buffer": "intOut",
           "sourceBuffer": "INT_OUT_CAMPOALEGRE",
@@ -1918,16 +1848,6 @@
       },
       "signals": [
         {
-          "buffer": "intIn",
-          "sourceBuffer": "INT_IN_PICHINDE",
-          "index": 0,
-          "domainKey": "valve1State",
-          "label": "Estado de la válvula 1",
-          "mappingStatus": "mapped",
-          "confidence": "inferred",
-          "writable": false
-        },
-        {
           "buffer": "intOut",
           "sourceBuffer": "INT_OUT_PICHINDE",
           "index": 0,
@@ -2067,16 +1987,6 @@
         "confidence": "confirmed"
       },
       "signals": [
-        {
-          "buffer": "intIn",
-          "sourceBuffer": "INT_IN_CARBONERO",
-          "index": 0,
-          "domainKey": "valve1State",
-          "label": "Estado de la válvula 1",
-          "mappingStatus": "mapped",
-          "confidence": "inferred",
-          "writable": false
-        },
         {
           "buffer": "intOut",
           "sourceBuffer": "INT_OUT_CARBONERO",
