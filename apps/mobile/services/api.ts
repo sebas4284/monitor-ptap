@@ -99,6 +99,31 @@ export async function patchJson<T>(path: string, body: unknown): Promise<T> {
   return request<T>('PATCH', path, body);
 }
 
+// ── Sesión de visualización del HMI ───────────────────────────────────────────────────────────
+
+/**
+ * Abre la sesión de visualización del HMI: el backend responde con una cookie `hmi_session`
+ * httpOnly que nginx exige (via `auth_request`) antes de servir `/hmi/`.
+ *
+ * Hace falta porque el HMI se muestra en un `<iframe>`, y un iframe no envía la cabecera
+ * `Authorization` — solo cookies. Sin esta llamada previa, el iframe recibe 401.
+ * `credentials: 'include'` es imprescindible: sin él el navegador descarta la cookie.
+ */
+export async function openHmiSession(): Promise<boolean> {
+  const headers: Record<string, string> = {};
+  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/hmi/session`, {
+      method: 'POST',
+      headers,
+      credentials: 'include',
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 // ── Comandos de válvula (canal oficial, Fase 5) ───────────────────────────────────────────────
 
 /** Resultado de POST /api/plants/:plantId/commands, tal como lo devuelve el WriteService. */

@@ -113,7 +113,10 @@ function MenuModal({
 
 export default function AppLayout() {
   const [menuVisible, setMenuVisible] = useState(false);
-  const { user, token, isLoading } = useAuth();
+  const { user, token, isLoading, hasPermission } = useAuth();
+  // Ocultar la pestaña HMI a quien no ve el tablero es comodidad de UI: la propia pantalla vuelve a
+  // comprobar el permiso, igual que hacen tablero y electroválvulas.
+  const hasViewDashboard = hasPermission('view_dashboard');
   // Conteo REAL de alertas (0 para el Civil, que no recibe señales). Se llama SIEMPRE, antes de
   // los early-return, para no violar las reglas de hooks.
   const { count: alertCount } = useAlerts();
@@ -210,6 +213,19 @@ export default function AppLayout() {
             tabBarLabel: 'Válvulas',
             tabBarIcon: ({ color, size, focused }) => (
               <Ionicons name={focused ? 'toggle' : 'toggle-outline'} size={size} color={color} />
+            ),
+          }}
+        />
+        {/* Proyección del HMI real (WinCC Unified) vía el proxy /hmi/ de nginx. Solo tiene sentido
+            para quien ve el tablero; en el APK la pantalla muestra su propio aviso (no hay WebView). */}
+        <Tabs.Screen
+          name="hmi"
+          options={{
+            ...HEADER_OPTS,
+            tabBarLabel: 'HMI',
+            href: hasViewDashboard ? undefined : null,
+            tabBarIcon: ({ color, size, focused }) => (
+              <Ionicons name={focused ? 'desktop' : 'desktop-outline'} size={size} color={color} />
             ),
           }}
         />

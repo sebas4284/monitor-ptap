@@ -65,6 +65,114 @@ mixto: PLC Rockwell + HMI Siemens). La pantalla web a embeber es la de **WinCC U
 
 ---
 
+---
+
+## ✅ IMPLEMENTADO (2026-08-03) — Camino A, pendiente de credenciales
+
+### Descubrimiento actualizado desde la VM
+
+| Host | 443 | 3389 | Veredicto |
+|---|---|---|---|
+| `10.10.51.225` | ✅ ABIERTO | ✅ ABIERTO | **El único HMI web alcanzable** |
+| `10.10.51.26` (HMI Sirena) | ❌ | ❌ | No responde desde la VM |
+| `10.10.51.27` (PLC Sirena) | ❌ | ❌ | No responde desde la VM |
+
+> 🔑 **No hay un HMI por planta**: es un **runtime central único**. El mapping `planta → URL` que
+> planteaba este documento **no aplica** — todas las plantas proyectan el mismo runtime, y la
+> navegación entre pantallas la hace el operador dentro de WinCC. El `plantId` igual viaja como
+> parámetro en la URL del iframe, listo para el día que se confirme si WinCC admite enlace directo
+> por pantalla.
+
+Cabeceras reales de `https://10.10.51.225/` (2026-08-03):
+
+```
+HTTP/2 200 · server: none · <title>WinCC Unified</title>
+strict-transport-security: max-age=31536000; includeSubDomains
+x-content-type-options: nosniff · x-xss-protection: 1; mode=block
+X-Frame-Options: AUSENTE          ← se deja embeber ✅
+Content-Security-Policy: AUSENTE  ← sin frame-ancestors que lo impida ✅
+certificado: CN=iot_rural, self-signed, VENCIDO el 2025-05-16
+```
+
+### Lo que quedó construido
+
+| Pieza | Estado |
+|---|---|
+| `apps/mobile/app/(app)/hmi.tsx` | ✅ Pantalla con iframe, recarga, pantalla completa y guard `view_dashboard` |
+| Pestaña **HMI** en `(app)/_layout.tsx` | ✅ Oculta para roles sin `view_dashboard` |
+| `~/deploy-scripts/hmi-proxy.sh` | ✅ Configura `location /hmi/` en nginx (**requiere sudo**) |
+| Fallback en APK | ✅ Aviso explícito: no hay `react-native-webview`, no se finge una pantalla vacía |
+
+El proxy resuelve tres problemas de una vez: el **certificado vencido** (el TLS que ve el usuario es
+el nuestro), la **red OT no enrutable** (el navegador nunca la toca) y el **mismo origen** (sin CORS,
+sin contenido mixto, y basta `frame-src 'self'`).
+
+`hmi-proxy.sh` también baja `X-Frame-Options` de `DENY` a `SAMEORIGIN` en la SPA — sin eso el
+navegador bloquea incluso nuestro propio iframe. Se conserva la protección contra sitios ajenos.
+
+### ⚠️ Decisión de seguridad tomada: NO se inyectan credenciales
+
+El documento proponía inyectarlas en el proxy para que el operador no las viera. **Se descartó.**
+
+`/hmi/` **no puede exigir nuestro JWT**: un iframe es una navegación del navegador y no envía la
+cabecera `Authorization`. Con las credenciales inyectadas, la URL sería un **pase libre al HMI de una
+planta de agua potable** para cualquiera que la adivine, sin sesión en nuestra plataforma. Hoy el
+operador ve el login de WinCC, que es lo correcto mientras no exista un gate propio.
+
+**Siguiente paso si se quiere acceso transparente:** `auth_request` en nginx contra un endpoint del
+backend que valide una cookie de sesión corta emitida al abrir la pantalla. Recién con ese gate tiene
+sentido inyectar credenciales.
+
+### ¿Ese HMI contiene las demás plantas?
+
+**Todo apunta a que sí, pero es inferencia, no verificación.** Lo que sí está comprobado:
+
+`https://10.10.51.225/config.json` declara **un único runtime**, no uno por planta:
+
+```jsonc
+{ "elements": [
+    { "href": "/WebRH", "main": "WinCC Unified RT", "visible": true  },
+    { "href": "/UMC",   "main": "User management",  "visible": true  },
+    { "href": "/WebES", "main": "WinCC Unified Configuration", "visible": false }
+  ],
+  "dnsname": "IOT_RURAL" }
+```
+
+Y **ese mismo host expone por OPC UA los buffers de las 12 plantas** (capturado el 2026-08-03 en
+`test/fixtures/plc-frames-2026-08-03.json`): `INT_IN_VORAGINE`, `REAL_IN_CAMPOALEGRE`,
+`DATOS_IN_PTAP_SOLEDAD`, `REAL_TK_QUIJOTE`… las 12, cada una con sus buffers propios.
+
+O sea: **un solo servidor consolida los datos de las 12 plantas y corre un solo proyecto WinCC.**
+Sería muy extraño que consolide la telemetría de todas y no tenga pantallas para ellas.
+
+**Lo que no se puede afirmar sin entrar:** cuántas pantallas hay, cómo se llaman y si están todas.
+El runtime es una SPA Angular/SWAC (`v401.0.3613.1`) que resuelve las pantallas **después** del
+login; el HTML inicial no las lista. Requiere credenciales.
+
+**Implicación de diseño:** si es un proyecto único con pantallas de todas las plantas, el
+**enlace directo por pantalla** deja de ser un lujo y pasa a ser lo que hace útil la pestaña — sin
+él, el operador tiene que navegar a mano hasta su planta cada vez, aunque la plataforma ya sepa cuál
+tiene seleccionada.
+
+Cabeceras del runtime (`/WebRH`), que son las que deciden el iframe:
+
+```
+HTTP/2 200 · <title>WinCC Unified RT</title> · set-cookie: iisnode.session.cookie=1
+content-security-policy: script-src 'self' 'unsafe-eval'; media-src https:; block-all-mixed-content;
+                         ↑ SIN frame-ancestors → no bloquea el iframe ✅
+X-Frame-Options: AUSENTE ✅
+```
+
+### Lo que falta (necesita credenciales del HMI)
+
+1. **Login de WinCC Unified** → confirmar que las páginas *tras* el login siguen sin
+   `X-Frame-Options` (la raíz no lo trae; las de aplicación pueden diferir).
+2. **Enlace directo por pantalla** → si WinCC admite `?screen=` o similar, cada planta abre la suya.
+3. **Licencia de clientes web** → WinCC licencia las sesiones web concurrentes; conviene saber el tope.
+4. **Modo solo lectura** → si el runtime permite publicar una sesión sin control, es lo deseable.
+
+---
+
 ## FASE 0 — Descubrimiento (obligatoria, sin código, decide A vs B)
 
 Antes de construir nada, confirmar qué expone el Optix. **Lo puedo correr yo** desde la VM (lectura pura,
