@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { View, Text, ScrollView, RefreshControl, StyleSheet, Platform, Alert, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -6,6 +6,7 @@ import { useSnapshot } from '../../hooks/useSnapshot';
 import { usePlant } from '../../context/PlantContext';
 import { useAuth } from '../../context/AuthContext';
 import { ValveItem } from '../../components/ValveItem';
+import { ValveConfirmDialog } from '../../components/ValveConfirmDialog';
 import { PlantSelector } from '../../components/PlantSelector';
 import { ConnectionBanner } from '../../components/ConnectionBanner';
 import { LiveBadge } from '../../components/LiveBadge';
@@ -14,16 +15,24 @@ import { useValveSupervisor, type SupervisedValve } from '../../hooks/useValveSu
 import Colors from '../../constants/colors';
 
 /**
- * Plantas donde el mando remoto está AUTORIZADO. Solo La Sirena por ahora: es la única cuyo canal se
- * verificó en campo de punta a punta (docs/PRUEBA_VALVULA_SIRENA.md — pulso capturado por testigo
- * independiente, MSG al PLC sin errores) y donde la planta autorizó operar. En el resto se ve el
- * estado REAL pero el botón avisa que está deshabilitado, en vez de fingir que funciona.
+ * El mando remoto está habilitado en TODAS las plantas que tengan válvula mapeada. Antes solo
+ * La Sirena estaba autorizada, por ser la única verificada en campo de punta a punta
+ * (docs/PRUEBA_VALVULA_SIRENA.md). Esa lista blanca se retiró por decisión de operación.
+ *
+ * La protección pasó a ser la doble confirmación (ValveConfirmDialog): ninguna orden sale de un
+ * solo toque. El resto de las defensas del backend siguen intactas — RBAC, interlock, idempotencia,
+ * read-back y auditoría; ninguna se relajó aquí.
  */
-const PLANTAS_CON_MANDO = new Set(['sirena']);
 
 function aviso(title: string, message: string) {
   if (Platform.OS === 'web') window.alert(`${title}\n\n${message}`);
   else Alert.alert(title, message);
+}
+
+/** Maniobra a la espera de que el operador confirme en el diálogo. */
+interface Pendiente {
+  valve: SupervisedValve;
+  verb: 'open' | 'close';
 }
 
 export default function ElectrovalvulasScreen() {
@@ -35,13 +44,16 @@ export default function ElectrovalvulasScreen() {
   const { data: snapshot, isLoading, isError, refetch, isRefetching } = useSnapshot(selectedPlant.id, canView);
   const rawValves = useMemo(() => valvesFromSnapshot(snapshot), [snapshot]);
   const { valves, events, send, busy, dismiss } = useValveSupervisor(selectedPlant.id, rawValves);
+  const [pendiente, setPendiente] = useState<Pendiente | null>(null);
   const livenessState = snapshot?.liveness.state ?? 'frozen';
   const frozen = livenessState === 'frozen';
   const apiReachable = !isError || (!!snapshot && !snapshot.pending);
-  const mandoHabilitado = PLANTAS_CON_MANDO.has(selectedPlant.id);
+  const plantName = snapshot?.displayName ?? selectedPlant.name;
 
   const openCount = valves.filter((v) => v.effectiveState === 'open').length;
   const closedCount = valves.filter((v) => v.effectiveState === 'closed').length;
+  // Sin señal de estado eléctrico el read-back no puede confirmar la maniobra: hay que avisarlo.
+  const conLecturaDeEstado = valves.some((v) => v.byState !== null);
 
   // Guard de rol de pantalla (coherente con tablero/reportes). Va tras TODOS los hooks.
   if (!canView) {
@@ -56,19 +68,18 @@ export default function ElectrovalvulasScreen() {
     );
   }
 
-  async function onToggle(valve: SupervisedValve) {
-    if (!mandoHabilitado) {
-      aviso(
-        'Mando deshabilitado en esta planta',
-        `El envío de órdenes a ${valve.name} está bloqueado temporalmente.\n\n` +
-          'El canal de comando YA está funcionando y verificado contra el PLC (pulso por el canal 0, ' +
-          'con confirmación y auditoría). Hoy solo La Sirena está autorizada para operar en remoto.\n\n' +
-          'Mientras tanto, la válvula se opera desde el HMI de la planta.',
-      );
-      return;
-    }
+  /** El toque en la lista ya NO ejecuta: solo propone la maniobra y abre la confirmación. */
+  function onToggle(valve: SupervisedValve) {
     // Si el estado es desconocido no se adivina: se ofrece explícitamente qué mandar.
     const verb: 'open' | 'close' = valve.effectiveState === 'open' ? 'close' : 'open';
+    setPendiente({ valve, verb });
+  }
+
+  /** Segundo paso: el operador aceptó en el diálogo. Recién aquí sale la orden al PLC. */
+  async function onConfirmar() {
+    if (!pendiente) return;
+    const { valve, verb } = pendiente;
+    setPendiente(null);
     const verdict = await send(valve, verb);
     aviso(verdict.title, verdict.message);
   }
@@ -86,7 +97,7 @@ export default function ElectrovalvulasScreen() {
       >
         <View style={styles.sectionHeader}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.plantName}>{snapshot?.displayName ?? selectedPlant.name}</Text>
+            <Text style={styles.plantName}>{plantName}</Text>
             <Text style={styles.sectionSubtitle}>Electroválvulas</Text>
           </View>
           {valves.length > 0 && (
@@ -98,29 +109,26 @@ export default function ElectrovalvulasScreen() {
           )}
         </View>
 
-        {/* Estado del mando: honesto y explícito, distinto según la planta. */}
-        <View style={[styles.notice, mandoHabilitado && styles.noticeOk]}>
-          <Ionicons
-            name={mandoHabilitado ? 'checkmark-circle-outline' : 'information-circle-outline'}
-            size={18}
-            color={mandoHabilitado ? Colors.success : Colors.primary}
-          />
+        {/* Estado del mando: honesto sobre CÓMO se sabrá si la maniobra ocurrió de verdad. */}
+        <View style={[styles.notice, styles.noticeOk]}>
+          <Ionicons name="checkmark-circle-outline" size={18} color={Colors.success} />
           <Text style={styles.noticeText}>
-            {mandoHabilitado ? (
-              <>
-                <Text style={{ fontWeight: '700' }}>Mando remoto ACTIVO en esta planta.</Text> Cada orden va por
-                el canal oficial (pulso por el canal 0, con confirmación y auditoría). El estado que ves es el
-                real, leído del equipo y corroborado con los caudales.
-              </>
-            ) : (
-              <>
-                <Text style={{ fontWeight: '700' }}>Mando remoto deshabilitado en esta planta.</Text> El canal
-                está probado y listo; hoy solo La Sirena está autorizada. Lo que ves abajo es el estado REAL
-                leído del equipo.
-              </>
-            )}
+            <Text style={{ fontWeight: '700' }}>Mando remoto ACTIVO.</Text> Cada orden va por el canal oficial
+            (pulso por el canal 0, con confirmación y auditoría) y pide una confirmación antes de salir.
           </Text>
         </View>
+
+        {/* Sin lectura eléctrica, el estado sale solo del caudal: el operador tiene que saberlo. */}
+        {valves.length > 0 && !conLecturaDeEstado && (
+          <View style={[styles.notice, styles.noticeWarn]}>
+            <Ionicons name="alert-circle-outline" size={18} color={Colors.warning} />
+            <Text style={styles.noticeText}>
+              <Text style={{ fontWeight: '700' }}>Esta planta no reporta el estado eléctrico de la válvula.</Text>{' '}
+              El estado que ves se deduce del caudal, y tras una orden puede que el sistema no logre confirmar
+              la maniobra aunque haya ocurrido. Verifique en sitio antes de dar por hecho el resultado.
+            </Text>
+          </View>
+        )}
 
         {/* Avisos: operación manual detectada y resultados de órdenes. */}
         {events.map((e) => (
@@ -162,9 +170,8 @@ export default function ElectrovalvulasScreen() {
               key={valve.id}
               valve={valve}
               frozen={frozen}
-              disabled={!mandoHabilitado}
               busy={busy === valve.id}
-              onToggle={canControl ? () => void onToggle(valve) : undefined}
+              onToggle={canControl ? () => onToggle(valve) : undefined}
             />
           ))
         )}
@@ -173,6 +180,16 @@ export default function ElectrovalvulasScreen() {
           <Text style={styles.note}>Tu rol puede ver el estado, pero no operar válvulas.</Text>
         )}
       </ScrollView>
+
+      <ValveConfirmDialog
+        visible={pendiente !== null}
+        valveName={pendiente?.valve.name ?? ''}
+        plantName={plantName}
+        verb={pendiente?.verb ?? 'open'}
+        busy={pendiente !== null && busy === pendiente.valve.id}
+        onConfirm={() => void onConfirmar()}
+        onCancel={() => setPendiente(null)}
+      />
 
       <LiveBadge state={livenessState} loading={isLoading && !snapshot} />
     </SafeAreaView>
@@ -201,6 +218,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   noticeOk: { backgroundColor: Colors.success + '10', borderLeftColor: Colors.success },
+  noticeWarn: { backgroundColor: Colors.warning + '12', borderLeftColor: Colors.warning },
   noticeText: { flex: 1, fontSize: 12, lineHeight: 17, color: Colors.textSecondary },
   event: {
     flexDirection: 'row',

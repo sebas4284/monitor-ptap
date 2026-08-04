@@ -8,8 +8,6 @@ interface Props {
   valve: SupervisedValve;
   /** Acción de mando. Si falta, la fila es de solo lectura (rol sin permiso). */
   onToggle?: () => void;
-  /** El mando está bloqueado a nivel de sistema (planta aún no autorizada). */
-  disabled?: boolean;
   /** La planta perdió la conexión: los valores mostrados son la última lectura. */
   frozen?: boolean;
   /** Hay una orden en vuelo para esta válvula. */
@@ -22,7 +20,7 @@ const STATE_LABEL: Record<SupervisedValve['state'], string> = {
   unknown: 'Sin dato',
 };
 
-export function ValveItem({ valve, onToggle, disabled = false, frozen = false, busy = false }: Props) {
+export function ValveItem({ valve, onToggle, frozen = false, busy = false }: Props) {
   // Se muestra el estado EFECTIVO: el que sigue al caudal si se detectó operación manual, para no
   // mandar "abrir" a algo que ya abrieron a mano.
   const shown = valve.effectiveState;
@@ -78,7 +76,7 @@ export function ValveItem({ valve, onToggle, disabled = false, frozen = false, b
         </View>
         {onToggle && (
           <TouchableOpacity
-            style={[styles.toggleBtn, disabled ? styles.toggleDisabled : { backgroundColor: Colors.primary + '15' }]}
+            style={[styles.toggleBtn, { backgroundColor: Colors.primary + '15' }]}
             onPress={onToggle}
             activeOpacity={0.7}
             disabled={busy}
@@ -87,12 +85,12 @@ export function ValveItem({ valve, onToggle, disabled = false, frozen = false, b
               <ActivityIndicator size="small" color={Colors.primary} />
             ) : (
               <Ionicons
-                name={disabled ? 'lock-closed-outline' : shown === 'open' ? 'close-circle-outline' : 'checkmark-circle-outline'}
+                name={shown === 'open' ? 'close-circle-outline' : 'checkmark-circle-outline'}
                 size={16}
-                color={disabled ? Colors.textSecondary : Colors.primary}
+                color={Colors.primary}
               />
             )}
-            <Text style={[styles.toggleText, { color: disabled ? Colors.textSecondary : Colors.primary }]}>
+            <Text style={[styles.toggleText, { color: Colors.primary }]}>
               {busy ? 'Enviando…' : shown === 'open' ? 'Cerrar' : 'Abrir'}
             </Text>
           </TouchableOpacity>
@@ -156,6 +154,5 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     gap: 4,
   },
-  toggleDisabled: { backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.divider },
   toggleText: { fontSize: 12, fontWeight: '700' },
 });
