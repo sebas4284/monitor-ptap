@@ -12,7 +12,15 @@ export const commandRequestSchema = z
 
 export type CommandRequest = z.infer<typeof commandRequestSchema>;
 
-export type CommandOutcome = 'confirmed' | 'failed' | 'rejected';
+/**
+ * `sent` es un desenlace intermedio deliberado, no un "casi confirmado": la escritura salió y el
+ * eco la verificó en el canal, pero el canal de ESTADO de ese sitio no tiene semántica verificada
+ * en campo (`readBack.stateVerified: false`), así que el sistema **no puede afirmar ni negar** que
+ * el equipo se movió. Reportarlo como `failed` acusaría al equipo con base en un valor inferido;
+ * reportarlo como `confirmed` afirmaría un movimiento que nadie observó. Ninguna de las dos es
+ * cierta, y por eso existe este tercer estado.
+ */
+export type CommandOutcome = 'confirmed' | 'sent' | 'failed' | 'rejected';
 
 /** Motivos de rechazo (comando NO ejecutado) y de fallo (ejecutado, sin confirmar). */
 export const REJECT = {
@@ -34,6 +42,16 @@ export const FAIL = {
    * (hallazgo de campo 2026-07-30).
    */
   WRITE_REJECTED: 'WRITE_REJECTED',
+} as const;
+
+/** Motivos de desenlace `sent`: se escribió y se verificó, pero no hay con qué confirmar el estado. */
+export const SENT = {
+  /**
+   * El eco confirma que el valor quedó en el canal de comando, pero el canal de ESTADO de este
+   * sitio está declarado `stateVerified: false` — su valor esperado es una inferencia, no una
+   * captura. No se afirma que el equipo se movió, ni se lo acusa de no haberlo hecho.
+   */
+  SENT_STATE_UNVERIFIED: 'SENT_STATE_UNVERIFIED',
 } as const;
 
 export interface CommandResult {
@@ -74,6 +92,10 @@ export interface CommandActor {
  */
 export function httpStatusForCommand(result: CommandResult): number {
   if (result.status === 'confirmed') return 200;
+  // 202 Accepted: la orden se ejecutó y quedó verificada en el canal, pero su efecto sobre el
+  // equipo no es comprobable con la información disponible. Ni 200 (afirmaría el movimiento) ni
+  // 502 (culparía al equipo).
+  if (result.status === 'sent') return 202;
   if (result.status === 'failed') return 502;
   const reason = result.reason ?? '';
   if (reason === REJECT.FORBIDDEN || reason === REJECT.WRITES_DISABLED_INSECURE_SESSION) return 403;

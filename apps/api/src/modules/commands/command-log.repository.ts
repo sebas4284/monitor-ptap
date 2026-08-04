@@ -2,7 +2,10 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { Pool, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { MYSQL_POOL } from '../../infrastructure/database/database.tokens';
 
-export type CommandStatus = 'pending' | 'confirmed' | 'failed' | 'rejected';
+// 'sent' = escrito y verificado por eco, pero el canal de estado del sitio no tiene semántica
+// verificada, así que no se afirma ni se niega el movimiento del equipo (ver CommandOutcome).
+// La columna es VARCHAR(32), no un ENUM: agregar un estado no requiere migración.
+export type CommandStatus = 'pending' | 'confirmed' | 'sent' | 'failed' | 'rejected';
 
 export type CommandValue = number | boolean | null;
 

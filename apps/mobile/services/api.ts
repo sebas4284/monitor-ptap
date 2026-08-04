@@ -104,7 +104,12 @@ export async function patchJson<T>(path: string, body: unknown): Promise<T> {
 /** Resultado de POST /api/plants/:plantId/commands, tal como lo devuelve el WriteService. */
 export interface ValveCommandResult {
   http: number;
-  status: 'confirmed' | 'failed' | 'rejected' | 'error';
+  /**
+   * `sent` (HTTP 202): la orden se escribió y el eco la verificó en el canal, pero el canal de
+   * ESTADO de ese sitio no tiene semántica verificada en campo. No se afirma que el equipo se
+   * movió, ni se lo acusa de no haberlo hecho.
+   */
+  status: 'confirmed' | 'sent' | 'failed' | 'rejected' | 'error';
   reason: string | null;
   previousValue: number | boolean | null;
   writtenValue: number | boolean | null;

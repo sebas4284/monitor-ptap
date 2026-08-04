@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS command_log (
   written_value VARCHAR(64) NULL,
   confirmed_value VARCHAR(64) NULL,
   interlock_sequence INT NULL,
-  status VARCHAR(32) NOT NULL,           -- pending | confirmed | failed | rejected
+  -- VARCHAR y no ENUM a propósito: agregar un desenlace no debe exigir una migración.
+  status VARCHAR(32) NOT NULL,           -- pending | confirmed | sent | failed | rejected
   reason VARCHAR(255) NULL,
   UNIQUE KEY uq_command_idempotency (idempotency_key),
   INDEX idx_command_plant (plant_id),

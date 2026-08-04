@@ -165,7 +165,8 @@
               "sourceBuffer": "INT_IN_VORAGINE",
               "index": 0,
               "confirmsWrittenValue": false,
-              "expectedValue": 16385
+              "expectedValue": 16385,
+              "stateVerified": false
             },
             "timeoutMs": 5000,
             "rollbackValue": 0,
@@ -375,7 +376,8 @@
               "sourceBuffer": "INT_IN_SOLEDAD",
               "index": 0,
               "confirmsWrittenValue": false,
-              "expectedValue": 16385
+              "expectedValue": 16385,
+              "stateVerified": false
             },
             "timeoutMs": 5000,
             "rollbackValue": 0,
@@ -825,7 +827,8 @@
               "sourceBuffer": "INT_IN_MONTEBELLO",
               "index": 0,
               "confirmsWrittenValue": false,
-              "expectedValue": 16385
+              "expectedValue": 16385,
+              "stateVerified": false
             },
             "timeoutMs": 5000,
             "rollbackValue": 0,
@@ -1019,7 +1022,8 @@
               "sourceBuffer": "INT_IN_CASCAJAL",
               "index": 0,
               "confirmsWrittenValue": false,
-              "expectedValue": 16385
+              "expectedValue": 16385,
+              "stateVerified": false
             },
             "timeoutMs": 5000,
             "rollbackValue": 0,
@@ -1221,7 +1225,8 @@
               "sourceBuffer": "INT_IN_KM18",
               "index": 0,
               "confirmsWrittenValue": false,
-              "expectedValue": 16385
+              "expectedValue": 16385,
+              "stateVerified": false
             },
             "timeoutMs": 5000,
             "rollbackValue": 0,
@@ -1437,7 +1442,8 @@
               "sourceBuffer": "INT_IN_ALTO_MANGOS",
               "index": 0,
               "confirmsWrittenValue": false,
-              "expectedValue": 16385
+              "expectedValue": 16385,
+              "stateVerified": false
             },
             "timeoutMs": 5000,
             "rollbackValue": 0,
@@ -1630,7 +1636,8 @@
               "sourceBuffer": "INT_IN_CAMPOALEGRE",
               "index": 0,
               "confirmsWrittenValue": false,
-              "expectedValue": 16385
+              "expectedValue": 16385,
+              "stateVerified": false
             },
             "timeoutMs": 5000,
             "rollbackValue": 0,
@@ -1866,7 +1873,8 @@
               "sourceBuffer": "INT_IN_PICHINDE",
               "index": 0,
               "confirmsWrittenValue": false,
-              "expectedValue": 16385
+              "expectedValue": 16385,
+              "stateVerified": false
             },
             "timeoutMs": 5000,
             "rollbackValue": 0,
@@ -2006,7 +2014,8 @@
               "sourceBuffer": "INT_IN_CARBONERO",
               "index": 0,
               "confirmsWrittenValue": false,
-              "expectedValue": 16385
+              "expectedValue": 16385,
+              "stateVerified": false
             },
             "timeoutMs": 5000,
             "rollbackValue": 0,
@@ -2344,7 +2353,8 @@
               "index": 0,
               "confirmsWrittenValue": false,
               "expectedValue": 16385,
-              "expectedByCommand": { "open": 16385, "close": 16384 }
+              "expectedByCommand": { "open": 16385, "close": 16384 },
+              "stateVerified": false
             },
             "timeoutMs": 5000,
             "rollbackValue": 0,

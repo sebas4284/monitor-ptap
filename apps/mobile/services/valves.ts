@@ -154,6 +154,20 @@ export function interpretCommand(r: ValveCommandResult, verb: 'open' | 'close', 
     };
   }
 
+  // La orden salió y el eco la verificó, pero el canal de estado de este sitio no está verificado
+  // en campo: no hay con qué afirmar NI negar que la válvula se movió. Se informa exactamente eso.
+  if (r.status === 'sent') {
+    return {
+      ok: true,
+      signalSent: true,
+      title: 'Orden enviada al equipo',
+      message:
+        `${valveName}: la señal de ${accion} se escribió en el PLC y quedó verificada en el canal ` +
+        `(bit ${r.writtenValue}). Esta planta no reporta un estado eléctrico verificado, así que el ` +
+        `sistema no puede confirmar por sí solo que la válvula se movió. Verifique en sitio.`,
+    };
+  }
+
   if (r.status === 'failed' && r.reason === 'WRITE_REJECTED') {
     return {
       ok: false,

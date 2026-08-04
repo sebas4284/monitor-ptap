@@ -21,13 +21,13 @@ import type { BridgeStatus, ConnectivityAdapter } from '../src/infrastructure/co
 import { SimulatorBridgeAdapter } from '../src/infrastructure/connectivity/adapters/simulator/simulator-bridge.adapter';
 import type { CommandLogRepository, StoredCommand } from '../src/modules/commands/command-log.repository';
 import type { CommandMappingResolver } from '../src/modules/commands/command-mapping.resolver';
-import { REJECT, FAIL, type CommandActor } from '../src/modules/commands/command.dto';
+import { REJECT, FAIL, SENT, httpStatusForCommand, type CommandActor } from '../src/modules/commands/command.dto';
 import { WriteService } from '../src/modules/commands/write.service';
 
 const WRITE: WriteSpec = {
   target: { channel: 'intOut', sourceBuffer: 'INT_OUT_TEST', index: 3 },
   commands: { openValve: 1, closeValve: 0 },
-  readBack: { channel: 'intOut', sourceBuffer: 'INT_OUT_TEST', index: 3, confirmsWrittenValue: true },
+  readBack: { channel: 'intOut', sourceBuffer: 'INT_OUT_TEST', index: 3, confirmsWrittenValue: true, stateVerified: true },
   timeoutMs: 60,
   rollbackValue: 0,
   permission: 'control_valves',
@@ -39,9 +39,12 @@ interface FakeAdapter extends ConnectivityAdapter {
   writes: Array<{ value: number | boolean }>;
 }
 
-function fakeAdapter(opts: { secure: boolean; bridge: BridgeStatus; confirms?: boolean; writeThrows?: boolean; preset?: number }): FakeAdapter {
+function fakeAdapter(opts: { secure: boolean; bridge: BridgeStatus; confirms?: boolean; writeThrows?: boolean; preset?: number; echoFails?: boolean }): FakeAdapter {
   const store = new Map<string, number | boolean>();
   const confirms = opts.confirms !== false;
+  // `echoFails`: la lectura posterior al write falla, así que `writeVerified` queda en null. Sirve
+  // para probar que el desenlace `sent` NO se concede sin un eco que lo respalde.
+  let reads = 0;
   const key = (t: { plantId: string; channel: string; sourceBuffer: string; index: number }) =>
     `${t.plantId}/${t.channel}/${t.sourceBuffer}[${t.index}]`;
   const adapter = {
@@ -59,6 +62,9 @@ function fakeAdapter(opts: { secure: boolean; bridge: BridgeStatus; confirms?: b
       store.set(key(t), v);
     },
     async readBufferElement(t: never) {
+      reads += 1;
+      // La 1ª lectura es el valor previo (antes de escribir); la 2ª es el eco. Solo se rompe el eco.
+      if (opts.echoFails && reads === 2) throw new Error('lectura del eco falló');
       const s = store.get(key(t));
       // `preset`: valor previo de la palabra (para probar que bitmask conserva bits ajenos).
       const base = s === undefined ? (opts.preset ?? 0) : s;
@@ -128,8 +134,8 @@ function fakeAudit(): { service: AuditLogService; calls: AuditEntry[] } {
 const OPERADOR: CommandActor = { userId: 'u1', userEmail: 'op@ptap.co', role: 'operador', ip: '10.0.0.1' };
 const JEFE: CommandActor = { userId: 'u2', userEmail: 'jefe@ptap.co', role: 'jefe', ip: '10.0.0.2' };
 
-function build(opts: { secure: boolean; bridge: BridgeStatus; confirms?: boolean; writesEnabled?: boolean; write?: WriteSpec | null; snapshot?: PlantSnapshotDto | null; writeThrows?: boolean; preset?: number }) {
-  const adapter = fakeAdapter({ secure: opts.secure, bridge: opts.bridge, confirms: opts.confirms, writeThrows: opts.writeThrows, preset: opts.preset });
+function build(opts: { secure: boolean; bridge: BridgeStatus; confirms?: boolean; writesEnabled?: boolean; write?: WriteSpec | null; snapshot?: PlantSnapshotDto | null; writeThrows?: boolean; preset?: number; echoFails?: boolean }) {
+  const adapter = fakeAdapter({ secure: opts.secure, bridge: opts.bridge, confirms: opts.confirms, writeThrows: opts.writeThrows, preset: opts.preset, echoFails: opts.echoFails });
   const audit = fakeAudit();
   const service = new WriteService(
     adapter,
@@ -310,6 +316,52 @@ test('write-service: read-back sin confirmar → FALLIDO (nunca exitoso) + rollb
   // write del comando (1) + write de rollback (0)
   assert.equal(adapter.writes.length, 2);
   assert.equal(adapter.writes[1].value, 0);
+});
+
+// El canal de estado de las 10 plantas espera `16385` para "abierta", pero ese valor nunca se
+// observó en campo: es una inferencia del patrón de Vorágine. Declarar `failed` con esa base acusa
+// al equipo de no responder apoyándose en un número inventado — tan poco honesto como declarar
+// éxito. Con `stateVerified: false` el desenlace es `sent`, que no afirma ni niega el movimiento.
+// El read-back apunta a OTRO buffer que el target, como en producción (intOut → intIn): así el eco
+// (relectura del canal de comando) y la confirmación de estado son independientes, que es
+// justamente la distinción que este desenlace necesita. `confirms: true` deja el eco sano; el
+// estado no confirma porque intIn nunca llega al `expectedValue`.
+const WRITE_ESTADO_APARTE: WriteSpec = {
+  ...WRITE,
+  readBack: { channel: 'intIn', sourceBuffer: 'INT_IN_TEST', index: 0, confirmsWrittenValue: false, expectedValue: 16385, stateVerified: false },
+};
+
+test('write-service: estado NO verificado + eco OK → SENT (ni confirmado ni fallido)', async () => {
+  const { service } = build({ secure: true, bridge: 'Connected', write: WRITE_ESTADO_APARTE, confirms: true });
+  const r = await service.execute('voragine', { command: 'openValve', target: 'valveEV01' }, OPERADOR);
+
+  assert.equal(r.status, 'sent');
+  assert.equal(r.reason, SENT.SENT_STATE_UNVERIFIED);
+  assert.equal(r.writeVerified, true, 'el eco es lo que sostiene el desenlace `sent`');
+  assert.notEqual(r.status, 'confirmed', 'no se afirma que el equipo se movió');
+  assert.notEqual(r.status, 'failed', 'ni se lo acusa de no haberlo hecho');
+  assert.equal(httpStatusForCommand(r), 202, '202 Accepted, no 200 ni 502');
+});
+
+test('write-service: estado NO verificado resuelve RÁPIDO (no agota el timeout de 5 s)', async () => {
+  // El operador no debe esperar 5 s por un valor que ya sabemos que no representa el estado.
+  const spec: WriteSpec = { ...WRITE_ESTADO_APARTE, timeoutMs: 5000 };
+  const { service } = build({ secure: true, bridge: 'Connected', write: spec, confirms: true });
+  const t0 = Date.now();
+  const r = await service.execute('voragine', { command: 'openValve', target: 'valveEV01' }, OPERADOR);
+  const ms = Date.now() - t0;
+
+  assert.equal(r.status, 'sent');
+  assert.ok(ms < 2000, `debía resolver en menos de 2 s y tardó ${ms} ms`);
+});
+
+test('write-service: estado NO verificado pero SIN eco → sigue siendo FALLIDO', async () => {
+  // Sin eco no hay nada que sostenga el `sent`: no consta que el valor llegara al canal.
+  const { service } = build({ secure: true, bridge: 'Connected', write: WRITE_ESTADO_APARTE, confirms: true, echoFails: true });
+  const r = await service.execute('voragine', { command: 'openValve', target: 'valveEV01' }, OPERADOR);
+
+  assert.equal(r.status, 'failed');
+  assert.equal(r.reason, FAIL.READBACK_UNCONFIRMED);
 });
 
 test('write-service: idempotencia — misma idempotencyKey NO re-ejecuta', async () => {

@@ -220,7 +220,11 @@
             "sourceBuffer": { "type": "string", "minLength": 1 },
             "index": { "type": "integer", "minimum": 0 },
             "confirmsWrittenValue": { "type": "boolean" },
-            "expectedValue": { "type": ["number", "boolean"] }
+            "expectedValue": { "type": ["number", "boolean"] },
+            "stateVerified": {
+              "type": "boolean",
+              "description": "¿La semántica de este canal de estado está VERIFICADA en campo? Default true. Con false, la falta de confirmación deja de tratarse como falla del equipo: si el eco prueba que el valor quedó escrito, el resultado es 'sent' (SENT_STATE_UNVERIFIED) en vez de 'failed'. Se usa cuando el valor esperado es una inferencia sin captura que la respalde — afirmar «la válvula no respondió» a partir de un número no verificado es tan poco honesto como afirmar que sí respondió."
+            }
           }
         },
         "timeoutMs": {

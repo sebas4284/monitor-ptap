@@ -304,9 +304,63 @@ La descomposición refuerza que son palabras de ESTADO, no órdenes:
 | cerrar+pulso | `4104` | `bit3 (8, CERRAR)` + `bit12 (4096, PULSO)` — el «Modelo A» del protocolo. Pero rompería la simetría: abrir habría sido `4100`, y en campo se capturó `4096` **sin** bit2 |
 
 **No se elige por deducción.** El único método fiable es **capturar el pulso de cerrar desde el HMI**
-con el monitor por suscripción (`scripts/monitor-sirena-sub.ts`), igual que se capturó el `4096` de
-abrir. Hasta entonces `close` **no está declarado**: la app pide cerrar y el backend responde
-`UNKNOWN_COMMAND` (rechazo limpio, **sin escribir nada**).
+con el monitor por suscripción, igual que se capturó el `4096` de abrir. Hasta entonces `close` **no
+está declarado**: la app pide cerrar y el backend responde `UNKNOWN_COMMAND` (rechazo limpio, **sin
+escribir nada**).
+
+> **Herramienta lista (2026-07-31):** [`scripts/monitor-valve-capture.ts`](../apps/api/scripts/monitor-valve-capture.ts)
+> generaliza el capturador a **cualquier** planta — toma los NodeIds del propio `opc_mapping.json` en
+> vez de tenerlos escritos a mano como `monitor-sirena-sub.ts`. Correlaciona cada pulso con el estado
+> siguiente y avisa si solo vio un valor.
+>
+> ```bash
+> PLANT=montebello MONITOR_SECONDS=120 npm exec -w @ptap/api -- tsx scripts/monitor-valve-capture.ts
+> ```
+
+### Análisis del bit: por qué `4096` y qué implica para `close` (2026-07-31)
+
+**Por qué ese bit y no otro.** `bit12` no significa «abrir» en ningún sentido semántico. Según el
+mecanismo que confirmó el operador (§2), `INT_OUT[0]` es un **registro tipo demux**: cada bit de la
+palabra `Int16` **enruta energía a una salida física distinta**, y así el PLC sabe a cuál de sus
+salidas mandar la orden. `bit12` es, simplemente, **la salida cableada al actuador de la válvula 1**.
+Con 16 bits se direccionan hasta 16 salidas por sitio.
+
+Eso explica por qué la captura de campo mostró `0 → 4096 → 0` **sin** `bit2` ni `bit3`: no hay un
+«bit de dirección» acompañando al pulso.
+
+**Esto descarta el candidato `4104`.** Si el esquema fuera «dirección + pulso» (Modelo A de Vorágine),
+abrir habría viajado como `4100` (`bit2`+`bit12`). Se capturó `4096` limpio, así que la tabla
+`4`=abrir / `8`=cerrar de las notas de Vorágine **no aplica a este canal**. Quedan dos hipótesis:
+
+| Hipótesis | Qué implicaría | Evidencia |
+|---|---|---|
+| **A · `4096` es un TOGGLE** | No existe un valor de cerrar: el mismo pulso alterna | Solo se vio un valor en toda la captura. Encaja con un actuador de **una** bobina y con el patrón de botón único de HMI |
+| **B · `bit13` = `8192`** | Dos salidas físicas, una por sentido | Encaja con un actuador de **dos** solenoides (abrir/cerrar separados). Los PLC suelen usar bits consecutivos para el par del mismo equipo |
+
+**Lo que discrimina entre A y B no es el software: es el actuador.** Una bobina → toggle; dos
+solenoides → dos bits. Lo sabe quien mire el equipo o el plano eléctrico.
+
+### 🔴 Si resulta ser un TOGGLE, hay un riesgo de diseño en la app
+
+Con la hipótesis A, declarar `close: 4096` introduce una maniobra contraria a la pedida:
+
+| Estado real | Orden | Resultado con toggle |
+|---|---|---|
+| Abierta | cerrar | Cierra ✅ |
+| **Cerrada** | **cerrar** | **ABRE** ❌ — lo opuesto a lo solicitado |
+
+Y hoy `useValveSupervisor.send()` **envía la orden igual aunque la válvula ya esté en ese estado**
+(decisión deliberada: «lo pidió el operador», para corregir un estado desactualizado en la app). Con
+un canal de dirección explícita eso es inocuo; **con un toggle deja de serlo**.
+
+Antes de declarar `close`, hay que resolver una de estas dos:
+
+1. Si es toggle → modelar **un solo verbo** (`toggle`) y **no** enviar cuando el estado ya coincide.
+2. Si son dos bits → dejar `open`/`close` como están, cada uno con su valor propio.
+
+**El read-back degrada seguro en el caso normal** (válvula abierta + cerrar que no funciona → sigue en
+`16385` ≠ `16384` esperado → `failed`, nunca falso éxito). Lo que el read-back **no** evita es la
+maniobra física indeseada del cuadro de arriba: reportaría `failed` con la válvula ya abierta.
 
 ### Estado esperado por verbo (limitación corregida)
 

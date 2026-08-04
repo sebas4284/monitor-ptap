@@ -61,6 +61,16 @@ export interface WriteSpec {
      * no está aquí, se cae a `confirmsWrittenValue`/`expectedValue`.
      */
     expectedByCommand?: Record<string, number | boolean>;
+    /**
+     * ¿La semántica de este canal de estado está VERIFICADA en campo? Default `true`.
+     *
+     * Con `false`, la falta de confirmación deja de significar «el equipo no respondió»: si el eco
+     * demuestra que el valor quedó escrito en el canal de comando, el resultado es `sent`
+     * (`SENT_STATE_UNVERIFIED`) en vez de `failed`. Existe porque el `expectedValue` de estas
+     * plantas es una inferencia del patrón de Vorágine que nunca se observó en campo — y declarar
+     * un fallo del equipo a partir de un número no verificado afirma tanto como declarar un éxito.
+     */
+    stateVerified: boolean;
   };
   timeoutMs: number;
   rollbackValue: number | boolean;
@@ -138,6 +148,7 @@ interface RawWriteSpec {
     confirmsWrittenValue?: boolean;
     expectedValue?: number | boolean;
     expectedByCommand?: Record<string, number | boolean>;
+    stateVerified?: boolean;
   };
   timeoutMs?: number;
   rollbackValue?: number | boolean;
@@ -184,6 +195,9 @@ function parseWriteSpec(raw: RawWriteSpec | undefined): WriteSpec | undefined {
       confirmsWrittenValue: raw.readBack.confirmsWrittenValue !== false,
       expectedValue: raw.readBack.expectedValue,
       expectedByCommand: raw.readBack.expectedByCommand,
+      // Default true: un canal se presume verificado salvo que el mapping diga lo contrario. Así,
+      // omitir la clave conserva el comportamiento estricto de siempre.
+      stateVerified: raw.readBack.stateVerified !== false,
     },
     timeoutMs: raw.timeoutMs,
     rollbackValue: raw.rollbackValue,

@@ -11,6 +11,7 @@ import { CommandMappingResolver } from './command-mapping.resolver';
 import {
   FAIL,
   REJECT,
+  SENT,
   httpStatusForCommand,
   type CommandActor,
   type CommandOutcome,
@@ -19,6 +20,13 @@ import {
 } from './command.dto';
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Ventana de read-back cuando el canal de estado NO está verificado (`stateVerified: false`).
+ * Suficiente para captar un cambio inmediato si lo hubiera, sin bloquear al operador esperando un
+ * valor que de antemano sabemos que no es fiable.
+ */
+const UNVERIFIED_READBACK_MS = 600;
 
 /**
  * WriteService (Fase 5): único punto que ejecuta comandos de escritura al PLC.
@@ -157,6 +165,13 @@ export class WriteService {
 
       if (confirmation.confirmed) {
         result = { ...base, status: 'confirmed', reason: null };
+      } else if (write.readBack.stateVerified === false && base.writeVerified === true) {
+        // El canal de estado de este sitio NO tiene semántica verificada en campo: su valor
+        // esperado es una inferencia. Con el eco probando que la escritura quedó en el canal, no
+        // hay base para declarar un fallo del equipo — pero tampoco para afirmar que se movió.
+        // Ver CommandOutcome.'sent'. Un pulso ya se limpió en 7b-bis; no se hace rollback.
+        if (!write.pulse) await this.rollback(targetEl, write);
+        result = { ...base, status: 'sent', reason: SENT.SENT_STATE_UNVERIFIED };
       } else {
         // Un pulso ya se limpió en 7b-bis: no volver a escribir (sería un segundo pulso espurio).
         if (!write.pulse) await this.rollback(targetEl, write); // best-effort
@@ -233,8 +248,15 @@ export class WriteService {
       sourceBuffer: write.readBack.sourceBuffer ?? write.target.sourceBuffer,
       index: write.readBack.index,
     };
-    const deadline = Date.now() + write.timeoutMs;
-    const pollMs = Math.max(5, Math.min(50, Math.floor(write.timeoutMs / 4)));
+    // Con el canal de estado NO verificado, esperar los 5 s completos no aporta nada: se estaría
+    // aguardando un valor que ya sabemos que no representa el estado (`stateVerified: false`), y
+    // mientras tanto el operador mira un botón girando. Se hace una ventana corta —por si el estado
+    // SÍ cambiara, que sería información valiosa— y se resuelve. La orden pasa de ~5,5 s a ~1 s.
+    const efectivo = write.readBack.stateVerified === false
+      ? Math.min(write.timeoutMs, UNVERIFIED_READBACK_MS)
+      : write.timeoutMs;
+    const deadline = Date.now() + efectivo;
+    const pollMs = Math.max(5, Math.min(50, Math.floor(efectivo / 4)));
 
     let last: CommandValue = null;
     do {
