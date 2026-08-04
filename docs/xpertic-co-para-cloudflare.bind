@@ -1,0 +1,56 @@
+; Zona xpertic.co - 32 registros verificados contra ns15.latinoamericahosting.com
+; Generado el 2026-07-31 (SOA serial de origen: 2026073000)
+;
+; !! Este archivo es para una zona VACIA. Si Cloudflare ya cargo los 27 del escaneo
+; !! automatico, importarlo DUPLICA todo: usar office365-faltantes.bind en su lugar.
+;
+; NO incluye: SOA, los NS del apex (los asigna Cloudflare) ni el A de aquora
+;            (lo crea "cloudflared tunnel route dns" como CNAME proxeado).
+;
+; TRAS IMPORTAR: dejar los 12 registros A/CNAME en DNS only (nube gris).
+; El unico registro proxeado de toda la zona sera aquora.
+
+$ORIGIN xpertic.co.
+$TTL 300
+
+; --- A (11) --- todos DNS only
+@                          300 IN A     15.235.65.10
+ftp                        300 IN A     15.235.65.10
+cpanel                     300 IN A     15.235.65.10
+webmail                    300 IN A     15.235.65.10
+webdisk                    300 IN A     15.235.65.10
+whm                        300 IN A     15.235.65.10
+autodiscover               300 IN A     15.235.65.10
+autoconfig                 300 IN A     15.235.65.10
+cpcalendars                300 IN A     15.235.65.10
+cpcontacts                 300 IN A     15.235.65.10
+office365                  300 IN A     15.235.65.10
+
+; --- CNAME (2) --- DNS only
+www                        300 IN CNAME xpertic.co.
+mail                       300 IN CNAME xpertic.co.
+
+; --- MX (2) --- el de office365 es el que el escaneo automatico NO trae
+@                          300 IN MX 0  xpertic.co.
+office365                  300 IN MX 0  Office365-xpertic-co.mail.protection.outlook.com.
+
+; --- SRV (5) ---
+_autodiscover._tcp         300 IN SRV 0 0 443  cpanelemaildiscovery.cpanel.net.
+_caldav._tcp               300 IN SRV 0 0 2079 xpertic.co.
+_caldavs._tcp              300 IN SRV 0 0 2080 xpertic.co.
+_carddav._tcp              300 IN SRV 0 0 2079 xpertic.co.
+_carddavs._tcp             300 IN SRV 0 0 2080 xpertic.co.
+
+; --- TXT (12) ---
+@                          300 IN TXT   "v=spf1 ip4:15.235.65.10 include:relay.mailchannels.net +a +mx ~all"
+office365                  300 IN TXT   "MS=ms91860500"
+office365                  300 IN TXT   "v=spf1 ip4:15.235.65.10 include:relay.mailchannels.net include:spf.protection.outlook.com -all"
+_dmarc                     300 IN TXT   "v=DMARC1;p=none;sp=none;adkim=r;aspf=r;pct=100;fo=0;rf=afrf;ri=86400"
+default._domainkey         300 IN TXT   "v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2mWqQuH8B5YiEfM+NcNXOmWPjfHy7WYkPmmN+bYw5Ah2l7j5LyZ3GhaAMnYvLhq5XVdoqZiL94LYZ30/1oeONHDfxG/BbWkCcfkoo53789nQtf9WDQlpzK6E9DIxlkIzWHD3n0EiTP" "eMarf6I3pDYx/7jRlAYAbeO5QXFpQoubJnUXutK16UBDHei8bagcLH2quDC3KDnH57xU8OJiEQTNmDpwrdTkW49ep6AHZdqnT2nk4Oc8xEm7EwD/0gqPapdTV1iHUoUEKBVvTprJCQY72kKd7q8HmXddhxlBlhL6lxnKcl20NbSx7hWCR0+o64GvsdaCg4pDupV8UMkI" "fILQIDAQAB;"
+default._domainkey.office365 300 IN TXT   "v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2ASGOCMBC94YSlQE1sAf62Q+JiEKfNvuXSeVwj/jmWDJGo5SrgawZoUn5EcZaqhlaJ2jacg4sf04OE5XpjiJx0wxysyJAqg9l+SytmLM+tNoM+E/PT6IFZOnrxf/csOxpi3uqSDQ54" "B+WUDEaGXpCn5D086x0OvN86wWrus2RqSkGRqoJjlesFrvrEKwrbXhbLweeLWA6vbEwQbD5SJfleZuHX4/qijpI4StVAWHHdyllOYiNFkuTezTGS6RXfHO6+q6JkwJqFcJEDKan8KSMj3Ch2pAwRokEhfOEK+AhmfqaAbrX/KeONmGMJsRNsb+x2dsZ8oXhWLSBnEs1e" "Q1IQIDAQAB;"
+_acme-challenge            300 IN TXT   "2szOwzvHXRKGMB5dpBsB8CfR69UYL_dJdTLVr7jFuzE"
+_caldav._tcp               300 IN TXT   "path=/"
+_caldavs._tcp              300 IN TXT   "path=/"
+_carddav._tcp              300 IN TXT   "path=/"
+_carddavs._tcp             300 IN TXT   "path=/"
+_cpanel-dcv-test-record    300 IN TXT   "_cpanel-dcv-test-record=sn071rTnsx9Ba0Vm21wTilQlYIhGOG5A1PQUHR7MsE2KMjEtfoWy2j_u7gpoguhe"

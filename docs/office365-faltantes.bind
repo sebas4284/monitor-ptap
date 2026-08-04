@@ -1,0 +1,18 @@
+; Los 5 registros del subdominio office365 que el escaneo automatico de Cloudflare NO importa.
+; Verificados contra ns15.latinoamericahosting.com el 2026-07-31.
+;
+; USO: Cloudflare -> DNS -> Records -> "Import DNS Records" -> subir este archivo.
+;      Importar SOLO esto si la zona ya tiene los 27 registros del escaneo. Para una zona
+;      vacia usar xpertic-co-para-cloudflare.bind (los 32 completos).
+;
+; Los 5 quedan en DNS only (gris). Cloudflare no proxea MX ni TXT, y el A de office365
+; apunta al servidor de correo, asi que tampoco debe proxearse.
+
+$ORIGIN xpertic.co.
+$TTL 300
+
+office365                    300 IN A   15.235.65.10
+office365                    300 IN MX 0 Office365-xpertic-co.mail.protection.outlook.com.
+office365                    300 IN TXT "MS=ms91860500"
+office365                    300 IN TXT "v=spf1 ip4:15.235.65.10 include:relay.mailchannels.net include:spf.protection.outlook.com -all"
+default._domainkey.office365 300 IN TXT "v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2ASGOCMBC94YSlQE1sAf62Q+JiEKfNvuXSeVwj/jmWDJGo5SrgawZoUn5EcZaqhlaJ2jacg4sf04OE5XpjiJx0wxysyJAqg9l+SytmLM+tNoM+E/PT6IFZOnrxf/csOxpi3uqSDQ54" "B+WUDEaGXpCn5D086x0OvN86wWrus2RqSkGRqoJjlesFrvrEKwrbXhbLweeLWA6vbEwQbD5SJfleZuHX4/qijpI4StVAWHHdyllOYiNFkuTezTGS6RXfHO6+q6JkwJqFcJEDKan8KSMj3Ch2pAwRokEhfOEK+AhmfqaAbrX/KeONmGMJsRNsb+x2dsZ8oXhWLSBnEs1e" "Q1IQIDAQAB;"
