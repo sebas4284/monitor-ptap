@@ -1,12 +1,15 @@
-# Runbook de Producción (as-built) — Monitor PTAP
+# Runbook de Producción — Monitor PTAP
 
-Documento de **lo que realmente está montado** hoy (complementa los idealizados
-[DEPLOY_VPS.md](DEPLOY_VPS.md) y [ANDROID_APK.md](ANDROID_APK.md)). Sirve para operar, actualizar,
-recuperar o **trasladar** el sistema.
+Documento **único** de despliegue y operación: lo que está montado hoy (§1–§10) y cómo montarlo
+desde cero en un servidor nuevo (§11). Absorbe el antiguo `DEPLOY_VPS.md`.
 
 > ⚠️ **Este documento NO contiene secretos.** Contraseñas, tokens, `JWT_SECRET`, pepper y
 > credenciales viven SOLO en el `.env` de la VM y en la copia local `.env.production.local`
 > (gitignored). Aquí solo se referencia *dónde* están.
+
+> **Dominio de producción: `aquora.xpertic.co`.** El antiguo `ptaps.telcobras.com` quedó descartado
+> y no debe usarse en configuración nueva. Trabajo pendiente sobre el dominio y el TLS:
+> [`PENDIENTES.md §1`](./PENDIENTES.md).
 
 ---
 
@@ -17,142 +20,325 @@ Backend + web + base de datos corren en **una VM interna** (`192.168.30.50`, Ubu
 
 ```
 Usuario (móvil/navegador)
-   │  HTTPS  (TLS en el borde de Cloudflare)
+   │  HTTPS
    ▼
-Cloudflare  ──►  cloudflared (túnel, en la VM)  ──►  nginx :80
-                                                        │
-                                    ┌───────────────────┼─────────────────────┐
-                                    ▼                    ▼                     ▼
-                              web SPA (estático)   /api → Node :4000     /descargar/ (APK)
-                                                        │
-                                                   MySQL 127.0.0.1:3306
-                                                        │
-                              PLC (OPC UA, IP propia) ◄─┘  (solo lectura)
+[borde público]  ──►  nginx :80/:443 (en la VM)
+                          │
+      ┌───────────────────┼─────────────────────┐
+      ▼                   ▼                     ▼
+web SPA (estático)   /api → Node :4000    /descargar/ (APK)
+                          │
+                     MySQL 127.0.0.1:3306
+                          │
+   PLC (OPC UA, red de planta) ◄─┘
 ```
 
-- **Acceso de operador**: red interna `192.168.30.0/24` vía **VPN L2TP** (perfil Windows
-  `PTAP-VPN`, sin PSK) + **SSH por llave** (alias `ptap`, `~/.ssh/id_ed25519`; password de SSH
-  deshabilitado). Credenciales VPN/SSH/MySQL: fuera de git (las tiene el operador).
-- **Acceso público**: solo por el **túnel HTTPS de Cloudflare** (ver §6). El puerto HTTP directo
-  a Internet está **cerrado** (ver §5).
+- **Acceso de operador**: red interna `192.168.30.0/24` vía **VPN L2TP** (perfil Windows `PTAP-VPN`,
+  sin PSK) + **SSH por llave** (alias `ptap`, `~/.ssh/id_ed25519`; password de SSH deshabilitado).
+- **Acceso público**: hoy por un **quick tunnel efímero de Cloudflare** como stopgap (§6). El camino
+  definitivo es `aquora.xpertic.co` con Let's Encrypt, **pendiente de publicar los puertos 80/443**.
+- El puerto HTTP directo a Internet está **cerrado** (§5).
 
 ## 2. Servicios en la VM
 
 | Servicio | Qué hace | Notas |
 |---|---|---|
-| **nginx** (:80) | Reverse proxy: web SPA en `/`, API en `/api/`, WebSocket en `/socket.io/`, APK en `/descargar/` | Config en `/etc/nginx/sites-available/ptap`. Cabeceras de seguridad + cache (index no-cache, chunks immutable) |
+| **nginx** (:80) | Reverse proxy: web SPA en `/`, API en `/api/`, WebSocket en `/socket.io/`, APK en `/descargar/`, y el gate `auth_request` del HMI | Config en `/etc/nginx/sites-available/ptap`. Cabeceras de seguridad + cache (index no-cache, chunks immutable) |
 | **pm2 → `ptap-api`** | Backend NestJS (`node dist/main.js`) | Arranca en cada reboot (`pm2 startup` systemd), `pm2 save` |
 | **MySQL 8** (`ptapapp`) | BD (users, audit_log, command_log, tokens) | Escucha **solo localhost** (`bind-address 127.0.0.1`) |
-| **cloudflared** | Túnel HTTPS al backend | Quick tunnel **efímero** (ver §6). Script `~/deploy-scripts/cf-run.sh` |
+| **cloudflared** | Túnel HTTPS stopgap | Quick tunnel **efímero** (§6). Script `~/deploy-scripts/cf-run.sh` |
 | **fail2ban** | Anti fuerza-bruta SSH | Activo, jail `sshd` |
 
 ## 3. Código y configuración
 
-- Repo en la VM: `~/monitor-ptap` (clon **público** de `github.com/sebas4284/monitor-ptap`,
-  rama **`dev`**). El servidor solo hace lectura/pull.
+- Repo en la VM: `~/monitor-ptap`, rama **`dev`**. El servidor solo hace lectura/pull.
 - **`.env`** en la raíz del repo EN la VM (`chmod 600`). Copia local durable del operador:
-  `.env.production.local` (gitignored) en el repo local. Variables (SIN valores aquí):
-  `PORT`, `DB_HOST/PORT/USER/PASSWORD/NAME`, `JWT_SECRET`, `JWT_EXPIRES_IN`,
-  `PASSWORD_PEPPER_*`, `APP_PUBLIC_URL`, `CORS_ORIGINS`, `CONNECTIVITY_PROVIDER`, `OPC_ENDPOINT`,
-  `METRICS_AUTH_TOKEN`, `EMAIL_TRANSPORT`, `REGISTER_BLOCK_DISPOSABLE`, `RATE_LIMIT_*`,
-  `REQUIRE_EMAIL_VERIFICATION` (default off). Secretos de producción son **frescos** (distintos de dev).
+  `.env.production.local` (gitignored). Variables (SIN valores aquí): `PORT`,
+  `DB_HOST/PORT/USER/PASSWORD/NAME`, `JWT_SECRET`, `JWT_EXPIRES_IN`, `PASSWORD_PEPPER_*`,
+  `APP_PUBLIC_URL`, `CORS_ORIGINS`, `CONNECTIVITY_PROVIDER`, `OPC_ENDPOINT`, `METRICS_AUTH_TOKEN`,
+  `EMAIL_TRANSPORT`, `REGISTER_BLOCK_DISPOSABLE`, `RATE_LIMIT_*`, `REQUIRE_EMAIL_VERIFICATION`
+  (default off). Los secretos de producción son **frescos**, distintos de los de desarrollo.
 - **Web** (SPA Expo) compilada con `API_BASE_URL=` **vacío (mismo origen)** → sirve por cualquier
-  hostname (túnel o LAN) sin recompilar. Estáticos en `/var/www/ptap-web`.
+  hostname sin recompilar. Estáticos en `/var/www/ptap-web`.
 
 ## 4. Base de datos y backups
 
-- Migrar/sembrar (paso de despliegue, no runtime):
-  `npm run db:migrate -w @ptap/api` y `npm run db:seed-admin -w @ptap/api`.
+- Migrar/sembrar (paso de despliegue, no runtime): `npm run db:migrate -w @ptap/api` y
+  `npm run db:seed-admin -w @ptap/api`.
 - **Backups**: `mysqldump` diario por cron (`0 3 * * *`), script `~/deploy-scripts/db-backup.sh`
   (usa `~/.ptapdb.cnf`, `--no-tablespaces`, gzip, **retención 14 días**) → `~/backups/`.
   **Pendiente**: copia OFF-site (hoy los dumps viven en la misma VM).
-- **Revisar la BD desde el PC** (sin abrir MySQL a la red): túnel SSH
-  `ssh -L 3307:localhost:3306 ptap` y conectar un cliente a `127.0.0.1:3307` (user `ptapapp`).
-- Administradores actuales: `sebas4284@gmail.com`, `loresjoshua@gmail.com`. Los admins **no** se
-  degradan desde la app (regla de "intocables") → gestión por BD/seed.
+- **Revisar la BD desde el PC** sin abrir MySQL a la red: túnel SSH `ssh -L 3307:localhost:3306 ptap`
+  y conectar un cliente a `127.0.0.1:3307` (user `ptapapp`).
+- Los admins **no** se degradan desde la app (regla de "intocables") → gestión por BD/seed.
 
 ## 5. Seguridad (endurecimiento aplicado)
 
 - **Cleartext de Internet CERRADO**: `ufw` permite el **puerto 80 solo desde rangos privados**
-  (10/8, 172.16/12, 192.168/16) + loopback → LAN/VPN y el túnel funcionan, pero las IPs públicas
-  se dropean. (El router hace DNAT sin SNAT → preserva la IP de origen.) Regla en
+  (10/8, 172.16/12, 192.168/16) + loopback → LAN/VPN y el túnel funcionan, pero las IPs públicas se
+  dropean. (El router hace DNAT sin SNAT → preserva la IP de origen.) Regla en
   `~/deploy-scripts/ufw-restrict80.sh`. ufw solo abre 22/80/443.
 - **SSH** solo-llave (`PasswordAuthentication no`, `PermitRootLogin no`) + **fail2ban**.
 - **MySQL** solo localhost. **`/metrics`** protegido con `METRICS_AUTH_TOKEN`.
 - **App**: RBAC por rol (`packages/shared`), guards por endpoint y por pantalla; registro anti-bot
   (allowlist de nombre, honeypot, bloqueo de correos desechables, doble campo correo/contraseña,
   celular 10 dígitos, contraseña con símbolo); `trust proxy` para rate-limit correcto tras el proxy;
-  aprobación **manual** del admin como muro anti-bot (con badge de pendientes). Sin SMS/correo (sin
-  proveedor); `REQUIRE_EMAIL_VERIFICATION` off por eso.
+  aprobación **manual** del admin como muro anti-bot.
+- **Escritura al PLC**: el canal está **abierto** desde el 2026-08-03, autorizado por Operación, con
+  `OPCUA_ALLOW_INSECURE_WRITES=true` — obligado porque el servidor OPC UA del equipo solo admite
+  Anonymous + None (ver [`SECURITY_FINDING_P0.md`](./SECURITY_FINDING_P0.md)). La protección real es
+  la red, más el RBAC, el interlock y la doble confirmación de la app. Se activa y revierte con
+  `bash ~/deploy-scripts/opcua-writes-toggle.sh [--revertir]` (idempotente, con respaldo).
 - **Sin secretos en git** ni en el APK; `.env` gitignored.
 
-## 6. Túnel Cloudflare (exposición pública)
+## 6. Exposición pública (estado actual)
 
-- Hoy es un **quick tunnel efímero**: `cloudflared tunnel --url http://localhost:80` (script
-  `~/deploy-scripts/cf-run.sh`, corre con `setsid`). Da una URL `https://<algo>.trycloudflare.com`
-  que **cambia en cada reinicio de cloudflared** y **no sobrevive reboot** de la VM.
-- **URL vigente**: ver el log → `grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' ~/cloudflared.log | tail -1`.
-- Al cambiar la URL: re-pinear en `CORS_ORIGINS` del `.env` + `pm2 restart ptap-api`, y **reconstruir
-  la APK** (que la lleva horneada — ver ANDROID_APK.md).
+Hoy es un **quick tunnel efímero**: `cloudflared tunnel --url http://localhost:80` (script
+`~/deploy-scripts/cf-run.sh`, corre con `setsid`). Da una URL `https://<algo>.trycloudflare.com` que
+**cambia en cada reinicio de cloudflared** y **no sobrevive reboot** de la VM.
+
+- **URL vigente**: `grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' ~/cloudflared.log | tail -1`
+- Al cambiar la URL: re-pinear en `CORS_ORIGINS` del `.env` + `pm2 restart ptap-api`, y
+  **reconstruir la APK** (que la lleva horneada — ver [`ANDROID_APK.md`](./ANDROID_APK.md)).
 - ⚠️ Chrome marca los dominios `trycloudflare.com` como "peligrosos" (los abusan phishers) → **no es
-  apto para repartir a usuarios**. Es un **stopgap** de pruebas.
+  apto para repartir a usuarios**. Es un stopgap de pruebas.
+
+> **El camino definitivo NO es un named tunnel de Cloudflare.** Se intentó y quedó bloqueado: el
+> dominio tiene `update prohibited` en GoDaddy y no se pueden cambiar los nameservers sin el titular
+> de esa cuenta. Se fue por **Let's Encrypt directo** sobre `aquora.xpertic.co`; el certificado ya
+> está emitido y los scripts desplegados. Falta publicar 443 y 80 — ver
+> [`PENDIENTES.md §1`](./PENDIENTES.md) y [`DOMINIO_AQUORA_CLOUDFLARE.md`](./DOMINIO_AQUORA_CLOUDFLARE.md).
 
 ## 7. Actualizar el sistema (flujo normal)
 
-1. Desarrollo local en `yosh` → `git push origin yosh:dev` (cuenta **LorJosh**, token classic con
-   scope `repo`; el remoto apunta a `https://LorJosh@github.com/...`).
-2. En la VM: `bash ~/deploy.sh` (hace `git pull` de `dev` + `npm ci` + migraciones + build + `pm2
-   restart`).
+1. Desarrollo local en `yosh` → `git push origin yosh:dev` (cuenta **LorJosh**, token *classic* con
+   scope `repo`).
+2. En la VM: `bash ~/deploy.sh` (hace `git pull` de `dev` + `npm ci` + migraciones + build +
+   `pm2 restart`).
 3. Si cambió el **front**: recompilar la web
    `cd ~/monitor-ptap/apps/mobile && API_BASE_URL= npx expo export -p web --clear` y
    `sudo bash ~/deploy-scripts/web-setup.sh`.
 
-## 8. "Traslado" — mover a otro servidor / pasar a producción estable
+> 🔴 **`pm2 restart --update-env` tumba la API. No usarlo.** pm2 reemplaza el entorno del proceso por
+> el del shell que invoca el comando; desde SSH no interactivo ese entorno es mínimo y la API
+> **arranca pero nunca escucha en el 4000** — nginx devuelve 502 y `pm2 list` la sigue reportando
+> `online`. Un `pm2 restart ptap-api` a secas es lo correcto.
 
-**Mover a otra VM/servidor** (Linux):
-1. Instalar base: Node 22, MySQL 8, pm2, nginx, git (ver [DEPLOY_VPS.md](DEPLOY_VPS.md)).
-2. `git clone` (rama `dev`) + `npm ci`.
-3. Copiar el `.env` (desde `.env.production.local`) a la raíz; ajustar `DB_*`, `APP_PUBLIC_URL`,
-   `CORS_ORIGINS`, `OPC_ENDPOINT` al nuevo entorno.
-4. Restaurar BD: crear la base + `gunzip < backup.sql.gz | mysql ...` (o `db:migrate` en limpio) y
-   `db:seed-admin`.
-5. `npm run build` → `pm2 start apps/api/ecosystem.config.js` → `pm2 save && pm2 startup`.
-6. nginx (reverse proxy + WebSocket) → recargar. Reaplicar hardening (ufw, ssh, fail2ban, backups).
+## 8. Verificación tras desplegar
 
-**Pasar de túnel efímero → URL fija (recomendado para producción):** montar un **named tunnel** de
-Cloudflare con **dominio propio** (cuenta gratis):
 ```bash
-cloudflared login                      # autoriza el dominio en Cloudflare
-cloudflared tunnel create ptap
-cloudflared tunnel route dns ptap ptap.telcobras.com
-cloudflared tunnel run ptap            # URL estable: https://ptap.telcobras.com
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:4000/api/health      # 200
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:4000/api/health/db   # 200
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:4000/api/health/opc  # 200
+pm2 status                                                                      # online, estable
+npm run -w @ptap/api audit:efficiency                                           # Score 🟢
 ```
-Instalarlo como **servicio systemd** (`cloudflared service install`) → sobrevive reboots. Con URL
-fija: se va la alerta de Chrome, se puede emitir/forzar TLS del dominio, y **la APK se compila una
-sola vez** (deja de necesitar rebuild). Actualizar `APP_PUBLIC_URL`/`CORS_ORIGINS`.
 
 ## 9. Scripts operativos (en la VM, `~/deploy-scripts/`)
 
 `deploy.sh` (actualizar backend), `db-backup.sh` (backup diario), `web-setup.sh` (publicar web +
-recargar nginx), `cf-run.sh` (levantar el túnel), `ufw-restrict80.sh` (cerrar cleartext), y los de
-build de APK (ver ANDROID_APK.md).
+recargar nginx), `cf-run.sh` (levantar el túnel), `ufw-restrict80.sh` (cerrar cleartext),
+`opcua-writes-toggle.sh` (abrir/cerrar el canal de escritura), `le-cert-user.sh` / `le-nginx.sh` /
+`le-renew.sh` (Let's Encrypt), `env-dominio.sh` (CORS y URL pública), y los de build de APK.
 
 ## 10. Distribución móvil
 
 - **Android (APK)**: construido EN la VM y alojado para descarga — ver
-  [ANDROID_APK.md](ANDROID_APK.md) → sección "Build en la VM". Enlace: `https://<túnel>/descargar/`.
-- **iOS: FUERA DE ALCANCE por ahora.** Apple **no permite** instalar un `.ipa`/APK por descarga
-  directa como Android (no hay "orígenes desconocidos"). Requeriría **Apple Developer Program
-  ($99/año)** + firma de Apple + distribución por **TestFlight** (invitación por correo, lo más
-  parecido a un enlace) o **Ad Hoc** (registrando el UDID de cada iPhone, máx 100), y **compilar en
-  macOS/Xcode o en EAS Build (nube)** — no se puede en Windows/Linux. Es la **misma** app Expo (el
-  target iOS ya está configurado: `ios.bundleIdentifier = com.ptap.monitor`), no una app nueva.
-  **Alternativa inmediata para iPhone**: usar la **web en Safari** (y "Añadir a pantalla de inicio"
-  como PWA), que ya funciona por el túnel HTTPS.
+  [`ANDROID_APK.md`](./ANDROID_APK.md) → "Build en la VM". Enlace: `https://<host>/descargar/`.
+- **iOS: FUERA DE ALCANCE por ahora.** Apple no permite instalar por descarga directa como Android.
+  Requeriría **Apple Developer Program ($99/año)** + firma + **TestFlight** o **Ad Hoc** (UDID de
+  cada iPhone, máx. 100), y **compilar en macOS/Xcode o en EAS Build** — no se puede en
+  Windows/Linux. Es la **misma** app Expo (`ios.bundleIdentifier = com.ptap.monitor`), no una app
+  nueva. **Alternativa inmediata**: la web en Safari, con "Añadir a pantalla de inicio" como PWA.
 
-## 11. Pendientes conocidos
+---
 
-- Dominio + **named tunnel** (URL fija, quita alerta de Chrome, APK sin rebuild).
-- **Backup off-site** de la BD (hoy solo en la VM).
-- Rotar el **token de GitHub** de LorJosh cuando se termine el setup.
-- iOS (diferido, §10).
+## 11. Montar desde cero en un servidor nuevo
+
+Procedimiento para una VM/VPS Linux limpia. Absorbe el antiguo `DEPLOY_VPS.md`.
+
+### 11.1 Requisitos
+
+| Componente | Requisito | Por qué |
+|---|---|---|
+| **OS** | Linux 64-bit **glibc** (Ubuntu 22.04/24.04 LTS o Debian 12). **No Alpine/musl** | Los binarios *prebuilt* de `argon2` son para glibc |
+| **Node.js** | **22 LTS** | NestJS 11 exige `^20.11 \|\| >=22` |
+| **npm** | 9+ (viene con Node) | El repo usa workspaces |
+| **git** | cualquiera | clonar el repo |
+| **build-essential + python3** | red de seguridad | por si `argon2` no encuentra su *prebuilt* y compila |
+| **PM2** | gestor de proceso | mantener vivo el backend, reiniciar en caída/reboot, logs |
+| **nginx** + **certbot** | reverse proxy + TLS | HTTPS 443 → 127.0.0.1:4000 **con WebSocket** |
+| **MySQL 8** | local o gestionado | si es gestionado, solo hacen falta credenciales |
+
+**Hardware:** mínimo 1 vCPU · 1 GB RAM · 10 GB SSD. Recomendado 2 vCPU · 2 GB RAM · 20 GB SSD
+(`node-opcua` + `node_modules` pesan; deja aire para logs).
+
+> ⚠️ **No copies `node_modules` desde Windows.** `argon2` es nativo y se resuelve por plataforma:
+> instala en el servidor con `npm ci`.
+
+### 11.2 Prerrequisitos (una vez)
+
+```bash
+# Node 22 vía nvm
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+source ~/.bashrc
+nvm install 22 && nvm use 22 && nvm alias default 22
+node -v            # v22.x
+
+sudo apt-get update
+sudo apt-get install -y git build-essential python3 nginx
+sudo snap install --classic certbot || sudo apt-get install -y certbot python3-certbot-nginx
+npm install -g pm2
+```
+
+### 11.3 Código, `.env` y base de datos
+
+```bash
+cd ~ && git clone <URL-del-repo> monitor-ptap && cd monitor-ptap
+npm ci                                  # instala todos los workspaces (incluye tsx)
+
+node -e "console.log('JWT_SECRET=' + require('crypto').randomBytes(48).toString('base64'))"
+node -e "console.log('PASSWORD_PEPPER_V1_BASE64=' + require('crypto').randomBytes(64).toString('base64'))"
+nano .env
+```
+
+`.env` mínimo (el pepper debe decodificar a **exactamente 64 bytes**):
+
+```dotenv
+PORT=4000
+
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_USER=ptapapp
+DB_PASSWORD=<contraseña>
+DB_NAME=monitor_ptap
+
+JWT_SECRET=<...>
+PASSWORD_PEPPER_CURRENT_VERSION=1
+PASSWORD_PEPPER_V1_BASE64=<...>
+JWT_EXPIRES_IN=8h
+
+APP_PUBLIC_URL=https://aquora.xpertic.co
+CORS_ORIGINS=https://aquora.xpertic.co,http://192.168.30.50
+
+CONNECTIVITY_PROVIDER=opcua
+OPC_ENDPOINT=opc.tcp://<ip-del-plc>:59100
+OPC_SECURITY_MODE=None
+OPC_SECURITY_POLICY=None
+OPC_IDENTITY=anonymous
+
+EMAIL_TRANSPORT=console
+EMAIL_FROM=Monitor PTAP <no-reply@telcobras.com>
+REGISTER_BLOCK_DISPOSABLE=true
+METRICS_AUTH_TOKEN=<...>
+```
+
+> Conservar `http://192.168.30.50` en `CORS_ORIGINS` para no perder el acceso por LAN/VPN si el
+> dominio falla. El gateway de Socket.IO valida `Origin` exacto: si no coincide, el tablero se queda
+> sin datos en vivo aunque el HTTP funcione.
+
+```bash
+npm run db:migrate -w @ptap/api        # crea las tablas (idempotente)
+
+SEED_ADMIN_EMAIL=admin@telcobras.com \
+SEED_ADMIN_PASSWORD='<contraseña-fuerte>' \
+SEED_ADMIN_NAME='Administrador' \
+SEED_ADMIN_PLANT=voragine \
+  npm run db:seed-admin -w @ptap/api
+```
+
+### 11.4 Compilar y arrancar con PM2
+
+```bash
+cd ~/monitor-ptap
+npm run build                    # @ptap/shared → dist, luego el API → dist/main.js
+
+cd apps/api
+pm2 start ecosystem.config.js    # node dist/main.js, nombre ptap-api
+pm2 save
+pm2 startup                      # ejecuta la línea que imprime (reinicio en reboot)
+pm2 logs ptap-api
+```
+
+> El build de producción resuelve `@ptap/shared` a su JS compilado (`packages/shared/dist`), por eso
+> arranca con `node dist/main.js`. En desarrollo se usa `npm run dev:api` (tsx), que resuelve el
+> paquete desde su source sin compilar.
+
+Verificación local, antes de nginx:
+
+```bash
+curl -s http://127.0.0.1:4000/api/health         # {"status":"ok",...}
+curl -s http://127.0.0.1:4000/api/health/db      # {"status":"ok",...}
+```
+
+### 11.5 nginx + HTTPS (con WebSocket)
+
+`/etc/nginx/sites-available/ptap`:
+
+```nginx
+server {
+    listen 80;
+    server_name aquora.xpertic.co;
+
+    # Cabeceras de seguridad. `always` para que se envíen también en respuestas de error.
+    add_header X-Frame-Options "DENY" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    location / {
+        proxy_pass http://127.0.0.1:4000;
+        proxy_http_version 1.1;
+        # WebSocket (Socket.IO) — imprescindible para la telemetría en vivo:
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300s;
+    }
+}
+```
+
+> nginx **no hereda** `add_header` en un `location` que define los suyos. Si añades un bloque con
+> `add_header` propio, repite ahí las cabeceras de seguridad.
+
+```bash
+sudo ln -s /etc/nginx/sites-available/ptap /etc/nginx/sites-enabled/ptap
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot --nginx -d aquora.xpertic.co
+curl -s https://aquora.xpertic.co/api/health     # 200
+```
+
+### 11.6 Red y puertos — caveat crítico
+
+- **Inbound:** **443** (HTTPS) y **80** (redirección + renovación de certbot). El Node escucha
+  **solo en `127.0.0.1:4000`**, nunca expuesto directo.
+- **Outbound:** npm (443) durante `npm ci`; **el PLC por OPC UA** (p. ej. `59100/tcp`); SMTP si se
+  activa el correo real.
+
+> 🔴 **El backend DEBE poder alcanzar el PLC.** Hoy el PLC está tras NAT/túnel — ver
+> [`INCIDENTE_CONEXION_PLC.md`](./INCIDENTE_CONEXION_PLC.md). **Sin resolver esa ruta (VPN / túnel /
+> apertura controlada), la telemetría NO llega aunque el servidor quede perfecto.** Es una decisión
+> de red aparte del montaje.
+
+### 11.7 Endurecer y checklist de éxito
+
+Reaplicar el hardening de §5 (ufw, SSH solo-llave, fail2ban, MySQL en localhost, backups).
+
+- [ ] `node -v` = 22.x
+- [ ] `pm2 status` → `ptap-api` **online**
+- [ ] `curl https://aquora.xpertic.co/api/health` → 200
+- [ ] `curl https://aquora.xpertic.co/api/health/db` → 200
+- [ ] Login por HTTPS devuelve un JWT
+- [ ] La app muestra datos en vivo (WebSocket OK)
+- [ ] El backend alcanza el PLC (§11.6) — si no, telemetría "sin datos" pese a todo lo demás OK
+
+---
+
+## 12. Pendientes conocidos
+
+Se llevan en un solo sitio: [`PENDIENTES.md`](./PENDIENTES.md). Los de mayor impacto operativo son
+el TLS del dominio (falta publicar 80/443), el **backup off-site** de la BD (hoy solo en la VM) y
+rotar el token de GitHub de LorJosh.

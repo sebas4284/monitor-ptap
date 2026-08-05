@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -23,7 +24,7 @@ type Tone = 'danger' | 'warning' | 'neutral';
  *  - PLC-01 (resto): el servidor no alcanza al PLC. SOLO el admin (`system_config`) lo ve para
  *    escalarlo; un operador no ve banner (ya tiene la última lectura con su hora en las tarjetas).
  */
-export function ConnectionBanner({
+function ConnectionBannerBase({
   apiReachable,
   bridgeStatus,
 }: {
@@ -118,6 +119,9 @@ export function ConnectionBanner({
   );
 }
 
+/** Props primitivas: el `memo` de fábrica basta. */
+export const ConnectionBanner = memo(ConnectionBannerBase);
+
 const TONE_COLOR: Record<Tone, string> = {
   danger: Colors.danger,
   warning: Colors.warning,
@@ -139,7 +143,15 @@ function Banner({
 }) {
   const color = TONE_COLOR[tone];
   return (
-    <View style={[styles.banner, { backgroundColor: color + '12', borderLeftColor: color }]}>
+    <View
+      style={[styles.banner, { backgroundColor: color + '12', borderLeftColor: color }]}
+      // Una caída del puente aparece sin que el usuario haga nada: hay que anunciarla, no solo
+      // pintarla. `assertive` porque interrumpe legítimamente — significa que el dato dejó de ser
+      // fiable.
+      accessibilityLiveRegion="assertive"
+      accessibilityRole="alert"
+      accessibilityLabel={`${title}. ${detail} Código ${code}.`}
+    >
       <Ionicons name={icon} size={20} color={color} />
       <View style={styles.texts}>
         <View style={styles.titleRow}>
@@ -168,6 +180,6 @@ const styles = StyleSheet.create({
   titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   title: { flex: 1, fontSize: 14, fontWeight: '700' },
   // Código discreto pero copiable/dictable, para reportar con precisión (ver CATALOGO_ERRORES.md).
-  code: { fontSize: 10.5, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.5 },
+  code: { fontSize: 12, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.5 },
   detail: { fontSize: 12.5, lineHeight: 18, color: Colors.textSecondary },
 });

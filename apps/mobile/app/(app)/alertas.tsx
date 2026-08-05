@@ -34,7 +34,13 @@ function AlertRow({ alert, onDismiss }: { alert: Alert; onDismiss: () => void })
         <Text style={styles.message}>{alert.message}</Text>
         {time && <Text style={styles.time}>Última lectura {time}</Text>}
       </View>
-      <TouchableOpacity onPress={onDismiss} hitSlop={8} style={styles.dismiss}>
+      <TouchableOpacity
+        onPress={onDismiss}
+        hitSlop={8}
+        style={styles.dismiss}
+        accessibilityRole="button"
+        accessibilityLabel={`Descartar la alerta de ${alert.label}`}
+      >
         <Ionicons name="close" size={18} color={Colors.textSecondary} />
       </TouchableOpacity>
     </View>

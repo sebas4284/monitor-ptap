@@ -1,7 +1,14 @@
 import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
-import { useEffect, useRef } from 'react';
+import { memo, useEffect, useRef } from 'react';
 import type { TankView } from '../services/tanks';
 import Colors from '../constants/colors';
+import { sameTankCard } from './memo-compare';
+
+/** Cambio de nivel por debajo del cual no vale la pena animar (en puntos porcentuales).
+ *  La animación de ancho NO puede usar el driver nativo, así que cada tween corre en el hilo de
+ *  JS. Con un push cada ~2 s y varios tanques por planta, animar un cambio imperceptible es puro
+ *  coste: por debajo de este umbral se salta al valor final. */
+const MIN_DELTA_PCT = 0.5;
 
 interface Props {
   tank: TankView;
@@ -22,7 +29,7 @@ function statusLabel(pct: number): string {
   return 'Bajo';
 }
 
-export function TankGaugeCard({ tank, frozen = false }: Props) {
+function TankGaugeCardBase({ tank, frozen = false }: Props) {
   // percentage llega null hasta que la planta confirme la capacidad real del tanque;
   // en ese caso NO se dibuja % de llenado (sería inventado), solo nivel y volumen reales.
   const pct = tank.percentage !== null ? Math.min(100, Math.max(0, tank.percentage)) : null;
@@ -34,11 +41,17 @@ export function TankGaugeCard({ tank, frozen = false }: Props) {
     (hasLevel && (tank.levelM as number) < 0) ||
     (tank.percentage !== null && (tank.percentage < 0 || tank.percentage > 100));
   const fillAnim = useRef(new Animated.Value(0)).current;
+  /** Último valor al que se llevó la barra: permite saltarse los tweens imperceptibles. */
+  const shownPct = useRef<number | null>(null);
 
   useEffect(() => {
     if (pct === null) return;
+    const previous = shownPct.current;
+    shownPct.current = pct;
     // Congelado: saltar al valor sin animar (el dato es viejo, no debe "moverse" en pantalla).
-    if (frozen) {
+    // Primer render o cambio imperceptible: también se salta, para no gastar el hilo de JS en un
+    // tween que nadie distingue (la barra de ancho no admite driver nativo).
+    if (frozen || previous === null || Math.abs(pct - previous) < MIN_DELTA_PCT) {
       fillAnim.setValue(pct);
       return;
     }
@@ -112,6 +125,9 @@ export function TankGaugeCard({ tank, frozen = false }: Props) {
   );
 }
 
+/** Memo con comparación POR VALOR — ver `memo-compare.ts`. */
+export const TankGaugeCard = memo(TankGaugeCardBase, sameTankCard);
+
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
     <View style={styles.infoRow}>
@@ -142,7 +158,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
   },
-  rangeTagText: { fontSize: 9, fontWeight: '700', color: Colors.danger, letterSpacing: 0.5 },
+  rangeTagText: { fontSize: 11, fontWeight: '700', color: Colors.danger, letterSpacing: 0.5 },
   frozenTag: {
     backgroundColor: Colors.textSecondary + '22',
     borderColor: Colors.textSecondary,
@@ -151,7 +167,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
   },
-  frozenTagText: { fontSize: 9, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.5 },
+  frozenTagText: { fontSize: 11, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.5 },
   chipsRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
   chip: {
     backgroundColor: Colors.surface,
@@ -160,7 +176,7 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     alignItems: 'center',
   },
-  chipLabel: { fontSize: 9, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.5 },
+  chipLabel: { fontSize: 11, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.5 },
   chipValue: { fontSize: 12, fontWeight: '700', color: Colors.textPrimary },
   pctText: { fontSize: 34, fontWeight: '800', color: Colors.textPrimary, textAlign: 'center' },
   pctTextUnknown: {

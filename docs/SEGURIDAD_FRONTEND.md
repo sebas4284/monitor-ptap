@@ -11,7 +11,7 @@ habituales contra el estado real del proyecto.
 | # | Control | Estado |
 |---|---|---|
 | 1 | **XSS** | ✅ RN no usa `innerHTML`; **cero** `dangerouslySetInnerHTML` en el móvil; `<Text>` escapa. Descargas usan Blob URLs (no input). |
-| 2 | **CSP** | 🔧 web: CSP en nginx (`location /app/` de [DEPLOY_VPS.md](DEPLOY_VPS.md) §8). El API ya trae CSP por `helmet`. |
+| 2 | **CSP** | 🔧 web: CSP en nginx (`location /app/` de [RUNBOOK_PRODUCCION.md](RUNBOOK_PRODUCCION.md) §11.5). El API ya trae CSP por `helmet`. |
 | 3 | **Sin secretos en el bundle** | ✅ No lleva `JWT_SECRET`/DB/pepper (son del backend). Solo la URL pública del API. |
 | 4 | **Validación de entrada** | ✅ Cliente (longitud/formato) + backend Zod `.strict()` (registro reforzado, AUT-11). |
 | 5 | **CSRF** | ⚪ La sesión va como **Bearer en header**, no en cookie → sin superficie CSRF. (Si se migra a cookie httpOnly → añadir `SameSite`.) |
@@ -33,7 +33,7 @@ habituales contra el estado real del proyecto.
 
 ## Brechas implementadas (2026-07)
 - **Cabeceras de seguridad web** (CSP, X-Frame-Options/frame-ancestors, HSTS, nosniff, Referrer-Policy)
-  y **deny de `.map`** en el bloque nginx — ver [DEPLOY_VPS.md](DEPLOY_VPS.md) §8. Aplican a la build
+  y **deny de `.map`** en el bloque nginx — ver [RUNBOOK_PRODUCCION.md](RUNBOOK_PRODUCCION.md) §11.5. Aplican a la build
   web servida por nginx; en la APK nativa esas cabeceras de navegador no intervienen.
 - **`npm audit`** en el CI (`.github/workflows/ci.yml`), informativo (no bloquea por avisos
   transitivos de `node-opcua`/`expo`; visible en el log). Endurecer quitando `continue-on-error`.

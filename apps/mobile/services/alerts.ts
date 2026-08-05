@@ -1,4 +1,4 @@
-import type { PlantSnapshotDto } from './api';
+import type { PlantSnapshotDto, SignalDto } from './api';
 
 /**
  * Alertas REALES derivadas del snapshot (cero mocks). Una señal genera alerta cuando su valor
@@ -26,6 +26,26 @@ export interface Alert {
   ts: string | null;
 }
 
+/**
+ * ¿El valor viola el rango OPERATIVO entregado por el operador (`opMin`/`opMax`)?
+ *
+ * Vive aquí, junto a `deriveAlerts`, porque esta es la definición canónica de "anomalía de rango"
+ * del sistema. El tablero la reusa (`signal-groups.ts`) para decidir qué grupo NO se puede plegar:
+ * si cada pantalla tuviera su propio criterio, la campana podría estar avisando de una señal cuyo
+ * grupo el tablero deja plegar — que es exactamente lo que la regla de plegado quiere impedir.
+ */
+export function isOutOfOperatingRange(s: SignalDto): boolean {
+  if (typeof s.value !== 'number') return false;
+  const below = typeof s.opMin === 'number' && s.value < s.opMin;
+  const above = typeof s.opMax === 'number' && s.value > s.opMax;
+  return below || above;
+}
+
+/** ¿Esta señal generaría alguna alerta de rango (física o de operación)? */
+export function hasRangeAnomaly(s: SignalDto): boolean {
+  return Boolean(s.outOfRange) || isOutOfOperatingRange(s);
+}
+
 export function deriveAlerts(snapshot: PlantSnapshotDto | undefined): Alert[] {
   if (!snapshot || snapshot.liveness.state === 'frozen') return [];
 
@@ -40,9 +60,8 @@ export function deriveAlerts(snapshot: PlantSnapshotDto | undefined): Alert[] {
       continue; // una señal fuera del rango físico no necesita además la alerta operativa
     }
 
-    const below = typeof s.opMin === 'number' && s.value < s.opMin;
-    const above = typeof s.opMax === 'number' && s.value > s.opMax;
-    if (below || above) {
+    if (isOutOfOperatingRange(s)) {
+      const below = typeof s.opMin === 'number' && s.value < s.opMin;
       const limit = (below ? s.opMin : s.opMax) as number;
       alerts.push({
         ...base,

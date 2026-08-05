@@ -79,7 +79,7 @@ test('mapping: write.target.sourceBuffer inexistente es rechazado (validación s
 test('mapping de PRODUCCIÓN: la válvula 1 está en las 10 plantas CON canal de comando, y en ninguna más', () => {
   // Invariante (2026-07-30): la ruta de la válvula se replicó a todas las plantas por instrucción
   // del operador («mín. 1 válvula, se escribe por el canal 0, abrir = 4096 en todas»), tras
-  // verificarla en campo en Sirena (docs/PRUEBA_VALVULA_SIRENA.md: pulso capturado por testigo
+  // verificarla en campo en Sirena (docs/archivo/PRUEBA_VALVULA_SIRENA.md: pulso capturado por testigo
   // independiente + MSG al PLC sin errores).
   //
   // El límite que este test protege: SOLO las plantas que tienen buffers intOut+intIn pueden tener
@@ -122,7 +122,7 @@ test('mapping de PRODUCCIÓN: solo las plantas con estado VERIFICADO exponen val
 
 test('mapping de PRODUCCIÓN: cada válvula escribe en el canal 0 con pulso y máscara de bits', () => {
   // Protege la forma verificada en campo: si alguien cambia el índice, el modo o quita el pulso,
-  // el comando podría pisar bits ajenos o quedar ENCLAVADO (ver docs/PRUEBA_VALVULA_SIRENA.md).
+  // el comando podría pisar bits ajenos o quedar ENCLAVADO (ver docs/archivo/PRUEBA_VALVULA_SIRENA.md).
   const prod = loadJson(join(__dirname, '..', 'config', 'opc_mapping.json')) as {
     plants: Array<{
       plantId: string;

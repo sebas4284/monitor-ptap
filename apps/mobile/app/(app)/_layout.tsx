@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Tabs, Redirect, router } from 'expo-router';
 import {
   View,
@@ -14,20 +14,76 @@ import Colors from '../../constants/colors';
 import { useAuth } from '../../context/AuthContext';
 import { useAlerts } from '../../hooks/useAlerts';
 import { usePendingUsers } from '../../hooks/usePendingUsers';
+import { useWebEscape } from '../../hooks/useWebEscape';
 import { ROLE_LABELS, ROLE_COLORS, type AuthUser } from '@ptap/shared';
+
+/**
+ * Campana de alertas AISLADA.
+ *
+ * `useAlerts()` llama por dentro a `useSnapshot()`, o sea que está enganchado al stream del PLC
+ * (~1 push cada 2 s). Cuando vivía en `AppLayout`, cada push re-renderizaba la cáscara de pestañas
+ * ENTERA en cualquier pantalla, recreando de paso las opciones de las 8 `Tabs.Screen`. Metido en su
+ * propia hoja, el push solo repinta este icono.
+ *
+ * Es el mismo patrón que el `<Clock />` de `tablero.tsx`, y por la misma razón.
+ */
+function AlertBell() {
+  const { count } = useAlerts();
+  return (
+    <TouchableOpacity
+      style={{ marginRight: 16 }}
+      hitSlop={8}
+      onPress={() => router.push('/(app)/alertas')}
+      accessibilityRole="button"
+      accessibilityLabel={count > 0 ? `Alertas: ${count} activas` : 'Alertas: ninguna activa'}
+    >
+      <View>
+        <Ionicons name="notifications-outline" size={24} color="#fff" />
+        {count > 0 && (
+          <View style={styles.notifBadge}>
+            <Text style={styles.notifText}>{count > 9 ? '9+' : count}</Text>
+          </View>
+        )}
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+/** Botón de menú aislado: `usePendingUsers` sondea cada 60 s y no debe repintar la cáscara. */
+function MenuButton({ onPress }: { onPress: () => void }) {
+  const { count } = usePendingUsers();
+  return (
+    <TouchableOpacity
+      style={{ marginLeft: 16 }}
+      hitSlop={8}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={count > 0 ? `Menú. ${count} cuentas pendientes de aprobar` : 'Menú'}
+    >
+      <View>
+        <Ionicons name="menu" size={24} color="#fff" />
+        {/* Punto de aviso: hay cuentas pendientes de aprobar (solo lo ve un admin). */}
+        {count > 0 && (
+          <View style={styles.menuDot}>
+            <Text style={styles.notifText}>{count > 9 ? '9+' : count}</Text>
+          </View>
+        )}
+      </View>
+    </TouchableOpacity>
+  );
+}
 
 function MenuModal({
   visible,
   onClose,
   user,
-  pendingCount,
 }: {
   visible: boolean;
   onClose: () => void;
   user: AuthUser | null;
-  pendingCount: number;
 }) {
   const { logout, hasPermission } = useAuth();
+  const { count: pendingCount } = usePendingUsers();
 
   async function handleLogout() {
     onClose();
@@ -52,10 +108,25 @@ function MenuModal({
 
   const roleColor = user ? ROLE_COLORS[user.role] : Colors.primary;
 
+  // `onRequestClose` solo dispara en Android. En web, Escape no cerraba el menú: había que
+  // acertarle al fondo con el ratón.
+  useWebEscape(visible, onClose);
+
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.overlay} onPress={onClose}>
-        <Pressable style={styles.drawer} onPress={() => {}}>
+      <Pressable
+        style={styles.overlay}
+        onPress={onClose}
+        accessibilityRole="button"
+        accessibilityLabel="Cerrar el menú"
+      >
+        <Pressable
+          style={styles.drawer}
+          onPress={() => {}}
+          // Aísla el menú del resto del árbol para los lectores de pantalla mientras está abierto.
+          accessibilityViewIsModal
+          accessibilityRole="menu"
+        >
           <View style={styles.drawerHeader}>
             <View style={styles.drawerAvatar}>
               <Ionicons name="person" size={28} color="#fff" />
@@ -117,13 +188,22 @@ export default function AppLayout() {
   // Ocultar la pestaña HMI a quien no ve el tablero es comodidad de UI: la propia pantalla vuelve a
   // comprobar el permiso, igual que hacen tablero y electroválvulas.
   const hasViewDashboard = hasPermission('view_dashboard');
-  // Conteo REAL de alertas (0 para el Civil, que no recibe señales). Se llama SIEMPRE, antes de
-  // los early-return, para no violar las reglas de hooks.
-  const { count: alertCount } = useAlerts();
-  // Aviso en la app para admins: cuentas pendientes de aprobación (0 para no-admin). Se llama
-  // SIEMPRE antes de los early-return (reglas de hooks).
-  const { count: pendingCount } = usePendingUsers();
   const isCivil = user?.role === 'civil';
+
+  // Opciones de cabecera ESTABLES: se esparcen en 8 `Tabs.Screen`, así que recrearlas en cada
+  // render obligaba a react-navigation a re-evaluar las 8. `setMenuVisible` es estable (useState),
+  // y los conteos viven ahora dentro de `<AlertBell/>` y `<MenuButton/>`, no aquí.
+  const HEADER_OPTS = useMemo(
+    () => ({
+      headerStyle: { backgroundColor: Colors.primary },
+      headerTintColor: '#fff',
+      headerTitle: 'MONITOR / PTAP',
+      headerTitleStyle: { fontWeight: '800' as const, fontSize: 16, letterSpacing: 1 },
+      headerLeft: () => <MenuButton onPress={() => setMenuVisible(true)} />,
+      headerRight: () => <AlertBell />,
+    }),
+    [],
+  );
 
   // GUARD de sesión para TODAS las rutas de (app). Cubre tres caminos al login:
   //  1. Recargar la página en una ruta profunda (/sensores, /ajustes…) sin sesión — antes la
@@ -140,47 +220,12 @@ export default function AppLayout() {
   }
   if (!token) return <Redirect href="/(auth)/login" />;
 
-  const HEADER_OPTS = {
-    headerStyle: { backgroundColor: Colors.primary },
-    headerTintColor: '#fff',
-    headerTitle: 'MONITOR / PTAP',
-    headerTitleStyle: { fontWeight: '800' as const, fontSize: 16, letterSpacing: 1 },
-    headerLeft: () => (
-      <TouchableOpacity
-        style={{ marginLeft: 16 }}
-        hitSlop={8}
-        onPress={() => setMenuVisible(true)}
-      >
-        <View>
-          <Ionicons name="menu" size={24} color="#fff" />
-          {/* Punto de aviso: hay cuentas pendientes de aprobar (solo lo ve un admin). */}
-          {pendingCount > 0 && (
-            <View style={styles.menuDot}>
-              <Text style={styles.notifText}>{pendingCount > 9 ? '9+' : pendingCount}</Text>
-            </View>
-          )}
-        </View>
-      </TouchableOpacity>
-    ),
-    // Campana con conteo REAL de alertas; toca para abrir la pantalla de alertas. El badge solo
-    // aparece si hay alertas (nada de un "3" inventado). Para el Civil (sin señales) siempre 0.
-    headerRight: () => (
-      <TouchableOpacity style={{ marginRight: 16 }} hitSlop={8} onPress={() => router.push('/(app)/alertas')}>
-        <View>
-          <Ionicons name="notifications-outline" size={24} color="#fff" />
-          {alertCount > 0 && (
-            <View style={styles.notifBadge}>
-              <Text style={styles.notifText}>{alertCount > 9 ? '9+' : alertCount}</Text>
-            </View>
-          )}
-        </View>
-      </TouchableOpacity>
-    ),
-  };
-
   return (
     <>
-      <MenuModal visible={menuVisible} onClose={() => setMenuVisible(false)} user={user} pendingCount={pendingCount} />
+      {/* Montado solo mientras está abierto: un `<Modal visible={false}>` monta igual su subárbol,
+          y con él un segundo observador de `usePendingUsers` que re-renderizaba el cajón cerrado
+          cada 60 s. El badge del botón de menú sigue vivo por su cuenta. */}
+      {menuVisible && <MenuModal visible onClose={() => setMenuVisible(false)} user={user} />}
       <Tabs
         screenOptions={{
           tabBarActiveTintColor: Colors.primary,

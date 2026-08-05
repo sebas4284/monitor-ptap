@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -28,6 +29,10 @@ export default function AjustesScreen() {
   const roleColor = user ? ROLE_COLORS[user.role] : Colors.primary;
   const allowed = PERMISSIONS.filter((p) => (user ? hasPermission(p) : false));
   const denied = PERMISSIONS.filter((p) => !(user ? hasPermission(p) : false));
+  // La matriz completa son ~20 filas planas. Se pliega por defecto: es material de consulta
+  // puntual ("¿por qué no puedo hacer X?"), no algo que se lea cada vez que se abre Ajustes. El
+  // resumen de arriba (cuántos sí y cuántos no) queda siempre visible.
+  const [permsOpen, setPermsOpen] = useState(false);
 
   async function handleLogout() {
     await logout();
@@ -73,30 +78,59 @@ export default function AjustesScreen() {
         {/* ── Permisos ───────────────────────────────────────────── */}
         <Text style={styles.sectionTitle}>Permisos de tu rol</Text>
         <View style={styles.card}>
-          {allowed.length > 0 && (
-            <>
-              <Text style={styles.permHeader}>Puedes</Text>
-              {allowed.map((p) => (
-                <View key={p} style={styles.permRow}>
-                  <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
-                  <Text style={styles.permText}>{PERMISSION_LABELS[p]}</Text>
-                </View>
-              ))}
-            </>
-          )}
-
-          {denied.length > 0 && (
-            <>
-              <Text style={[styles.permHeader, allowed.length > 0 && styles.permHeaderSpaced]}>
-                No puedes
+          <TouchableOpacity
+            style={styles.permToggle}
+            onPress={() => setPermsOpen((v) => !v)}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: permsOpen }}
+            accessibilityLabel={`Detalle de permisos: puedes ${allowed.length} acciones, no puedes ${denied.length}. ${permsOpen ? 'Plegar' : 'Desplegar'}.`}
+          >
+            <View style={styles.permSummary}>
+              <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
+              <Text style={styles.permSummaryText}>
+                <Text style={styles.permSummaryNum}>{allowed.length}</Text> permitidas
               </Text>
-              {denied.map((p) => (
-                <View key={p} style={styles.permRow}>
-                  <Ionicons name="close-circle" size={18} color={Colors.textSecondary} />
-                  <Text style={[styles.permText, styles.permDenied]}>{PERMISSION_LABELS[p]}</Text>
-                </View>
-              ))}
-            </>
+              <Ionicons name="close-circle" size={18} color={Colors.textSecondary} />
+              <Text style={styles.permSummaryText}>
+                <Text style={styles.permSummaryNum}>{denied.length}</Text> no permitidas
+              </Text>
+            </View>
+            <Ionicons
+              name={permsOpen ? 'chevron-up' : 'chevron-down'}
+              size={18}
+              color={Colors.textSecondary}
+            />
+          </TouchableOpacity>
+
+          {permsOpen && (
+            <View style={styles.permList}>
+              {allowed.length > 0 && (
+                <>
+                  <Text style={styles.permHeader}>Puedes</Text>
+                  {allowed.map((p) => (
+                    <View key={p} style={styles.permRow}>
+                      <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
+                      <Text style={styles.permText}>{PERMISSION_LABELS[p]}</Text>
+                    </View>
+                  ))}
+                </>
+              )}
+
+              {denied.length > 0 && (
+                <>
+                  <Text style={[styles.permHeader, allowed.length > 0 && styles.permHeaderSpaced]}>
+                    No puedes
+                  </Text>
+                  {denied.map((p) => (
+                    <View key={p} style={styles.permRow}>
+                      <Ionicons name="close-circle" size={18} color={Colors.textSecondary} />
+                      <Text style={[styles.permText, styles.permDenied]}>{PERMISSION_LABELS[p]}</Text>
+                    </View>
+                  ))}
+                </>
+              )}
+            </View>
           )}
         </View>
         <Text style={styles.hint}>
@@ -201,6 +235,11 @@ const styles = StyleSheet.create({
   },
   permHeaderSpaced: { marginTop: 16 },
   permRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-start', paddingVertical: 4 },
+  permToggle: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  permSummary: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, flex: 1 },
+  permSummaryText: { fontSize: 13, color: Colors.textSecondary, marginRight: 6 },
+  permSummaryNum: { fontWeight: '800', color: Colors.textPrimary },
+  permList: { marginTop: 14, borderTopWidth: 1, borderTopColor: Colors.divider, paddingTop: 12 },
   permText: { flex: 1, fontSize: 13, color: Colors.textPrimary, lineHeight: 18 },
   permDenied: { color: Colors.textSecondary },
   linkCard: { flexDirection: 'row', alignItems: 'center', gap: 12 },

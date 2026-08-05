@@ -8,25 +8,20 @@ import {
   ActivityIndicator,
   StyleSheet,
   RefreshControl,
-  Alert,
-  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { ROLES, ROLE_LABELS, ROLE_COLORS, ROLE_DESCRIPTIONS, type Role, type UserSummary } from '@ptap/shared';
+import { ROLES, ROLE_LABELS, type Role, type UserSummary } from '@ptap/shared';
 import { fetchUsers, setUserActive, updateUserRole } from '../../services/users';
 import { useAuth } from '../../context/AuthContext';
+import { toast } from '../../services/toast-store';
+import { UserCard } from '../../components/UserCard';
 import Colors from '../../constants/colors';
-
-function notify(title: string, message: string) {
-  if (Platform.OS === 'web') window.alert(`${title}\n${message}`);
-  else Alert.alert(title, message);
-}
 
 /** Filtro por estado. `pendientes` (is_active=0) es la bandeja de entrada del admin. */
 type StatusFilter = 'todos' | 'pendientes' | 'activos';
 
-const STATUS_TABS: Array<{ key: StatusFilter; label: string }> = [
+const STATUS_TABS: { key: StatusFilter; label: string }[] = [
   { key: 'pendientes', label: 'Pendientes' },
   { key: 'activos', label: 'Activos' },
   { key: 'todos', label: 'Todos' },
@@ -106,6 +101,79 @@ export default function UsuariosScreen() {
     void load(search, status, roleFilter, pageRef.current + 1, true);
   }, [load, loadingMore, users.length, total, search, status, roleFilter]);
 
+  // Los filtros vigentes, en una ref. Los callbacks de las fichas tienen que ser ESTABLES para que
+  // el memo de `UserCard` sirva (si no, cada tecla del buscador repinta las 50 fichas), pero
+  // también necesitan recargar con los filtros ACTUALES. Congelarlos en un `useCallback([])` sobre
+  // el estado haría que, tras cambiar de filtro, aprobar una cuenta recargara con los filtros
+  // viejos.
+  const filtersRef = useRef({ search, status, roleFilter });
+  filtersRef.current = { search, status, roleFilter };
+
+  const onToggleExpand = useCallback(
+    (id: string) => setExpandedId((current) => (current === id ? null : id)),
+    [],
+  );
+
+  const onChangeRole = useCallback(async (target: UserSummary, role: Role) => {
+    setExpandedId(null);
+    if (target.role === role) return;
+    setBusyId(target.id);
+    try {
+      const updated = await updateUserRole(target.id, role);
+      setUsers((prev) => prev.map((u) => (u.id === updated.id ? updated : u)));
+      toast.success('Rol actualizado', `${updated.name} ahora es ${ROLE_LABELS[role]}.`);
+    } catch (err) {
+      toast.error('No se pudo cambiar el rol', err instanceof Error ? err.message : 'Intenta de nuevo.');
+    } finally {
+      setBusyId(null);
+    }
+  }, []);
+
+  const onToggleActive = useCallback(
+    async (target: UserSummary) => {
+      setBusyId(target.id);
+      try {
+        await setUserActive(target.id, !target.isActive);
+        // Recargar, no parchear en memoria: al aprobar a alguien desde "Pendientes" la cuenta
+        // deja de cumplir el filtro y debe desaparecer de la lista. Parchearla la dejaría ahí,
+        // contradiciendo el filtro activo. Vuelve a página 1 (la lista completa pudo cambiar de
+        // tamaño/orden).
+        const f = filtersRef.current;
+        await load(f.search, f.status, f.roleFilter, 1, false);
+        toast.success(
+          target.isActive ? 'Cuenta desactivada' : 'Cuenta aprobada',
+          target.isActive
+            ? `${target.name} ya no puede entrar. El cambio aplica en su siguiente petición.`
+            : `${target.name} ya puede entrar, con rol ${ROLE_LABELS[target.role]}.`,
+        );
+      } catch (err) {
+        toast.error('No se pudo cambiar el estado', err instanceof Error ? err.message : 'Intenta de nuevo.');
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [load],
+  );
+
+  // Estable también el `renderItem`: si fuera un arrow inline, la `FlatList` recorrería sus ~50
+  // envoltorios de celda en cada tecla del buscador aunque el memo de `UserCard` frene ahí.
+  const renderItem = useCallback(
+    ({ item }: { item: UserSummary }) => (
+      <UserCard
+        user={item}
+        isSelf={item.id === current?.id}
+        busy={busyId === item.id}
+        expanded={expandedId === item.id}
+        onToggleExpand={onToggleExpand}
+        onToggleActive={onToggleActive}
+        onChangeRole={onChangeRole}
+      />
+    ),
+    [current?.id, busyId, expandedId, onToggleExpand, onToggleActive, onChangeRole],
+  );
+
+  // TODOS los hooks quedan por encima de este early-return: si a un admin lo degradan mientras
+  // tiene la pantalla abierta, `hasPermission` pasa a false y el número de hooks no puede cambiar.
   if (!hasPermission('manage_users')) {
     return (
       <SafeAreaView style={styles.safe}>
@@ -116,36 +184,6 @@ export default function UsuariosScreen() {
         </View>
       </SafeAreaView>
     );
-  }
-
-  async function changeRole(target: UserSummary, role: Role) {
-    setExpandedId(null);
-    if (target.role === role) return;
-    setBusyId(target.id);
-    try {
-      const updated = await updateUserRole(target.id, role);
-      setUsers((prev) => prev.map((u) => (u.id === updated.id ? updated : u)));
-    } catch (err) {
-      notify('No se pudo cambiar el rol', err instanceof Error ? err.message : 'Intenta de nuevo.');
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  async function toggleActive(target: UserSummary) {
-    setBusyId(target.id);
-    try {
-      await setUserActive(target.id, !target.isActive);
-      // Recargar, no parchear en memoria: al aprobar a alguien desde "Pendientes" la cuenta
-      // deja de cumplir el filtro y debe desaparecer de la lista. Parchearla la dejaría ahí,
-      // contradiciendo el filtro activo. Vuelve a página 1 (la lista completa pudo cambiar de
-      // tamaño/orden).
-      await load(search, status, roleFilter, 1, false);
-    } catch (err) {
-      notify('No se pudo cambiar el estado', err instanceof Error ? err.message : 'Intenta de nuevo.');
-    } finally {
-      setBusyId(null);
-    }
   }
 
   if (loading) {
@@ -203,7 +241,12 @@ export default function UsuariosScreen() {
                 autoCorrect={false}
               />
               {search.length > 0 && (
-                <TouchableOpacity onPress={() => setSearch('')} hitSlop={8}>
+                <TouchableOpacity
+                  onPress={() => setSearch('')}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Limpiar la búsqueda"
+                >
                   <Ionicons name="close-circle" size={17} color={Colors.textSecondary} />
                 </TouchableOpacity>
               )}
@@ -243,133 +286,7 @@ export default function UsuariosScreen() {
             </View>
           </View>
         }
-        renderItem={({ item }) => {
-          const isSelf = item.id === current?.id;
-          // Otro administrador: los admins son mutuamente intocables (el backend lo rechaza).
-          const isOtherAdmin = item.role === 'admin' && !isSelf;
-          const locked = isSelf || isOtherAdmin; // acciones deshabilitadas
-          // Aprobar-primero: no se puede cambiar el rol hasta que la cuenta esté aprobada/activa
-          // (evita crear un "admin pendiente" que luego no se puede aprobar ni degradar).
-          const roleLocked = locked || !item.isActive;
-          const busy = busyId === item.id;
-          // Nunca inició sesión y está inactiva = recién registrada, esperando aprobación. Si ya
-          // entró alguna vez, un admin la desactivó: son dos situaciones distintas y el botón
-          // que corresponde ("Aprobar" vs "Reactivar") también.
-          const isPending = !item.isActive && item.lastLoginAt === null;
-          return (
-            <View style={[styles.card, !item.isActive && styles.cardInactive, isPending && styles.cardPending]}>
-              <View style={styles.cardHead}>
-                <View style={styles.flex}>
-                  <Text style={styles.name}>
-                    {item.name} {isSelf && <Text style={styles.selfTag}>(tú)</Text>}
-                  </Text>
-                  <Text style={styles.meta}>{item.email}</Text>
-                  {item.phone && <Text style={styles.meta}>{item.phone}</Text>}
-                  <Text style={styles.meta}>Planta: {item.plant}</Text>
-                </View>
-                <View style={[styles.roleBadge, { backgroundColor: ROLE_COLORS[item.role] + '22' }]}>
-                  <Text style={[styles.roleBadgeText, { color: ROLE_COLORS[item.role] }]}>
-                    {ROLE_LABELS[item.role]}
-                  </Text>
-                </View>
-              </View>
-
-              {isPending && (
-                <View style={styles.pendingTag}>
-                  <Ionicons name="time-outline" size={14} color={Colors.warning} />
-                  <Text style={styles.pendingTagText}>
-                    Pendiente de aprobación — verifica a la persona antes de habilitarla
-                  </Text>
-                </View>
-              )}
-              {/* Estado del correo (informativo). La activación NO exige correo verificado salvo
-                  que se active REQUIRE_EMAIL_VERIFICATION en el backend (hoy off, sin canal de envío). */}
-              <View style={styles.verifyTag}>
-                <Ionicons
-                  name={item.emailVerified ? 'mail-open-outline' : 'mail-unread-outline'}
-                  size={13}
-                  color={item.emailVerified ? Colors.success : Colors.textSecondary}
-                />
-                <Text style={[styles.verifyTagText, { color: item.emailVerified ? Colors.success : Colors.textSecondary }]}>
-                  {item.emailVerified ? 'Correo verificado' : 'Correo sin verificar'}
-                </Text>
-              </View>
-              {!item.isActive && !isPending && (
-                <Text style={styles.inactiveTag}>Cuenta desactivada — no puede iniciar sesión</Text>
-              )}
-
-              <View style={styles.actions}>
-                <TouchableOpacity
-                  style={[styles.action, (busy || roleLocked) && styles.actionDisabled]}
-                  disabled={busy || roleLocked}
-                  onPress={() => setExpandedId(expandedId === item.id ? null : item.id)}
-                  activeOpacity={0.8}
-                >
-                  <Ionicons name="swap-horizontal-outline" size={16} color={Colors.primary} />
-                  <Text style={styles.actionText}>Cambiar rol</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.action, (busy || locked) && styles.actionDisabled]}
-                  disabled={busy || locked}
-                  onPress={() => void toggleActive(item)}
-                  activeOpacity={0.8}
-                >
-                  <Ionicons
-                    name={
-                      item.isActive
-                        ? 'person-remove-outline'
-                        : isPending
-                          ? 'checkmark-circle-outline'
-                          : 'person-add-outline'
-                    }
-                    size={16}
-                    color={item.isActive ? Colors.danger : Colors.primary}
-                  />
-                  <Text style={[styles.actionText, item.isActive && { color: Colors.danger }]}>
-                    {item.isActive ? 'Desactivar' : isPending ? 'Aprobar' : 'Reactivar'}
-                  </Text>
-                </TouchableOpacity>
-
-                {busy && <ActivityIndicator size="small" color={Colors.primary} />}
-              </View>
-
-              {isSelf && (
-                <Text style={styles.selfHint}>
-                  No puedes cambiar tu propio rol ni desactivarte (evita perder el acceso de administrador).
-                </Text>
-              )}
-              {isOtherAdmin && (
-                <Text style={styles.selfHint}>
-                  No puedes modificar a otro administrador. La gestión de administradores se hace fuera de la app.
-                </Text>
-              )}
-              {!item.isActive && !locked && (
-                <Text style={styles.selfHint}>
-                  Aprueba la cuenta primero; luego podrás asignarle un rol.
-                </Text>
-              )}
-
-              {expandedId === item.id && (
-                <View style={styles.rolePicker}>
-                  {ROLES.map((r) => (
-                    <TouchableOpacity key={r} style={styles.roleOption} onPress={() => void changeRole(item, r)}>
-                      <Ionicons
-                        name={r === item.role ? 'radio-button-on' : 'radio-button-off'}
-                        size={18}
-                        color={r === item.role ? Colors.primary : Colors.textSecondary}
-                      />
-                      <View style={styles.flex}>
-                        <Text style={styles.roleOptionText}>{ROLE_LABELS[r]}</Text>
-                        <Text style={styles.roleOptionDesc}>{ROLE_DESCRIPTIONS[r]}</Text>
-                      </View>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              )}
-            </View>
-          );
-        }}
+        renderItem={renderItem}
       />
     </SafeAreaView>
   );
@@ -390,13 +307,13 @@ const styles = StyleSheet.create({
   searchBox: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     backgroundColor: Colors.surface, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10,
-    borderWidth: 1, borderColor: '#E5E7EB',
+    borderWidth: 1, borderColor: Colors.divider,
   },
   searchInput: { flex: 1, fontSize: 14, color: Colors.textPrimary, outlineStyle: 'none' as never },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {
     paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999,
-    borderWidth: 1, borderColor: '#E5E7EB', backgroundColor: Colors.surface,
+    borderWidth: 1, borderColor: Colors.divider, backgroundColor: Colors.surface,
   },
   chipOn: { backgroundColor: Colors.primary, borderColor: Colors.primary },
   chipText: { fontSize: 12.5, fontWeight: '600', color: Colors.textSecondary },
@@ -406,31 +323,6 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.danger + '15', padding: 12, margin: 16, borderRadius: 10,
   },
   errorText: { flex: 1, color: Colors.danger, fontSize: 13 },
-  card: {
-    backgroundColor: Colors.surface, borderRadius: 12, padding: 14,
-    borderWidth: 1, borderColor: '#E5E7EB',
-  },
-  cardInactive: { opacity: 0.65 },
-  // Pendiente ≠ desactivada: pide una acción, así que no se atenúa y se marca en ámbar.
-  cardPending: { opacity: 1, borderColor: Colors.warning, backgroundColor: Colors.warning + '0C' },
-  pendingTag: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 },
-  pendingTagText: { flex: 1, fontSize: 11.5, color: Colors.warning, fontWeight: '600' },
-  verifyTag: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 6 },
-  verifyTagText: { fontSize: 11, fontWeight: '600' },
-  cardHead: { flexDirection: 'row', gap: 10, alignItems: 'flex-start' },
-  name: { fontSize: 15, fontWeight: '700', color: Colors.textPrimary },
-  selfTag: { fontSize: 12, fontWeight: '400', color: Colors.textSecondary },
-  meta: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
-  roleBadge: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999 },
-  roleBadgeText: { fontSize: 11, fontWeight: '700' },
-  inactiveTag: { fontSize: 11.5, color: Colors.danger, marginTop: 8 },
-  actions: { flexDirection: 'row', gap: 16, alignItems: 'center', marginTop: 12 },
-  action: { flexDirection: 'row', gap: 5, alignItems: 'center' },
-  actionDisabled: { opacity: 0.35 },
-  actionText: { fontSize: 13, fontWeight: '600', color: Colors.primary },
-  selfHint: { fontSize: 11, color: Colors.textSecondary, marginTop: 8, fontStyle: 'italic' },
-  rolePicker: { marginTop: 12, borderTopWidth: 1, borderTopColor: '#E5E7EB', paddingTop: 8, gap: 2 },
-  roleOption: { flexDirection: 'row', gap: 10, alignItems: 'center', paddingVertical: 8 },
-  roleOptionText: { fontSize: 14, color: Colors.textPrimary, fontWeight: '600' },
-  roleOptionDesc: { fontSize: 11.5, color: Colors.textSecondary },
+  // Los estilos de la ficha de usuario viven ahora en `components/UserCard.tsx`, junto al markup
+  // que los usa. Se borraron de aquí porque habían quedado huérfanos y, peor, divergidos.
 });

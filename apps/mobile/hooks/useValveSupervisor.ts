@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { sendValveCommand } from '../services/api';
 import { detectManual, interpretCommand, type CommandVerdict, type ValveState, type ValveView } from '../services/valves';
 
@@ -89,10 +89,16 @@ export function useValveSupervisor(plantId: string, valves: ValveView[]) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [valves, pushEvent]);
 
-  const supervised: SupervisedValve[] = valves.map((v) => {
-    const ov = overrides[v.id];
-    return { ...v, effectiveState: ov ?? v.state, manualOverride: ov !== undefined };
-  });
+  // Memoizado: sin esto se creaba un array (y N objetos) nuevos en CADA render, rompiendo la
+  // identidad de las props de todas las `ValveItem` y anulando su memo.
+  const supervised = useMemo<SupervisedValve[]>(
+    () =>
+      valves.map((v) => {
+        const ov = overrides[v.id];
+        return { ...v, effectiveState: ov ?? v.state, manualOverride: ov !== undefined };
+      }),
+    [valves, overrides],
+  );
 
   /**
    * Envía la orden. SIEMPRE se envía, incluso si la válvula ya está en ese estado (lo pidió el

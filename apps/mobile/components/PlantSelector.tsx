@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { ScrollView, TouchableOpacity, Text, View } from 'react-native';
 import { usePlant, PLANTS } from '../context/PlantContext';
 import Colors from '../constants/colors';
@@ -8,7 +9,7 @@ import Colors from '../constants/colors';
  * ofrecerle las demás sería enseñarle puertas que el backend cierra con 403. Las pantallas
  * muestran el nombre de la planta en su propia cabecera, así que no se pierde información.
  */
-export function PlantSelector() {
+function PlantSelectorBase() {
   const { selectedPlant, setSelectedPlant, canSwitchPlant } = usePlant();
 
   if (!canSwitchPlant) return null;
@@ -26,6 +27,9 @@ export function PlantSelector() {
             <TouchableOpacity
               key={plant.id}
               onPress={() => setSelectedPlant(plant)}
+              accessibilityRole="button"
+              accessibilityState={{ selected: isSelected }}
+              accessibilityLabel={`Ver la planta ${plant.name}`}
               style={{
                 paddingHorizontal: 18,
                 paddingVertical: 7,
@@ -51,3 +55,6 @@ export function PlantSelector() {
     </View>
   );
 }
+
+/** Sin props: solo se re-renderiza cuando cambia el PlantContext (que ya está memoizado). */
+export const PlantSelector = memo(PlantSelectorBase);

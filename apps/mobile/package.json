@@ -14,15 +14,13 @@
     "expo-router": "~56.2.16",
     "expo-secure-store": "~56.0.4",
     "expo-status-bar": "~56.0.4",
-    "nativewind": "^4.2.6",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.85.3",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "~4.26.0",
     "react-native-web": "^0.21.2",
-    "socket.io-client": "^4.8.3",
-    "tailwindcss": "^3.4.17"
+    "socket.io-client": "^4.8.3"
   },
   "devDependencies": {
     "@types/node": "^22.20.1",
@@ -38,7 +36,7 @@
     "web": "expo start --web",
     "web:fast": "expo start --web --clear",
     "lint": "expo lint",
-    "test": "node --import tsx --test services/signal-kind.test.ts services/valves.test.ts",
+    "test": "node --import tsx --test services/signal-kind.test.ts services/valves.test.ts services/signal-groups.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "prebuild:android": "expo prebuild -p android",
     "build:android": "expo prebuild -p android && cd android && gradlew.bat assembleRelease"

@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { View, Text } from 'react-native';
 import Colors from '../constants/colors';
 import type { LivenessState } from '../services/api';
@@ -15,12 +16,17 @@ const LIVENESS: Record<LivenessState, { color: string; label: string }> = {
  *                      un tanque a nivel constante se ve así durante horas.
  *   rojo   CONGELADO → perdimos la conexión con el PLC; lo que se muestre ya no es fiable.
  */
-export function LiveBadge({ state, loading = false }: { state: LivenessState; loading?: boolean }) {
+function LiveBadgeBase({ state, loading = false }: { state: LivenessState; loading?: boolean }) {
   // Durante la carga inicial (aún sin dato) NO alarmar con el rojo "CONGELADO · SIN CONEXIÓN":
   // se muestra un estado neutro "CONECTANDO…" hasta que llegue el primer snapshot.
   const { color, label } = loading ? { color: Colors.neutral, label: 'CONECTANDO…' } : LIVENESS[state];
   return (
     <View
+      // El paso a CONGELADO es información crítica que hoy solo se veía. `polite` hace que un
+      // lector de pantalla lo anuncie al cambiar, sin interrumpir lo que esté leyendo.
+      accessibilityLiveRegion="polite"
+      accessibilityRole="text"
+      accessibilityLabel={`Estado de los datos: ${label}`}
       style={{
         flexDirection: 'row',
         alignItems: 'center',
@@ -32,9 +38,12 @@ export function LiveBadge({ state, loading = false }: { state: LivenessState; lo
       }}
     >
       <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color, marginRight: 8 }} />
-      <Text style={{ fontSize: 11, fontWeight: '600', color: Colors.textSecondary, letterSpacing: 1.2 }}>
+      <Text style={{ fontSize: 12, fontWeight: '600', color: Colors.textSecondary, letterSpacing: 1.2 }}>
         {label}
       </Text>
     </View>
   );
 }
+
+/** Props primitivas: el `memo` de fábrica basta. */
+export const LiveBadge = memo(LiveBadgeBase);

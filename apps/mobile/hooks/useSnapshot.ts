@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { fetchSnapshot, type PlantSnapshotDto } from '../services/api';
-import { subscribePlant } from '../services/socket';
+import { joinPlantStream } from '../services/plant-stream';
 import {
   getLastSnapshot,
   lastDataVersion,
@@ -50,7 +50,9 @@ export function useSnapshot(plantId: string, enabled = true) {
   useEffect(() => {
     if (!enabled) return; // Civil: nunca se suscribe al socket de la planta (evita fuga de datos)
     lastSeq.current = 0;
-    const unsubscribe = subscribePlant(plantId, {
+    // Stream COMPARTIDO: aunque varios hooks pidan la misma planta (la cáscara de pestañas vía
+    // useAlerts + la pantalla activa), solo se abre UNA suscripción real. Ver `plant-stream.ts`.
+    const unsubscribe = joinPlantStream(plantId, {
       onSnapshot: (snapshot: PlantSnapshotDto) => {
         if (lastSeq.current > 0) {
           // Hueco (perdimos un snapshot intermedio) o REINICIO del backend (sequence volvió atrás,

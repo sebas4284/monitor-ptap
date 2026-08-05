@@ -1,5 +1,5 @@
-import { useMemo } from 'react';
-import { View, Text, ScrollView, RefreshControl, StyleSheet } from 'react-native';
+import { useCallback, useMemo } from 'react';
+import { View, Text, ScrollView, RefreshControl, StyleSheet, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useSnapshot } from '../../hooks/useSnapshot';
@@ -12,11 +12,15 @@ import { TankGaugeCard } from '../../components/TankGaugeCard';
 import { LiveBadge } from '../../components/LiveBadge';
 import { PlantSelector } from '../../components/PlantSelector';
 import { ConnectionBanner } from '../../components/ConnectionBanner';
+import { DashboardSummary } from '../../components/DashboardSummary';
+import { GroupHeader } from '../../components/GroupHeader';
+import { DashboardSkeleton } from '../../components/Skeleton';
+import { OfflineNotice } from '../../components/OfflineNotice';
 import Colors from '../../constants/colors';
-import type { SignalDto } from '../../services/api';
-import { isTankSignal, tanksFromSnapshot } from '../../services/tanks';
-import { isValveSignal } from '../../services/valves';
+import { tanksFromSnapshot } from '../../services/tanks';
 import { cardKindFor } from '../../services/signal-kind';
+import { dashboardSignals, groupSignals, summarize, type GroupId } from '../../services/signal-groups';
+import { setCompact, toggleGroup, useDashboardPrefs } from '../../services/dashboard-prefs';
 
 /** Icono por domainKey conocido (cosmético). */
 const ICONS: Record<string, string> = {
@@ -43,29 +47,44 @@ export default function TableroScreen() {
   const { selectedPlant } = usePlant();
   const { hasPermission } = useAuth();
   const canView = hasPermission('view_dashboard');
-  // Una SOLA suscripción por pantalla (antes tablero + useTanques abrían dos), y con `enabled`
-  // atado al permiso: el Civil que llegue por deep-link no dispara el fetch (403) ni el socket.
+  // Una SOLA suscripción por planta (compartida vía `plant-stream.ts`, aunque la cáscara de
+  // pestañas también pida la misma), y con `enabled` atado al permiso: el Civil que llegue por
+  // deep-link no dispara el fetch (403) ni el socket.
   const { data: snapshot, isLoading, isError, refetch, isRefetching } = useSnapshot(selectedPlant.id, canView);
+
+  // Preferencias de presentación (densidad y grupos plegados), persistidas en el dispositivo.
+  const prefs = useDashboardPrefs();
+
   const tanks = useMemo(() => tanksFromSnapshot(snapshot), [snapshot]);
 
-  const signals: [string, SignalDto][] = snapshot
-    // Tanques y válvulas tienen su propia pantalla/tarjeta: no duplicarlos como gauges genéricos.
-    ? Object.entries(snapshot.signals).filter(([k]) => !isTankSignal(k) && !isValveSignal(k))
-    : [];
+  // Memoizado: antes se recalculaba en CADA render (dos predicados por clave), pese a que `tanks`
+  // justo encima sí estaba memoizado.
+  const signals = useMemo(() => dashboardSignals(snapshot?.signals), [snapshot]);
+
   const livenessState = snapshot?.liveness.state ?? 'frozen';
   const frozen = livenessState === 'frozen';
+  const groups = useMemo(() => groupSignals(signals, frozen), [signals, frozen]);
+  // Derivado de los grupos, que ya contaron: recorrer otra vez las señales daría los mismos
+  // números con el riesgo de que las dos cuentas se contradigan.
+  const summary = useMemo(() => summarize(groups), [groups]);
   const hasContent = tanks.length > 0 || signals.length > 0;
+
   // El servidor se considera alcanzable si NO hubo error REST, o si aún así el socket ya nos
   // entregó datos (en React Query v5 `setQueryData` no limpia el estado 'error'): así el banner
   // rojo no contradice a las tarjetas que ya muestran datos en vivo.
   const apiReachable = !isError || (!!snapshot && !snapshot.pending);
+  // Error DE VERDAD: falló la carga y no hay ni respaldo local que enseñar. Si hay respaldo, manda
+  // el diseño de siempre (banner + datos congelados), que informa mejor que una pantalla de error.
+  const showError = isError && !snapshot;
+
+  const onToggleGroup = useCallback((id: GroupId) => toggleGroup(id), []);
 
   // Guard de rol: el tablero detallado es para operador/jefe/admin. El Civil (solo estado
   // básico) no entra aquí ni siquiera por navegación directa. El backend igual responde 403.
-  if (!hasPermission('view_dashboard')) {
+  if (!canView) {
     return (
       <SafeAreaView style={styles.safe} edges={['bottom']}>
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 10 }}>
+        <View style={styles.centered}>
           <Ionicons name="lock-closed-outline" size={40} color={Colors.textSecondary} />
           <Text style={styles.plantName}>Acceso restringido</Text>
           <Text style={styles.sectionSubtitle}>El tablero detallado no está disponible para tu rol.</Text>
@@ -86,17 +105,40 @@ export default function TableroScreen() {
         }
       >
         <View style={styles.sectionHeader}>
-          <View>
+          <View style={{ flex: 1 }}>
             <Text style={styles.plantName}>{snapshot?.displayName ?? selectedPlant.name}</Text>
             <Text style={styles.sectionSubtitle}>Tablero en tiempo real</Text>
           </View>
+          {hasContent && (
+            <TouchableOpacity
+              style={styles.densityBtn}
+              onPress={() => setCompact(!prefs.compact)}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityState={{ selected: prefs.compact }}
+              accessibilityLabel={
+                prefs.compact ? 'Mostrar el detalle de cada tarjeta' : 'Ver el tablero en modo compacto'
+              }
+            >
+              <Ionicons
+                name={prefs.compact ? 'list-outline' : 'grid-outline'}
+                size={16}
+                color={Colors.textSecondary}
+              />
+            </TouchableOpacity>
+          )}
           <Clock />
         </View>
 
-        {isLoading ? (
-          <View style={styles.info}>
-            <Text style={styles.infoText}>Cargando tablero…</Text>
-          </View>
+        {isLoading && !snapshot ? (
+          <DashboardSkeleton />
+        ) : showError ? (
+          <OfflineNotice
+            title="No se pudo cargar el tablero."
+            detail="No hay conexión con el servidor y este dispositivo aún no tiene ninguna lectura guardada de esta planta."
+            onRetry={() => void refetch()}
+            retryLabel="Reintentar la carga del tablero"
+          />
         ) : !hasContent ? (
           // Dos vacíos DISTINTOS: sin conexión y sin respaldo local aún (pending), o una planta
           // que de verdad no tiene señales en el mapping. Antes ambos decían "no mapeada" y
@@ -116,6 +158,16 @@ export default function TableroScreen() {
           </View>
         ) : (
           <>
+            {signals.length > 0 && (
+              <DashboardSummary
+                total={summary.total}
+                anomalies={summary.anomalies}
+                noData={summary.noData}
+                compact={prefs.compact}
+              />
+            )}
+
+            {/* Los tanques van primero y NUNCA se pliegan: son la lectura principal de la planta. */}
             {tanks.length > 0 && (
               <View style={styles.grid}>
                 {tanks.map((tank) => (
@@ -126,22 +178,44 @@ export default function TableroScreen() {
               </View>
             )}
 
-            {signals.length > 0 && (
-              <View style={styles.grid}>
-                {signals.map(([domainKey, signal]) => {
-                  const icon = ICONS[domainKey] ?? 'analytics-outline';
-                  return (
-                    <View key={domainKey} style={styles.cell}>
-                      {cardKindFor(domainKey) === 'flow' ? (
-                        <FlowMeterCard signal={signal} name={domainKey} icon={icon} frozen={frozen} />
-                      ) : (
-                        <GaugeCard signal={signal} name={domainKey} icon={icon} frozen={frozen} />
-                      )}
+            {groups.map((group) => {
+              // `lockedOpen` gana siempre sobre la preferencia del usuario: un grupo con una señal
+              // fuera de rango, sin dato, o con la planta congelada, se muestra sí o sí.
+              const collapsed = !group.lockedOpen && prefs.collapsed.includes(group.id);
+              return (
+                <View key={group.id}>
+                  <GroupHeader
+                    id={group.id}
+                    title={group.title}
+                    count={group.entries.length}
+                    anomalyCount={group.anomalyCount}
+                    noDataCount={group.noDataCount}
+                    lockedOpen={group.lockedOpen}
+                    collapsed={collapsed}
+                    onToggle={onToggleGroup}
+                  />
+                  {!collapsed && (
+                    <View style={styles.grid}>
+                      {group.entries.map(([domainKey, signal]) => {
+                        const icon = ICONS[domainKey] ?? 'analytics-outline';
+                        const Card = cardKindFor(domainKey) === 'flow' ? FlowMeterCard : GaugeCard;
+                        return (
+                          <View key={domainKey} style={styles.cell}>
+                            <Card
+                              signal={signal}
+                              name={domainKey}
+                              icon={icon}
+                              frozen={frozen}
+                              compact={prefs.compact}
+                            />
+                          </View>
+                        );
+                      })}
                     </View>
-                  );
-                })}
-              </View>
-            )}
+                  )}
+                </View>
+              );
+            })}
           </>
         )}
       </ScrollView>
@@ -164,20 +238,27 @@ function Clock() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.surface },
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 10 },
   content: { padding: 12 },
   sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: 10,
     marginBottom: 14,
     paddingHorizontal: 4,
   },
   plantName: { fontSize: 17, fontWeight: '800', color: Colors.textPrimary },
   sectionSubtitle: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
+  densityBtn: {
+    borderWidth: 1,
+    borderColor: Colors.divider,
+    borderRadius: 8,
+    padding: 6,
+  },
   clock: { fontSize: 13, fontWeight: '600', color: Colors.textSecondary, fontVariant: ['tabular-nums'] },
   grid: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 8 },
   cell: { width: '50%' },
-  info: { paddingVertical: 48, alignItems: 'center' },
+  info: { paddingVertical: 48, alignItems: 'center', gap: 6 },
   infoText: { color: Colors.textSecondary, fontSize: 14, textAlign: 'center' },
-  infoSub: { color: Colors.textSecondary, fontSize: 12, marginTop: 6, textAlign: 'center' },
+  infoSub: { color: Colors.textSecondary, fontSize: 12, marginTop: 6, textAlign: 'center', paddingHorizontal: 20 },
 });

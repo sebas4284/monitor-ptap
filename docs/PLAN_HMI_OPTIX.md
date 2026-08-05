@@ -206,7 +206,7 @@ como abrir un navegador contra el host):
    cliente Optix usa WebSocket). **Servir bajo el MISMO origen** (`/hmi/`) evita CORS/mixed-content y la
    restricción `frame-src` (queda bajo `'self'`).
    - **Ajuste de cabeceras (bloqueador real):** hoy la config pone `X-Frame-Options: DENY` y CSP
-     `frame-ancestors 'none'` ([DEPLOY_VPS.md:192,223]) → **prohíben todo iframe**. Hay que: (a) en el
+     `frame-ancestors 'none'` (RUNBOOK_PRODUCCION.md §11.5) → **prohíben todo iframe**. Hay que: (a) en el
      `location /` de la SPA, cambiar a `X-Frame-Options: SAMEORIGIN` y CSP `frame-src 'self'`; (b) en
      `location /hmi/`, NO reenviar `X-Frame-Options: DENY` del upstream (y repetir las demás cabeceras de
      seguridad, porque nginx no las hereda si el location define `add_header`).

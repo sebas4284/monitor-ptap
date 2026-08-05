@@ -260,7 +260,7 @@
         },
         "topologyVerified": {
           "type": "boolean",
-          "description": "Marca opcional: la topología de buffers de este sitio fue verificada por browse de solo lectura contra el PLC (ver docs/PHASE0_VERIFICATION.md)."
+          "description": "Marca opcional: la topología de buffers de este sitio fue verificada por browse de solo lectura contra el PLC (ver docs/plc/OBSERVACIONES_FASE0.md §1)."
         },
         "opcBuffers": { "$ref": "#/$defs/opcBuffers" },
         "connection": { "$ref": "#/$defs/connection" },

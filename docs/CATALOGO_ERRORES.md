@@ -209,7 +209,7 @@ RBAC, PlantScopeGuard, SRV-04, revocación por relectura en BD); estos son del l
 ## CFG — Configuración / arranque
 
 Errores de puesta en marcha; no pasan por la UI, se ven en el arranque. Detalle en `docs/SETUP.md` y
-`docs/SETUP_AGENT.md`.
+`docs/SETUP.md`.
 
 | Código | Título | Síntoma | Solución | Ruta |
 |---|---|---|---|---|
