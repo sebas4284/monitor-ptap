@@ -122,14 +122,13 @@ sudo bash ~/deploy-scripts/web-publish.sh
 > La web se compila con `API_BASE_URL` **vacío** (mismo origen): no hay URL horneada, así que solo
 > hace falta recompilar cuando cambia el código, no por el dominio.
 
+**Despliegue del 2026-08-05: COMPLETO.** Backend y web publicados y verificados en la VM
+(commit `6075976`). Los siete comprobantes en verde: API `/health`, `/health/db`, `/health/opc`,
+la web por HTTP y por HTTPS, la API a través de nginx y `/descargar/`. Bundle servido
+`entry-5ab1a416…`, puente OPC `Connected` con 41 buffers activos y 0 en fallo.
+
 Pendiente:
 
-- [ ] 🔴 **`sudo bash ~/deploy-scripts/web-publish.sh`** — el build del front del 2026-08-05 está
-      compilado en `~/monitor-ptap/apps/mobile/dist/` (57 archivos) pero **sin publicar**. El
-      backend ya está desplegado y en verde; solo falta este copiado. `/var/www/ptap-web` es de
-      `www-data` y no hay ninguna regla `NOPASSWD` en el sudoers, así que el paso exige la
-      contraseña de un humano. Hasta que se corra, el navegador sigue sirviendo el bundle del 3-ago
-      (`entry-cc63e2cd…`; el nuevo es `entry-5ab1a416…`).
 - [ ] **NTP** — para que el KPI de latencia OPC sea fiable: `sudo timedatectl set-ntp true`
 - [ ] Considerar rotar el token de GitHub de **LorJosh** (token *classic* con scope `repo`; los
       fine-grained no sirven en repos de otra cuenta personal).
