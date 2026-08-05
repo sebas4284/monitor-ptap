@@ -20,20 +20,32 @@ Detalle completo en [`DOMINIO_AQUORA_CLOUDFLARE.md §7`](./DOMINIO_AQUORA_CLOUDF
 Cloudflare Tunnel quedó **bloqueado**: el dominio tiene `update prohibited` en GoDaddy y no se pueden
 cambiar los nameservers sin el titular de esa cuenta. Se fue por Let's Encrypt.
 
-Hecho el 2026-07-31:
+**Estado verificado en la VM el 2026-08-05** (el doc anterior daba varios de estos por pendientes
+cuando ya estaban hechos):
 
-- [x] Certificado emitido para `aquora.xpertic.co` (Let's Encrypt, vence **2026-10-29**)
+- [x] Certificado emitido para `aquora.xpertic.co` (Let's Encrypt). Verificado en vivo:
+      `CN = aquora.xpertic.co`, válido **31-jul-2026 → 29-oct-2026**.
 - [x] `le-cert-user.sh`, `le-nginx.sh` y `le-renew.sh` desplegados en `~/deploy-scripts/`
+- [x] **`le-nginx.sh` YA se corrió y HTTPS está prendido.** El cert vive en `/etc/ssl/ptap/`, nginx
+      tiene su server block de `listen 443 ssl` (más el de `:80` que redirige a HTTPS), y desde la
+      propia VM `https://aquora.xpertic.co/` y `/api/health` responden **200**.
+- [x] 80 y 443 en escucha en `0.0.0.0` dentro de la VM.
+- [x] `CORS_ORIGINS` ya incluye `https://aquora.xpertic.co`.
 
-Falta:
+Falta — y esto es lo único que bloquea de verdad:
 
-- [ ] `sudo bash ~/deploy-scripts/le-nginx.sh` — instala el cert en `/etc/ssl/ptap/` y prende HTTPS.
-      **Requiere contraseña de sudo.**
+- [ ] 🔴 **Pedir a redes el DNAT `191.102.61.123:443 → 192.168.30.50:443`.** Comprobado el
+      2026-08-05 desde un equipo de la VPN: el DNS público de `aquora.xpertic.co` resuelve
+      correctamente a `191.102.61.123`, pero **los puertos 443 y 80 están cerrados desde fuera**
+      (`TcpTestSucceeded: False` en ambos). El certificado y nginx están perfectos; simplemente
+      nadie llega desde Internet.
+- [ ] Pedir también el **80** — es lo que hace automática la renovación (ver el aviso de abajo).
+- [ ] `APP_PUBLIC_URL` **sigue apuntando al túnel efímero de Cloudflare**, y así debe quedarse
+      hasta que el punto anterior esté resuelto: de esa variable salen los enlaces absolutos
+      (verificación de correo), y apuntarlos a un dominio inalcanzable los rompería. Cuando el
+      DNAT esté: `bash ~/deploy-scripts/env-dominio.sh --publicar` + `pm2 restart ptap-api`.
 - [ ] Borrar el TXT `_acme-challenge.aquora` del cPanel (ya cumplió su función)
-- [ ] Pedir a redes: `191.102.61.123:443 → 192.168.30.50:443`. Sin esto el certificado está bien
-      pero nadie llega desde afuera.
-- [ ] Pedir también el **80** — es lo que hace automática la renovación (ver el aviso de abajo)
-- [ ] Abrir el 443 en ufw (hoy solo admite rangos privados, `ufw-restrict80.sh`)
+- [ ] Confirmar el 443 en ufw (no se pudo verificar sin sudo; el puerto sí está en escucha)
 - [ ] Una vez validado el dominio: pedir a redes que **quite el DNAT** `191.102.61.123:5554 → :80`
 
 > 🔴 **La renovación NO es automática.** Al emitir, certbot informa que programó una tarea para
@@ -112,10 +124,12 @@ sudo bash ~/deploy-scripts/web-publish.sh
 
 Pendiente:
 
-- [ ] **`sudo bash ~/deploy-scripts/web-publish.sh`** — el build del front del 2026-08-05 está
-      compilado en `~/monitor-ptap/apps/mobile/dist/` pero **sin publicar**: el copiado a
-      `/var/www/ptap-web` exige contraseña de sudo. Hasta que se corra, el navegador sigue sirviendo
-      la versión del 3-ago.
+- [ ] 🔴 **`sudo bash ~/deploy-scripts/web-publish.sh`** — el build del front del 2026-08-05 está
+      compilado en `~/monitor-ptap/apps/mobile/dist/` (57 archivos) pero **sin publicar**. El
+      backend ya está desplegado y en verde; solo falta este copiado. `/var/www/ptap-web` es de
+      `www-data` y no hay ninguna regla `NOPASSWD` en el sudoers, así que el paso exige la
+      contraseña de un humano. Hasta que se corra, el navegador sigue sirviendo el bundle del 3-ago
+      (`entry-cc63e2cd…`; el nuevo es `entry-5ab1a416…`).
 - [ ] **NTP** — para que el KPI de latencia OPC sea fiable: `sudo timedatectl set-ntp true`
 - [ ] Considerar rotar el token de GitHub de **LorJosh** (token *classic* con scope `repo`; los
       fine-grained no sirven en repos de otra cuenta personal).
