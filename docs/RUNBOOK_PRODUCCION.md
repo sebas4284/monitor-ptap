@@ -111,13 +111,28 @@ Hoy es un **quick tunnel efímero**: `cloudflared tunnel --url http://localhost:
 
 ## 7. Actualizar el sistema (flujo normal)
 
-1. Desarrollo local en `yosh` → `git push origin yosh:dev` (cuenta **LorJosh**, token *classic* con
+> **La VM sigue la rama `yosh`**, no `dev`. (Verificado desplegando el 2026-08-05; la versión
+> anterior de este runbook decía `dev` y ese push no habría llegado al servidor.)
+
+1. Desarrollo local en `yosh` → `git push origin yosh` (cuenta **LorJosh**, token *classic* con
    scope `repo`).
-2. En la VM: `bash ~/deploy.sh` (hace `git pull` de `dev` + `npm ci` + migraciones + build +
+2. En la VM: `bash ~/deploy.sh` (hace `fetch` + `pull --ff-only` + `npm ci` + migraciones + build +
    `pm2 restart`).
-3. Si cambió el **front**: recompilar la web
-   `cd ~/monitor-ptap/apps/mobile && API_BASE_URL= npx expo export -p web --clear` y
-   `sudo bash ~/deploy-scripts/web-setup.sh`.
+3. Si cambió el **front**: recompilar y publicar la web
+   ```bash
+   cd ~/monitor-ptap/apps/mobile && API_BASE_URL= npx expo export -p web --clear
+   sudo bash ~/deploy-scripts/web-publish.sh
+   ```
+
+> ⚠️ **Publicar con `web-publish.sh`, nunca con `web-setup.sh`.** El segundo termina copiando
+> `~/ptap-web.nginx` sobre `/etc/nginx/sites-available/ptap`, o sea que **borra los server blocks de
+> HTTPS** si ya se corrió `le-nginx.sh`, y el dominio vuelve a HTTP sin avisar. `web-publish.sh`
+> solo copia estáticos, respalda la versión anterior en `/var/www/ptap-web.bak-<fecha>` y recarga.
+
+> ⚠️ **Desplegar SIEMPRE por git.** El 2026-08-05 la VM tenía 15 archivos rastreados modificados sin
+> commitear, por haberse actualizado copiando archivos a mano; su HEAD llevaba 5 días desfasado del
+> código que realmente corría. Hubo que verificar archivo por archivo que la divergencia fuera
+> cosmética antes de poder actualizar.
 
 > 🔴 **`pm2 restart --update-env` tumba la API. No usarlo.** pm2 reemplaza el entorno del proceso por
 > el del shell que invoca el comando; desde SSH no interactivo ese entorno es mínimo y la API

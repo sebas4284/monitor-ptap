@@ -74,25 +74,51 @@ Falta:
 
 ---
 
-## 2. Pendiente de desplegar (código listo en `yosh`, VM sin actualizar)
+## 2. Despliegue
 
-La VM sigue la rama `dev`, que va por detrás de `yosh`.
+> **Corregido el 2026-08-05 desplegando de verdad.** Dos cosas que este documento afirmaba y que
+> resultaron falsas:
+>
+> 1. **La VM sigue la rama `yosh`, no `dev`.** El `git push origin yosh:dev` que aquí se pedía no
+>    habría llegado al servidor. Se empuja y se despliega `yosh`.
+> 2. **`deploy.sh` NO estaba corregido**: seguía usando `pm2 restart ptap-api --update-env`, la
+>    bandera que causó los ~3 min de caída del 31-jul. Ya se quitó (respaldo en `~/backups/`).
+>
+> Además, el árbol de la VM tenía 15 archivos rastreados modificados sin commitear, resultado de
+> actualizaciones hechas copiando archivos en vez de por git. Se verificó que **toda** la
+> divergencia era cosmética (indentación y un comentario movido) antes de hacer `reset --hard`.
+> Si se vuelve a actualizar la VM copiando archivos, esto se repite: **desplegar siempre por git**.
 
-- [ ] `git push origin yosh:dev` — requiere la cuenta **LorJosh** con token *classic* con scope
-      `repo` (los fine-grained no sirven en repos de otra cuenta personal). Considerar rotar el token.
-- [ ] En la VM (por VPN + SSH `ptap`):
-      ```bash
-      bash ~/deploy.sh                       # git pull dev + npm ci + build + pm2 restart ptap-api
-      npm run -w @ptap/api db:migrate        # aplica índices 0007 (users) y 0008 (audit_log)
-      ```
-- [ ] Recompilar la web:
-      ```bash
-      cd ~/monitor-ptap/apps/mobile && API_BASE_URL= npx expo export -p web --clear
-      sudo bash ~/deploy-scripts/web-setup.sh
-      ```
-      Se compila con `API_BASE_URL` **vacío** (mismo origen): no hay URL horneada, así que solo hace
-      falta cuando cambia el código, no por el dominio.
+Procedimiento vigente:
+
+```bash
+# 1. local
+git push origin yosh
+
+# 2. en la VM (por VPN + SSH `ptap`)
+bash ~/deploy.sh          # fetch + pull + npm ci + migraciones + build + pm2 restart
+
+# 3. si cambió el front, recompilar y publicar la web
+cd ~/monitor-ptap/apps/mobile && API_BASE_URL= npx expo export -p web --clear
+sudo bash ~/deploy-scripts/web-publish.sh
+```
+
+> ⚠️ Para publicar la web usar **`web-publish.sh`**, nunca `web-setup.sh`: este último termina
+> pisando `/etc/nginx/sites-available/ptap` con una copia guardada, lo que **borraría los server
+> blocks de HTTPS** si ya se corrió `le-nginx.sh`. El propio script lo avisa en su cabecera.
+
+> La web se compila con `API_BASE_URL` **vacío** (mismo origen): no hay URL horneada, así que solo
+> hace falta recompilar cuando cambia el código, no por el dominio.
+
+Pendiente:
+
+- [ ] **`sudo bash ~/deploy-scripts/web-publish.sh`** — el build del front del 2026-08-05 está
+      compilado en `~/monitor-ptap/apps/mobile/dist/` pero **sin publicar**: el copiado a
+      `/var/www/ptap-web` exige contraseña de sudo. Hasta que se corra, el navegador sigue sirviendo
+      la versión del 3-ago.
 - [ ] **NTP** — para que el KPI de latencia OPC sea fiable: `sudo timedatectl set-ntp true`
+- [ ] Considerar rotar el token de GitHub de **LorJosh** (token *classic* con scope `repo`; los
+      fine-grained no sirven en repos de otra cuenta personal).
 - [ ] **APK:** sí hay que recompilarla, la URL va horneada (`API_BASE_URL=https://aquora.xpertic.co`).
       Procedimiento en [`ANDROID_APK.md`](./ANDROID_APK.md) §"Build en la VM". Con dominio propio esta
       debería ser la **última** recompilación por cambio de URL.
