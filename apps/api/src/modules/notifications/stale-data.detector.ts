@@ -112,7 +112,7 @@ export class StaleDataDetector implements OnModuleInit, OnModuleDestroy {
       const todas = frescas.length === 0;
       const quienes = todas
         ? 'Ninguna señal de esta planta se está actualizando'
-        : `${stale.length} de ${entries.length} señales no se están actualizando (${stale
+        : `${stale.length} de ${entries.length} señales no se ${stale.length === 1 ? 'está' : 'están'} actualizando (${stale
             .slice(0, 4)
             .map((s) => s.label)
             .join(', ')}${stale.length > 4 ? '…' : ''})`;
@@ -124,7 +124,7 @@ export class StaleDataDetector implements OnModuleInit, OnModuleDestroy {
         subject: stale.length === 1 ? stale[0].key : null,
         title: todas
           ? `${displayName}: sensor sin refrescar`
-          : `${displayName}: ${stale.length} sensores sin refrescar`,
+          : `${displayName}: ${stale.length} sensor${stale.length === 1 ? '' : 'es'} sin refrescar`,
         message:
           `${quienes}. La lectura más vieja tiene ${humanAge(peor)}. El equipo responde, pero esos ` +
           `valores no cambian: lo más probable es que el sensor o su enlace de comunicación estén ` +
