@@ -80,32 +80,61 @@ export class StaleDataDetector implements OnModuleInit, OnModuleDestroy {
     return created;
   }
 
-  /** Reglas puras: dado un snapshot, qué avisos corresponden. Sin base de datos, fácil de probar. */
+  /**
+   * Reglas puras: dado un snapshot, qué avisos corresponden. Sin base de datos, fácil de probar.
+   *
+   * La frescura se evalúa **por señal**, no por planta. Se descubrió desplegando: Soledad tenía
+   * 9 sensores congelados hace días y una señal viva, así que a nivel de planta parecía fresca y
+   * sus 9 valores clavados se reportaban como "fuera de rango". Era cierto pero engañoso — están
+   * fuera de rango PORQUE llevan días sin actualizarse. La causa es el sensor, y eso es lo que hay
+   * que decir.
+   */
   detect(displayName: string, snapshot: PlantSnapshotDto, now: Date): NewNotification[] {
     const day = now.toISOString().slice(0, 10);
     const out: NewNotification[] = [];
     const base = { plantId: snapshot.plantId, day };
 
-    const ageH = dataAgeHours(snapshot, now);
-    if (ageH !== null && ageH >= this.staleHours) {
+    const entries = Object.entries(snapshot.signals);
+    const stale: { key: string; label: string; ageH: number }[] = [];
+    const frescas: [string, (typeof entries)[number][1]][] = [];
+
+    for (const [domainKey, signal] of entries) {
+      const ageH = signalAgeHours(signal, now);
+      if (ageH !== null && ageH >= this.staleHours) {
+        stale.push({ key: domainKey, label: signal.label ?? domainKey, ageH });
+      } else {
+        frescas.push([domainKey, signal]);
+      }
+    }
+
+    if (stale.length > 0) {
+      const peor = Math.max(...stale.map((s) => s.ageH));
+      const todas = frescas.length === 0;
+      const quienes = todas
+        ? 'Ninguna señal de esta planta se está actualizando'
+        : `${stale.length} de ${entries.length} señales no se están actualizando (${stale
+            .slice(0, 4)
+            .map((s) => s.label)
+            .join(', ')}${stale.length > 4 ? '…' : ''})`;
       out.push({
         ...base,
         kind: 'sensor_stale',
         severity: 'critical',
-        subject: null,
-        title: `${displayName}: sensor sin refrescar`,
+        // Con una sola señal afectada se puede señalar el item exacto; con varias, la planta.
+        subject: stale.length === 1 ? stale[0].key : null,
+        title: todas
+          ? `${displayName}: sensor sin refrescar`
+          : `${displayName}: ${stale.length} sensores sin refrescar`,
         message:
-          `La última lectura de esta planta tiene ${humanAge(ageH)}. El equipo sigue respondiendo, ` +
-          `pero sus valores no cambian: lo más probable es que el sensor o su enlace de comunicación ` +
-          `estén averiados. Los números en pantalla son de hace ${humanAge(ageH)} — no representan ` +
-          `la situación actual de la planta.`,
+          `${quienes}. La lectura más vieja tiene ${humanAge(peor)}. El equipo responde, pero esos ` +
+          `valores no cambian: lo más probable es que el sensor o su enlace de comunicación estén ` +
+          `averiados. Lo que se ve en pantalla para esas señales no representa la situación actual.`,
       });
-      // Con el dato congelado, avisar además de que está "fuera de rango" sería ruido sobre un
-      // valor que ya sabemos viejo. Un solo aviso, el que explica la causa.
-      return out;
     }
 
-    for (const [domainKey, signal] of Object.entries(snapshot.signals)) {
+    // Solo se juzga el rango de lo que SÍ está fresco: alarmar por un valor que ya sabemos viejo
+    // es ruido, y además apunta a la causa equivocada.
+    for (const [domainKey, signal] of frescas) {
       if (!hasRangeAnomaly(signal)) continue;
       const label = signal.label ?? domainKey;
       const critical = Boolean(signal.outOfRange);
@@ -127,16 +156,16 @@ export class StaleDataDetector implements OnModuleInit, OnModuleDestroy {
   }
 }
 
-/** Antigüedad del dato más fresco de la planta, en horas. `null` si ninguna señal trae timestamp. */
-function dataAgeHours(snapshot: PlantSnapshotDto, now: Date): number | null {
-  let newest = 0;
-  for (const signal of Object.values(snapshot.signals)) {
-    if (!signal.ts) continue;
-    const t = Date.parse(signal.ts);
-    if (Number.isFinite(t) && t > newest) newest = t;
-  }
-  if (newest === 0) return null;
-  return (now.getTime() - newest) / 3_600_000;
+/**
+ * Antigüedad de UNA señal, en horas. `null` si no trae `SourceTimestamp`: sin evidencia de cuándo
+ * se leyó, no se puede afirmar que esté vieja (y afirmarlo sería justo el tipo de mentira que este
+ * detector existe para evitar).
+ */
+function signalAgeHours(signal: { ts: string | null }, now: Date): number | null {
+  if (!signal.ts) return null;
+  const t = Date.parse(signal.ts);
+  if (!Number.isFinite(t)) return null;
+  return (now.getTime() - t) / 3_600_000;
 }
 
 function humanAge(hours: number): string {

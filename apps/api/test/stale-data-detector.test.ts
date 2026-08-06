@@ -70,17 +70,47 @@ test('justo por debajo del umbral (59 min) → todavía no avisa', () => {
   assert.equal(out.length, 0);
 });
 
-test('la antigüedad se mide con la señal MÁS FRESCA de la planta', () => {
-  // Una sola señal viva basta para que la planta no se considere congelada.
+test('CLAVE: la frescura se evalúa POR SEÑAL, no por planta', () => {
+  // El caso de Soledad en producción: 1 señal viva y varias congeladas hace días. Evaluando por
+  // planta parecía fresca, y sus valores clavados salían como "fuera de rango" — cierto pero
+  // engañoso, porque la causa es el sensor.
   const out = detector().detect(
-    'Sirena',
-    snapshot({ viejo: signal({ ts: hoursAgo(20) }), fresco: signal({ ts: NOW.toISOString() }) }),
+    'Soledad',
+    snapshot({
+      fresco: signal({ ts: NOW.toISOString() }),
+      viejo1: signal({ ts: hoursAgo(175), label: 'Cloro de salida' }),
+      viejo2: signal({ ts: hoursAgo(175), label: 'pH de salida' }),
+    }),
     NOW,
   );
-  assert.equal(out.length, 0);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].kind, 'sensor_stale');
+  assert.match(out[0].title, /2 sensores sin refrescar/);
+  assert.match(out[0].message, /2 de 3 señales/);
+  assert.match(out[0].message, /Cloro de salida/);
 });
 
-test('con el dato congelado NO se añade además "fuera de rango" (sería ruido sobre un dato viejo)', () => {
+test('si TODAS las señales están congeladas, el título habla de la planta entera', () => {
+  const out = detector().detect(
+    'KM18',
+    snapshot({ a: signal({ ts: hoursAgo(367) }), b: signal({ ts: hoursAgo(367) }) }),
+    NOW,
+  );
+  assert.equal(out[0].title, 'KM18: sensor sin refrescar');
+  assert.match(out[0].message, /Ninguna señal de esta planta/);
+  assert.equal(out[0].subject, null);
+});
+
+test('una sola señal congelada apunta al item exacto', () => {
+  const out = detector().detect(
+    'Sirena',
+    snapshot({ ok: signal(), inletPh: signal({ ts: hoursAgo(30) }) }),
+    NOW,
+  );
+  assert.equal(out[0].subject, 'inletPh', 'con una sola afectada se puede navegar a ella');
+});
+
+test('una señal congelada NO se juzga además por rango (apuntaría a la causa equivocada)', () => {
   const out = detector().detect(
     'Montebello',
     snapshot({ inletPh: signal({ ts: hoursAgo(20), value: 99, opMax: 8.5 }) }),
@@ -88,6 +118,18 @@ test('con el dato congelado NO se añade además "fuera de rango" (sería ruido 
   );
   assert.equal(out.length, 1);
   assert.equal(out[0].kind, 'sensor_stale');
+});
+
+test('conviven: una congelada y otra fresca fuera de rango generan DOS avisos distintos', () => {
+  const out = detector().detect(
+    'Sirena',
+    snapshot({
+      congelada: signal({ ts: hoursAgo(30) }),
+      caliente: signal({ value: 99, opMax: 8.5 }),
+    }),
+    NOW,
+  );
+  assert.deepEqual(out.map((n) => n.kind).sort(), ['sensor_stale', 'signal_out_of_range']);
 });
 
 test('señal fuera del rango FÍSICO → aviso crítico', () => {
