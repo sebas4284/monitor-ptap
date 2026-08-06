@@ -11,8 +11,7 @@
  * recibo explícito (ver `ValveResultDialog`). El tipo `ToastKind` no incluye nada de mando a
  * propósito.
  *
- * Store de módulo + `useSyncExternalStore`, el mismo patrón que los descartes de `useAlerts`: así
- * no hace falta otro Context envolviendo el árbol.
+ * Store de módulo + `useSyncExternalStore`: así no hace falta otro Context envolviendo el árbol.
  */
 
 export type ToastKind = 'success' | 'error' | 'info';

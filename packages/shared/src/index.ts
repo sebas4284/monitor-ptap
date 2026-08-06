@@ -144,6 +144,26 @@ export interface SignalDto {
   opMax?: number;
 }
 
+/**
+ * ¿El valor viola el rango OPERATIVO entregado por el operador (`opMin`/`opMax`)?
+ *
+ * Vive en `@ptap/shared` y no en cada lado a propósito. Cuando el tablero tenía su propio criterio
+ * y la campana otro, una señal por debajo de su mínimo generaba alerta pero su grupo del tablero
+ * se dejaba plegar — el tablero escondía algo de lo que la campana ya avisaba. Una sola definición
+ * evita esa clase de contradicción entre pantallas, y ahora también entre backend y front.
+ */
+export function isOutOfOperatingRange(s: SignalDto): boolean {
+  if (typeof s.value !== 'number') return false;
+  const below = typeof s.opMin === 'number' && s.value < s.opMin;
+  const above = typeof s.opMax === 'number' && s.value > s.opMax;
+  return below || above;
+}
+
+/** ¿Esta señal generaría alguna alerta de rango (física u operativa)? */
+export function hasRangeAnomaly(s: SignalDto): boolean {
+  return Boolean(s.outOfRange) || isOutOfOperatingRange(s);
+}
+
 export interface LivenessDto {
   state: LivenessState;
   lastChangeAt: string | null;

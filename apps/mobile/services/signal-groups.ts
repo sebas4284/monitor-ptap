@@ -1,5 +1,5 @@
+import { hasRangeAnomaly } from '@ptap/shared';
 import type { SignalDto } from './api';
-import { hasRangeAnomaly } from './alerts';
 import { directionFor } from './signal-kind';
 import { isTankSignal } from './tanks';
 import { isValveSignal } from './valves';

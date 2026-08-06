@@ -12,36 +12,38 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '../../constants/colors';
 import { useAuth } from '../../context/AuthContext';
-import { useAlerts } from '../../hooks/useAlerts';
+import { useUnseenNotifications } from '../../hooks/useNotifications';
 import { usePendingUsers } from '../../hooks/usePendingUsers';
 import { useWebEscape } from '../../hooks/useWebEscape';
 import { ROLE_LABELS, ROLE_COLORS, type AuthUser } from '@ptap/shared';
 
 /**
- * Campana de alertas AISLADA.
+ * Campana de notificaciones AISLADA.
  *
- * `useAlerts()` llama por dentro a `useSnapshot()`, o sea que está enganchado al stream del PLC
- * (~1 push cada 2 s). Cuando vivía en `AppLayout`, cada push re-renderizaba la cáscara de pestañas
- * ENTERA en cualquier pantalla, recreando de paso las opciones de las 8 `Tabs.Screen`. Metido en su
- * propia hoja, el push solo repinta este icono.
+ * Cuenta avisos **NO VISTOS**, no alertas activas. Es la diferencia que pidió operación: la
+ * campana se apaga cuando alguien los mira, no cuando el problema se resuelve — un sensor caído
+ * hace 15 días deja de gritar en rojo una vez leído, pero sigue en el historial.
  *
- * Es el mismo patrón que el `<Clock />` de `tablero.tsx`, y por la misma razón.
+ * Vive en su propia hoja para que su sondeo no repinte la cáscara de pestañas entera, igual que
+ * el `<Clock />` de `tablero.tsx`.
  */
 function AlertBell() {
-  const { count } = useAlerts();
+  const unseen = useUnseenNotifications();
   return (
     <TouchableOpacity
       style={{ marginRight: 16 }}
       hitSlop={8}
       onPress={() => router.push('/(app)/alertas')}
       accessibilityRole="button"
-      accessibilityLabel={count > 0 ? `Alertas: ${count} activas` : 'Alertas: ninguna activa'}
+      accessibilityLabel={
+        unseen > 0 ? `Notificaciones: ${unseen} sin ver` : 'Notificaciones: ninguna sin ver'
+      }
     >
       <View>
         <Ionicons name="notifications-outline" size={24} color="#fff" />
-        {count > 0 && (
+        {unseen > 0 && (
           <View style={styles.notifBadge}>
-            <Text style={styles.notifText}>{count > 9 ? '9+' : count}</Text>
+            <Text style={styles.notifText}>{unseen > 9 ? '9+' : unseen}</Text>
           </View>
         )}
       </View>

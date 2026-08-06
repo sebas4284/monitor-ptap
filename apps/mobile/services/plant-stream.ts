@@ -4,9 +4,9 @@ import { subscribePlant, type PlantStreamHandlers as SocketHandlers } from './so
  * Suscripción COMPARTIDA por planta, con refcount.
  *
  * El problema que resuelve: React Query deduplica la *query* por `queryKey`, pero no los listeners
- * del socket. Cada `useSnapshot(plantId)` montado abría su propia `subscribePlant()`, así que con la
- * cáscara de pestañas (que llama `useAlerts` → `useSnapshot`) más la pantalla activa había **dos**
- * juegos de listeners sobre el mismo room y **dos** `opc:subscribe` emitidos.
+ * del socket. Cada `useSnapshot(plantId)` montado abre su propia `subscribePlant()`, así que dos
+ * pantallas sobre la misma planta registraban **dos** juegos de listeners y emitían **dos**
+ * `opc:subscribe`.
  *
  * Aquí se abre **una sola** suscripción real por `plantId`, sin importar cuántos consumidores haya,
  * y se reparte a todos. El último en desmontarse la cierra.

@@ -5,9 +5,9 @@ import type { GroupId } from './signal-groups';
 /**
  * Preferencias de presentación del tablero, persistidas en el dispositivo.
  *
- * Store de módulo + `useSyncExternalStore` — el mismo patrón que los descartes de `useAlerts`. Se
- * evita a propósito montar otro Context: el tablero ya está envuelto en dos, y añadir un tercero
- * que cambia con cada preferencia haría re-renderizar el árbol entero para cambiar una densidad.
+ * Store de módulo + `useSyncExternalStore`. Se evita a propósito montar otro Context: el tablero ya
+ * está envuelto en dos, y añadir un tercero que cambia con cada preferencia haría re-renderizar el
+ * árbol entero para cambiar una densidad.
  */
 
 const KEY = 'ptap_dashboard_prefs';

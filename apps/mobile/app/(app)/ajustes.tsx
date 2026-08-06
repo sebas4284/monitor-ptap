@@ -13,6 +13,7 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../services/api';
 import { ConnectionDiagnostics } from '../../components/ConnectionDiagnostics';
+import { NotificationPermissionCard } from '../../components/NotificationPermissionCard';
 import Colors from '../../constants/colors';
 
 /**
@@ -74,6 +75,10 @@ export default function AjustesScreen() {
         <Text style={styles.hint}>
           Tu rol lo asigna un administrador; no se puede cambiar desde aquí.
         </Text>
+
+        {/* ── Avisos en el dispositivo ───────────────────────────── */}
+        <Text style={styles.sectionTitle}>Notificaciones</Text>
+        <NotificationPermissionCard />
 
         {/* ── Permisos ───────────────────────────────────────────── */}
         <Text style={styles.sectionTitle}>Permisos de tu rol</Text>

@@ -51,7 +51,7 @@ export function useSnapshot(plantId: string, enabled = true) {
     if (!enabled) return; // Civil: nunca se suscribe al socket de la planta (evita fuga de datos)
     lastSeq.current = 0;
     // Stream COMPARTIDO: aunque varios hooks pidan la misma planta (la cáscara de pestañas vía
-    // useAlerts + la pantalla activa), solo se abre UNA suscripción real. Ver `plant-stream.ts`.
+    // dos pantallas a la vez), solo se abre UNA suscripción real. Ver `plant-stream.ts`.
     const unsubscribe = joinPlantStream(plantId, {
       onSnapshot: (snapshot: PlantSnapshotDto) => {
         if (lastSeq.current > 0) {
