@@ -122,10 +122,13 @@ sudo bash ~/deploy-scripts/web-publish.sh
 > La web se compila con `API_BASE_URL` **vacío** (mismo origen): no hay URL horneada, así que solo
 > hace falta recompilar cuando cambia el código, no por el dominio.
 
-**Despliegue del 2026-08-05: COMPLETO.** Backend y web publicados y verificados en la VM
-(commit `6075976`). Los siete comprobantes en verde: API `/health`, `/health/db`, `/health/opc`,
-la web por HTTP y por HTTPS, la API a través de nginx y `/descargar/`. Bundle servido
-`entry-5ab1a416…`, puente OPC `Connected` con 41 buffers activos y 0 en fallo.
+**Último despliegue: 2026-08-06, commit `56b9130`. COMPLETO y verificado.** Backend y web en la VM,
+con la bandeja de notificaciones y el detector de sensores congelados ya activos. Comprobantes en
+verde: API `/health`, `/health/db`, `/health/opc`, la web por HTTP y por HTTPS, y
+`/api/notifications` respondiendo 401 sin token. Puente OPC `Connected`, 41 buffers, 0 en fallo.
+
+> 🔴 **El detector encontró 10 plantas con sensores congelados** en su primer barrido — cuatro más
+> de las que se habían visto revisando a mano. Ver §Sensores congelados abajo.
 
 Pendiente:
 
@@ -141,6 +144,38 @@ Pendiente:
       pm2 status                                                                       # online, estable
       npm run -w @ptap/api audit:efficiency                                            # Score 🟢
       ```
+
+---
+
+## 2b. 🔴 Sensores congelados — ESCALAR AL INTEGRADOR
+
+Detectado el 2026-08-06 y confirmado leyendo el `SourceTimestamp` directamente del servidor OPC UA.
+**No es un fallo de la plataforma:** el servidor entrega esos valores sin refrescarlos.
+
+| Planta | Alcance | Antigüedad medida |
+|---|---|---|
+| **KM18** | planta entera | **15,3 días** |
+| **Carbonero** | planta entera | **15,3 días** |
+| **Pichindé** | planta entera | **15,3 días** |
+| **Cascajal** | planta entera | 12,9 días |
+| **Montebello** | planta entera | 17 horas |
+| La Sirena | 2 señales (`tank2Level`, `tank2Volume`) | — |
+| Soledad, Alto de los Mangos, Campoalegre, La Vorágine | 1 señal cada una | — |
+
+> **La pista más útil para el integrador:** KM18, Carbonero y Pichindé se detuvieron en el **mismo
+> instante exacto** (367 h 28 min las tres al medirlas). Eso no es casualidad — apunta a un enlace
+> de comunicación o a un grupo de instrucciones MSG que se paró de golpe, no a tres sensores
+> averiándose por separado.
+
+Contexto que refuerza el diagnóstico: la Fase 0.3 (2026-07-14) ya había medido a Vorágine, Cascajal,
+KM18, Pichindé y Carbonero como "completamente estáticas". Vorágine revivió; Soledad y Montebello se
+sumaron. **Es una condición que viene empeorando desde hace un mes** y que nadie vio porque la
+aplicación pintaba esas plantas en azul, como "proceso quieto, todo normal" (ya corregido).
+
+- [ ] Enviar el reporte al integrador con estas evidencias.
+- [ ] Pedir de nuevo el **contador de heartbeat por sitio** (ver
+      [`plc/OBSERVACIONES_FASE0.md`](./plc/OBSERVACIONES_FASE0.md)): sin él, distinguir "planta
+      quieta" de "planta caída" seguirá dependiendo de que los datos se muevan.
 
 ---
 
@@ -214,6 +249,27 @@ esquema de alertas en BD depende de la misma decisión que D1: conviene resolver
       D5 no auditar GET de lectura · D8 `SELECT` acotado en `findById` · D9/H14 código muerto
       `finalizeNoReserve` y métrica `UNEXPECTED_LENGTH` que nunca se registra · D1 96 señales en
       dead-letter (depende del export L5X, externo).
+
+---
+
+## 4b. Notificaciones — ajustes posibles
+
+Funcionando desde el 2026-08-06. Parámetros por variable de entorno, sin recompilar:
+
+| Variable | Por defecto | Qué hace |
+|---|---|---|
+| `NOTIFY_STALE_HOURS` | `1` | A partir de cuántas horas sin refrescar se considera sensor averiado |
+| `NOTIFY_SWEEP_MS` | `600000` (10 min) | Cada cuánto revisa. **No** cambia la frecuencia del aviso: eso lo fija la deduplicación diaria |
+| `NOTIFY_RETENTION_DAYS` | `30` | Cuánto se conserva el historial en la base |
+
+- [ ] **Volumen a vigilar.** Hoy son ~20 avisos diarios (10 sensores congelados + 10 señales fuera
+      de rango). Con 72 h de historial la bandeja muestra unos 60. Si resulta excesivo, la opción
+      más efectiva es agrupar los "fuera de rango" por planta: bajaría a ~6 al día, a cambio de
+      perder el salto a la señal exacta. Decisión de uso, no técnica.
+- [ ] **Notificaciones web bloqueadas por HTTPS.** El navegador exige contexto seguro y los usuarios
+      entran por `http://192.168.30.50`. La salida barata es un **registro DNS interno** que
+      resuelva `aquora.xpertic.co → 192.168.30.50` dentro de la VPN; no depende del DNAT ni de
+      redes. En el APK de Android sí funcionan (notificación local, sin Firebase).
 
 ---
 
