@@ -110,23 +110,29 @@ fac61745dc0903786fb9ede62a962b399f7348f0bb6f899b8332667591033b9c
 llave. Si se recompila con el keystore de release (o con un `debug.keystore` regenerado), nadie
 podrá actualizar: habría que desinstalar y perder la sesión guardada.
 
-### Reglas para no romperlo
+### El `debug.keystore` de Expo es FIJO, no aleatorio
 
-1. 🔴 **`apps/mobile/android/` está gitignored por completo**, así que `debug.keystore` **existe solo
-   en la máquina que compila** y no hay copia en el repositorio. Si se pierde, se acabó la
-   posibilidad de actualizar la app instalada.
-   **Hay un respaldo en `C:\keys\respaldo-debug-keystore\`.** Consérvalo.
-2. **`expo prebuild --clean` borra `android/` entero**, incluido el keystore. Si se usa —y a veces
-   hay que usarlo, ver abajo— **restaurar el `debug.keystore` desde el respaldo antes de compilar**,
-   y comprobar la huella:
-   ```bash
-   keytool -list -v -keystore android/app/debug.keystore -storepass android -alias androiddebugkey
-   ```
-3. **Verificar SIEMPRE el APK resultante antes de publicarlo**, y compararlo con el que está en
-   producción:
-   ```bash
-   apksigner verify --print-certs app-release.apk
-   ```
+> Corregido el 2026-08-11 tras comprobarlo. Una versión anterior de este documento advertía de que
+> `expo prebuild --clean` generaría una llave nueva y rompería las actualizaciones. **No es así.**
+
+Se verificó compilando en una máquina distinta (la VM, sin ningún keystore previo): el
+`debug.keystore` que generó el prebuild tenía **exactamente la misma huella** `fac61745…` que el de
+la máquina Windows. Expo trae una llave de depuración fija en su plantilla, igual en todas partes.
+
+En la práctica: **un `prebuild --clean` en cualquier máquina produce un APK compatible** con el
+instalado. Copiar la llave a mano es innecesario — aunque tampoco estorba como red de seguridad.
+Hay un respaldo en `C:\keys\respaldo-debug-keystore\`.
+
+Lo que sí sigue siendo obligatorio: **verificar el APK antes de publicarlo**, porque es lo único
+que confirma que se podrá instalar encima del anterior.
+
+```bash
+apksigner verify --print-certs app-release.apk
+# debe dar: fac61745dc0903786fb9ede62a962b399f7348f0bb6f899b8332667591033b9c
+```
+
+> `apksigner` necesita `JAVA_HOME` apuntando a un JDK. Sin él **no imprime nada y no falla**, lo que
+> se confunde fácilmente con "el APK no está firmado".
 
 > **Cuándo hace falta `--clean`:** un `prebuild` normal fusiona sobre el manifest anterior y **no
 > retira** los `tools:node="remove"` de permisos que se hayan desbloqueado. Ocurrió el 2026-08-11 al
@@ -255,59 +261,124 @@ El PC Windows **no** pudo compilar: choca con un bug de ninja/CMake propio de Wi
 `expo-modules-core`), reproducible en varios intentos. **Linux no tiene ese bug**, así que la APK se
 construye **en la VM** con un toolchain **temporal que se borra al terminar** (deja la VM liviana).
 
-> La VM es un servidor de 2 GB de RAM en producción. El build es pesado; se hace **acotado** para no
-> tumbar el API/MySQL: heap topado, 1 sola ABI, `nice/ionice`, y sin R8. La swap (2 GB) absorbe
-> picos. Durante el build el API sigue respondiendo (verificado: `health=200` todo el tiempo).
+> 🧠 **La VM tiene memoria DINÁMICA de Hyper-V (`hv_balloon`).** En reposo `free` reporta ~2,2 GB,
+> pero bajo carga el hipervisor le concede hasta ~7 GB. Los dos valores son ciertos, cada uno en su
+> momento — no es un error de lectura. Por eso el build cabe aunque el baseline parezca insuficiente.
+> Aun así conviene acotarlo: el API y MySQL comparten la máquina. Verificado el 2026-08-11: durante
+> todo el build `/api/health`, `/api/health/db`, `/api/health/opc` y nginx respondieron **200**, y
+> `pm2` conservó su uptime.
+
+### El ORDEN importa (y no es el que parece)
+
+`config-and-ndk.sh` escribe en `android/gradle.properties`, que **no existe hasta después del
+prebuild**. Ejecutarlo antes falla con `No such file or directory`. El orden correcto es:
+
+```
+install-sdk.sh  →  prebuild-vm.sh  →  config-and-ndk.sh  →  apk-build.sh
+```
 
 ### Receta
 
-1. **Instalar toolchain temporal** (autocontenido en `~/android-build` para borrarlo fácil):
-   - `sudo apt-get install -y openjdk-17-jdk-headless unzip`.
-   - Android SDK vía `cmdline-tools` + `sdkmanager` en `~/android-build/sdk`:
-     `platform-tools`, `platforms;android-35`, `build-tools;35.0.0`, `cmake;3.22.1`,
-     `ndk;27.1.12297006`.
-   - `export ANDROID_HOME=~/android-build/sdk`, `export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64`.
-2. **Prebuild** con la URL horneada:
-   `cd ~/monitor-ptap/apps/mobile && API_BASE_URL=<URL del túnel> npx expo prebuild -p android --clean`.
-3. **Acotar Gradle** (`apps/mobile/android/gradle.properties`):
+1. **JDK sin `sudo`.** Los scripts esperaban `/usr/lib/jvm/java-17-openjdk-amd64`, pero en la VM
+   solo está el **JRE** (`java: command not found`). En vez de pedir `sudo apt install openjdk-17-jdk`,
+   se baja un **JDK portátil dentro del propio toolchain desechable**, así se va con la limpieza:
+   ```bash
+   mkdir -p ~/android-build && cd ~/android-build
+   curl -fsSL -o jdk.tar.gz "https://api.adoptium.net/v3/binary/latest/17/ga/linux/x64/jdk/hotspot/normal/eclipse"
+   mkdir -p jdk && tar xzf jdk.tar.gz -C jdk --strip-components=1 && rm jdk.tar.gz
    ```
-   org.gradle.jvmargs=-Xmx1024m -XX:MaxMetaspaceSize=512m
+   Los scripts usan `export JAVA_HOME="${JAVA_HOME:-$HOME/android-build/jdk}"`, así que respetan un
+   JDK del sistema si algún día se instala.
+2. **`install-sdk.sh`** — SDK en `~/android-build/sdk`: `platform-tools`, `platforms;android-35` y
+   `android-36`, `build-tools;35.0.0` y `36.0.0`, `cmake;3.22.1`.
+   > El proyecto pide **compileSdk/targetSdk 36** (`app.config.js`); el script instalaba solo el 35.
+3. **`prebuild-vm.sh`** — hornea `API_BASE_URL` y hace `expo prebuild -p android --clean`.
+4. **`config-and-ndk.sh`** — instala el NDK `27.1.12297006` y acota Gradle:
+   ```
+   org.gradle.jvmargs=-Xmx3072m -XX:MaxMetaspaceSize=768m
    org.gradle.daemon=false
-   org.gradle.workers.max=1
+   org.gradle.workers.max=2
    org.gradle.parallel=false
    kotlin.compiler.execution.strategy=in-process
    reactNativeArchitectures=arm64-v8a
    ```
-   Y **desactivar R8** (en `android/app/build.gradle`, release): `minifyEnabled false` +
-   `shrinkResources false` — con 2 GB de RAM, R8 dispara `OutOfMemoryError`. El APK queda un poco
-   más grande (~42 MB) pero funcional. (Con más RAM se puede dejar R8 activo.)
-4. **Compilar** cediendo prioridad al API:
-   `cd android && nice -n 19 ionice -c3 ./gradlew assembleRelease --no-daemon`.
-   Salida: `android/app/build/outputs/apk/release/app-release.apk` (firmado con la debug key del
-   template Expo — suficiente para una APK de prueba).
+   > Con el heap en 1024m el build es mucho más lento sin necesidad: el balloon concede memoria de
+   > sobra. 3 GB funcionó bien y dejó el servicio intacto.
+5. **`apk-build.sh`** — compila cediendo prioridad al API (`nice -n 19 ionice -c3`). Tarda ~30 min.
+   Salida: `android/app/build/outputs/apk/release/app-release.apk` (~35 MB).
+
+### Lanzarlo sin que muera con la sesión SSH
+
+El build dura más que una sesión SSH estable sobre la IP pública. **Hay que desacoplarlo de verdad**
+—`setsid` + `nohup` + `disown`— y esperar por el archivo centinela, no por la conexión:
+
+```bash
+setsid nohup bash ~/deploy-scripts/apk-build.sh >/dev/null 2>&1 </dev/null & disown
+# esperar con conexiones CORTAS, no una larga:
+until ssh ptap 'test -f ~/apk-build.done'; do sleep 45; done
+```
+
+> ⚠️ **Nunca uses `pkill -f` / `pgrep -f` con un patrón que aparezca en tu propio comando SSH**: el
+> patrón coincide con tu sesión y la mata. Pasó tres veces el 2026-08-11. Si hay que detener el
+> build, pon la lógica en un script en la VM (su línea de comando no contiene el patrón) o filtra
+> por PID excluyendo el árbol propio.
+
+> ⚠️ **Comprueba que el build no sigue vivo antes de relanzarlo.** El proceso real es
+> `~/android-build/jdk/bin/java --add-opens=...`, que **no** contiene `GradleWrapperMain` ni
+> `GradleDaemon`: buscar esos nombres da falso negativo. Dos Gradle sobre el mismo directorio
+> comparten cachés y salidas — hay que matar ambos y empezar de cero.
 
 ### Alojar la APK (queda en línea, descargable)
 
-- `sudo mkdir -p /var/www/ptap-download` (carpeta **aparte** de la web → sobrevive re-despliegues).
-- Copiar el `.apk` → `/var/www/ptap-download/monitor-ptap.apk` + una página `index.html` de
-  descarga con instrucciones; `chown www-data`.
-- nginx: `location /descargar/` con `alias /var/www/ptap-download/` y `types { application/vnd.android.package-archive apk; }`
-  (para que el navegador lo **descargue**). Enlace: **`https://<túnel>/descargar/`**.
+La carpeta `/var/www/ptap-download` es **aparte** de la web, así que sobrevive a los re-despliegues.
+nginx ya tiene su `location /descargar/` con el tipo MIME de APK, de modo que el navegador lo
+descarga en vez de abrirlo. Enlace: **`https://aquora.xpertic.co/descargar/`**.
+
+> 🔴 **NO uses `host-apk.sh`.** Tras copiar el APK hace
+> `cp ~/ptap-web.nginx /etc/nginx/sites-available/ptap`, es decir **pisa la configuración de nginx**
+> y borra los server blocks de HTTPS. Es el mismo defecto de `web-setup.sh`. El script lleva un
+> aviso en su cabecera desde el 2026-08-11.
+
+Publicar solo el archivo, sin tocar nginx:
+
+```bash
+sudo install -o www-data -g www-data -m 644 \
+  ~/monitor-ptap/apps/mobile/android/app/build/outputs/apk/release/app-release.apk \
+  /var/www/ptap-download/monitor-ptap.apk
+```
+
+### Verificación del APK — antes de publicarlo
+
+Las tres que importan:
+
+```bash
+export JAVA_HOME=~/android-build/jdk          # sin esto apksigner calla y no falla
+apksigner verify --print-certs app-release.apk # firma: debe ser fac61745…
+unzip -p app-release.apk 'assets/*' | grep -c aquora.xpertic.co   # URL correcta horneada
+unzip -p app-release.apk 'assets/*' | grep -c trycloudflare       # debe ser 0
+aapt2 dump permissions app-release.apk                            # permisos esperados
+```
+
+Permisos esperados: `INTERNET`, `POST_NOTIFICATIONS`, `VIBRATE`, más los que aportan
+`expo-notifications` y `expo-background-task` (`RECEIVE_BOOT_COMPLETED`, `WAKE_LOCK`,
+`FOREGROUND_SERVICE`, badges de fabricantes). **No** deben aparecer `SYSTEM_ALERT_WINDOW` ni
+`READ/WRITE_EXTERNAL_STORAGE`.
 
 ### Limpieza (dejar la VM liviana)
 
-`rm -rf ~/android-build ~/.gradle ~/monitor-ptap/apps/mobile/android` + `sudo apt-get purge -y
-openjdk-17-jdk-headless && sudo apt-get autoremove -y && apt-get clean` + `swapoff -a && swapon -a`.
-Verificar: `free -m` en baseline, sin procesos `java`/`gradle`, disco reclamado.
+Con el JDK portátil todo cabe en un solo borrado, **sin `sudo`**:
 
-### Verificación del APK
+```bash
+rm -rf ~/android-build ~/.gradle ~/monitor-ptap/apps/mobile/android
+rm -f ~/apk-build.log ~/apk-build.done
+npm cache clean --force
+```
 
-`aapt2 dump badging/permissions` → `com.ptap.monitor`, `usesCleartextTraffic=false`, permisos
-`INTERNET` + biometría de `expo-secure-store` (para el JWT cifrado). `unzip -l` no lista `.env`.
+Verificar con `df -h /` antes y después. El 2026-08-11 esto recuperó **~8,6 GB** (de 17 G usados a
+8,4 G), sumando también `ptap-fieldtest/node_modules`.
 
-> **Límite**: la APK lleva horneada la **URL del túnel efímero** → si el túnel cambia hay que
-> reconstruir. Para repartir de forma estable: **dominio + named tunnel** (ver
-> [RUNBOOK_PRODUCCION.md](RUNBOOK_PRODUCCION.md) §8) y construir una sola vez.
+> Conserva una copia del APK fuera del árbol de build (p. ej. `~/monitor-ptap-<fecha>.apk`) antes de
+> borrar, por si hace falta republicarlo sin recompilar.
 
 ## 9. iOS — fuera de alcance por ahora
 

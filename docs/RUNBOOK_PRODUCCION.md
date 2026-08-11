@@ -15,8 +15,13 @@ desde cero en un servidor nuevo (§11). Absorbe el antiguo `DEPLOY_VPS.md`.
 
 ## 1. Topología
 
-Backend + web + base de datos corren en **una VM interna** (`192.168.30.50`, Ubuntu 24.04,
-2 vCPU / 2 GB RAM / 47 GB disco). El cliente **nunca** habla con MySQL: siempre pasa por la API.
+Backend + web + base de datos corren en **una VM interna** (`192.168.30.50`, Ubuntu 24.04, 2 vCPU,
+47 GB disco). El cliente **nunca** habla con MySQL: siempre pasa por la API.
+
+> 🧠 **La RAM es dinámica (Hyper-V `hv_balloon`), no fija.** En reposo `free` reporta ~2,2 GB; bajo
+> carga el hipervisor concede hasta ~7 GB. Los dos valores son correctos, cada uno en su momento —
+> conviene saberlo antes de dimensionar nada por lo que muestre `free` en un instante suelto.
+> Hay además 2,2 GB de swap.
 
 ```
 Usuario (móvil/navegador)
