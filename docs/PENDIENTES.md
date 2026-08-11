@@ -40,9 +40,22 @@ Falta:
       80 a HTTPS y tiene el `location /.well-known/acme-challenge/`, así que abrirlo no expone
       contenido: solo habilita la renovación. Después, comprobarlo de verdad con
       `certbot renew --dry-run`.
-- [ ] Recompilar el APK contra `https://aquora.xpertic.co` — el APK distribuido lleva horneada la
-      URL del túnel, que ya está apagado, así que **no conecta**. Con dominio estable debería ser la
-      última recompilación por cambio de URL.
+- [ ] 🔴 **Recompilar el APK contra `https://aquora.xpertic.co`.** El APK distribuido lleva horneada
+      la URL del túnel, que ya está apagado, así que **no conecta y no hay vuelta atrás**: un quick
+      tunnel nuevo recibe una URL distinta, de modo que reencenderlo tampoco lo arreglaría. La
+      recompilación es el único camino. Con dominio estable debería ser la última por cambio de URL.
+
+      **Requisitos comprobados el 2026-08-11 (el entorno NO está listo):**
+      - El build es **local en Windows** (`npm run build:android` → `expo prebuild` + `gradlew.bat
+        assembleRelease`), no en la VM: allí no hay SDK de Android ni keystore.
+      - El **keystore de release existe** en `C:\keys\monitor-ptap-release.keystore`. Es
+        imprescindible usar **ese mismo**: Android rechaza instalar sobre una app existente un APK
+        firmado con otra llave, y obligaría a desinstalar antes.
+      - Falta `ANDROID_HOME` (el SDK sí está en `%LOCALAPPDATA%\Android\Sdk`).
+      - **No hay configuración de firma** en `android/gradle.properties` ni en
+        `~/.gradle/gradle.properties`: hay que añadir ruta del keystore, alias y contraseñas.
+      - ⚠️ El JDK instalado es el **26**; React Native/AGP suele exigir **JDK 17**. Muy probable que
+        haya que instalar el 17 y apuntar `JAVA_HOME` a él.
 - [ ] Borrar el TXT `_acme-challenge.aquora` del cPanel (ya cumplió su función)
 - [ ] Pedir a redes que retire el DNAT viejo `:5554` si aún existe
 - [ ] Replicar el `.env` nuevo en la copia local durable `.env.production.local` (gitignored)
