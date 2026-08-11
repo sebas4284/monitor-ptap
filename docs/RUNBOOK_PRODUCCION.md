@@ -22,22 +22,31 @@ Backend + web + base de datos corren en **una VM interna** (`192.168.30.50`, Ubu
 Usuario (móvil/navegador)
    │  HTTPS
    ▼
-[borde público]  ──►  nginx :80/:443 (en la VM)
-                          │
-      ┌───────────────────┼─────────────────────┐
-      ▼                   ▼                     ▼
-web SPA (estático)   /api → Node :4000    /descargar/ (APK)
-                          │
-                     MySQL 127.0.0.1:3306
-                          │
-   PLC (OPC UA, red de planta) ◄─┘
+aquora.xpertic.co ──► 191.102.61.125 ──[NAT 1:1]──► 192.168.30.50
+                                                        │
+                                                  nginx :80/:443
+                                                        │
+                          ┌─────────────────────────────┼─────────────────────┐
+                          ▼                             ▼                     ▼
+                    web SPA (estático)          /api → Node :4000      /descargar/ (APK)
+                                                        │
+                                                MySQL 127.0.0.1:3306
+                                                        │
+                             PLC (OPC UA, red de planta) ◄─┘
 ```
 
+- **Acceso público**: `https://aquora.xpertic.co`, TLS de Let's Encrypt servido por nginx. La sede
+  publica la VM con **NAT 1:1 contra `191.102.61.125`** (desde 2026-08-11; antes era un DNAT por
+  puerto contra `.123`). El quick tunnel de Cloudflare que se usaba como stopgap **está apagado**.
 - **Acceso de operador**: red interna `192.168.30.0/24` vía **VPN L2TP** (perfil Windows `PTAP-VPN`,
-  sin PSK) + **SSH por llave** (alias `ptap`, `~/.ssh/id_ed25519`; password de SSH deshabilitado).
-- **Acceso público**: hoy por un **quick tunnel efímero de Cloudflare** como stopgap (§6). El camino
-  definitivo es `aquora.xpertic.co` con Let's Encrypt, **pendiente de publicar los puertos 80/443**.
-- El puerto HTTP directo a Internet está **cerrado** (§5).
+  sin PSK) + **SSH por llave** (alias `ptap`, `~/.ssh/id_ed25519`; password deshabilitado). Con la
+  NAT 1:1, el SSH también responde en `xpertic_app@191.102.61.125` — útil cuando la VPN se cae.
+
+> 🔒 **La NAT 1:1 cambió el perímetro.** Antes solo se publicaba un puerto concreto; ahora **toda la
+> VM está en Internet salvo lo que ufw filtre**, o sea que el firewall pasó de segunda barrera a
+> **única** barrera. Verificado desde fuera el 2026-08-11: 443 y 22 abiertos (SSH a propósito,
+> solo-llave + fail2ban); **3306, 4000 y 8080 cerrados**. Cualquier cambio en ufw ahora tiene
+> consecuencia directa en Internet — revisar `ufw status` antes y después de tocarlo.
 
 ## 2. Servicios en la VM
 
@@ -46,7 +55,7 @@ web SPA (estático)   /api → Node :4000    /descargar/ (APK)
 | **nginx** (:80) | Reverse proxy: web SPA en `/`, API en `/api/`, WebSocket en `/socket.io/`, APK en `/descargar/`, y el gate `auth_request` del HMI | Config en `/etc/nginx/sites-available/ptap`. Cabeceras de seguridad + cache (index no-cache, chunks immutable) |
 | **pm2 → `ptap-api`** | Backend NestJS (`node dist/main.js`) | Arranca en cada reboot (`pm2 startup` systemd), `pm2 save` |
 | **MySQL 8** (`ptapapp`) | BD (users, audit_log, command_log, tokens) | Escucha **solo localhost** (`bind-address 127.0.0.1`) |
-| **cloudflared** | Túnel HTTPS stopgap | Quick tunnel **efímero** (§6). Script `~/deploy-scripts/cf-run.sh` |
+| ~~**cloudflared**~~ | *(apagado el 2026-08-11)* | Fue el stopgap mientras no había dominio. El binario y `cf-run.sh` siguen en la VM por si hiciera falta un acceso de emergencia |
 | **fail2ban** | Anti fuerza-bruta SSH | Activo, jail `sshd` |
 
 ## 3. Código y configuración
@@ -91,23 +100,33 @@ web SPA (estático)   /api → Node :4000    /descargar/ (APK)
   `bash ~/deploy-scripts/opcua-writes-toggle.sh [--revertir]` (idempotente, con respaldo).
 - **Sin secretos en git** ni en el APK; `.env` gitignored.
 
-## 6. Exposición pública (estado actual)
+## 6. Exposición pública
 
-Hoy es un **quick tunnel efímero**: `cloudflared tunnel --url http://localhost:80` (script
-`~/deploy-scripts/cf-run.sh`, corre con `setsid`). Da una URL `https://<algo>.trycloudflare.com` que
-**cambia en cada reinicio de cloudflared** y **no sobrevive reboot** de la VM.
+**`https://aquora.xpertic.co`**, con TLS de Let's Encrypt servido directamente por nginx. La sede
+publica la VM con **NAT 1:1 contra `191.102.61.125`**, sin traducción de puertos.
 
-- **URL vigente**: `grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' ~/cloudflared.log | tail -1`
-- Al cambiar la URL: re-pinear en `CORS_ORIGINS` del `.env` + `pm2 restart ptap-api`, y
-  **reconstruir la APK** (que la lleva horneada — ver [`ANDROID_APK.md`](./ANDROID_APK.md)).
-- ⚠️ Chrome marca los dominios `trycloudflare.com` como "peligrosos" (los abusan phishers) → **no es
-  apto para repartir a usuarios**. Es un stopgap de pruebas.
+Verificado desde fuera de la red el 2026-08-11: `/` y `/api/health` responden **200** con
+certificado válido.
 
-> **El camino definitivo NO es un named tunnel de Cloudflare.** Se intentó y quedó bloqueado: el
-> dominio tiene `update prohibited` en GoDaddy y no se pueden cambiar los nameservers sin el titular
-> de esa cuenta. Se fue por **Let's Encrypt directo** sobre `aquora.xpertic.co`; el certificado ya
-> está emitido y los scripts desplegados. Falta publicar 443 y 80 — ver
-> [`PENDIENTES.md §1`](./PENDIENTES.md) y [`DOMINIO_AQUORA_CLOUDFLARE.md`](./DOMINIO_AQUORA_CLOUDFLARE.md).
+- **Certificado**: emitido para `aquora.xpertic.co`, válido **31-jul-2026 → 29-oct-2026**, en
+  `/etc/ssl/ptap/`.
+- 🔴 **La renovación NO es automática todavía**, por dos motivos que hay que resolver ambos:
+  el **puerto 80 sigue cerrado desde Internet** (sin él no hay desafío HTTP-01), y el `certbot.timer`
+  del sistema corre como root sobre `/etc/letsencrypt`, mientras que este certificado vive en
+  `~/letsencrypt/config` por haberse emitido sin sudo. Ver [`PENDIENTES.md`](./PENDIENTES.md).
+
+### Historial: el quick tunnel de Cloudflare (apagado)
+
+Mientras no hubo dominio se usó un quick tunnel efímero (`cf-run.sh`), que daba una URL
+`*.trycloudflare.com` distinta en cada arranque. **Se apagó el 2026-08-11** y su origen se retiró de
+`CORS_ORIGINS`.
+
+> ⚠️ **El APK distribuido antes de esa fecha lleva horneada la URL del túnel y ya no conecta.** Hay
+> que recompilarlo contra `https://aquora.xpertic.co` — ver [`ANDROID_APK.md`](./ANDROID_APK.md).
+> Con dominio estable, debería ser la última recompilación motivada por un cambio de URL.
+
+> El camino del **named tunnel** de Cloudflare queda descartado, no pendiente: se había planteado
+> porque solo había un puerto publicado, y la NAT 1:1 eliminó ese problema.
 
 ## 7. Actualizar el sistema (flujo normal)
 
@@ -152,7 +171,8 @@ npm run -w @ptap/api audit:efficiency                                           
 ## 9. Scripts operativos (en la VM, `~/deploy-scripts/`)
 
 `deploy.sh` (actualizar backend), `db-backup.sh` (backup diario), `web-setup.sh` (publicar web +
-recargar nginx), `cf-run.sh` (levantar el túnel), `ufw-restrict80.sh` (cerrar cleartext),
+recargar nginx), `cf-run.sh` (túnel de emergencia, normalmente apagado), `ufw-restrict80.sh`
+(restringe el 80 a rangos privados — **hoy es justo lo que impide renovar el certificado**, ver §6),
 `opcua-writes-toggle.sh` (abrir/cerrar el canal de escritura), `le-cert-user.sh` / `le-nginx.sh` /
 `le-renew.sh` (Let's Encrypt), `env-dominio.sh` (CORS y URL pública), y los de build de APK.
 

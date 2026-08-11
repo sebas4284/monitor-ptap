@@ -14,57 +14,67 @@
 
 Todo esto se ejecuta **dentro de la VM `192.168.30.50`**, alcanzable solo por la VPN `PTAP-VPN`.
 
-### Dominio `aquora.xpertic.co` con TLS
+### ✅ Dominio `aquora.xpertic.co` con TLS — RESUELTO el 2026-08-11
 
-Detalle completo en [`DOMINIO_AQUORA_CLOUDFLARE.md §7`](./DOMINIO_AQUORA_CLOUDFLARE.md). El camino de
-Cloudflare Tunnel quedó **bloqueado**: el dominio tiene `update prohibited` en GoDaddy y no se pueden
-cambiar los nameservers sin el titular de esa cuenta. Se fue por Let's Encrypt.
+**El dominio ya sirve desde Internet con certificado válido.** Verificado desde fuera de la red:
+`https://aquora.xpertic.co/` y `/api/health` → **200**, IP contactada `191.102.61.125`.
 
-**Estado verificado en la VM el 2026-08-05** (el doc anterior daba varios de estos por pendientes
-cuando ya estaban hechos):
+Lo destrabó un cambio de redes, no ninguno de los dos caminos que se habían planeado: se pasó de un
+**DNAT por puerto** contra `191.102.61.123` a una **NAT 1:1 contra `191.102.61.125`**. Con eso el
+registro A pasó a bastar por sí solo. Detalle en
+[`DOMINIO_AQUORA_CLOUDFLARE.md`](./DOMINIO_AQUORA_CLOUDFLARE.md).
 
-- [x] Certificado emitido para `aquora.xpertic.co` (Let's Encrypt). Verificado en vivo:
-      `CN = aquora.xpertic.co`, válido **31-jul-2026 → 29-oct-2026**.
-- [x] `le-cert-user.sh`, `le-nginx.sh` y `le-renew.sh` desplegados en `~/deploy-scripts/`
-- [x] **`le-nginx.sh` YA se corrió y HTTPS está prendido.** El cert vive en `/etc/ssl/ptap/`, nginx
-      tiene su server block de `listen 443 ssl` (más el de `:80` que redirige a HTTPS), y desde la
-      propia VM `https://aquora.xpertic.co/` y `/api/health` responden **200**.
-- [x] 80 y 443 en escucha en `0.0.0.0` dentro de la VM.
-- [x] `CORS_ORIGINS` ya incluye `https://aquora.xpertic.co`.
+Aplicado el 2026-08-11:
 
-Falta — y esto es lo único que bloquea de verdad:
+- [x] `APP_PUBLIC_URL` = `https://aquora.xpertic.co` (antes: túnel efímero).
+- [x] Origen `*.trycloudflare.com` retirado de `CORS_ORIGINS`. Quedan el dominio,
+      `http://192.168.30.50` (acceso por LAN/VPN) y `http://localhost:8081` (desarrollo).
+- [x] **Quick tunnel de Cloudflare apagado.** Ya no hacía falta.
+- [x] Certificado válido **31-jul-2026 → 29-oct-2026**, servido por nginx en el 443.
 
-- [ ] 🔴 **Pedir a redes el DNAT `191.102.61.123:443 → 192.168.30.50:443`.** Comprobado el
-      2026-08-05 desde un equipo de la VPN: el DNS público de `aquora.xpertic.co` resuelve
-      correctamente a `191.102.61.123`, pero **los puertos 443 y 80 están cerrados desde fuera**
-      (`TcpTestSucceeded: False` en ambos). El certificado y nginx están perfectos; simplemente
-      nadie llega desde Internet.
-- [ ] Pedir también el **80** — es lo que hace automática la renovación (ver el aviso de abajo).
-- [ ] `APP_PUBLIC_URL` **sigue apuntando al túnel efímero de Cloudflare**, y así debe quedarse
-      hasta que el punto anterior esté resuelto: de esa variable salen los enlaces absolutos
-      (verificación de correo), y apuntarlos a un dominio inalcanzable los rompería. Cuando el
-      DNAT esté: `bash ~/deploy-scripts/env-dominio.sh --publicar` + `pm2 restart ptap-api`.
+Falta:
+
+- [ ] 🔴 **Abrir el puerto 80 a Internet en ufw** — `sudo ufw allow 80/tcp`. Es lo único con fecha
+      límite. Hoy sigue **cerrado desde fuera** (verificado el 2026-08-11), así que el desafío
+      HTTP-01 no puede completarse y **la renovación del certificado fallará**. nginx ya redirige el
+      80 a HTTPS y tiene el `location /.well-known/acme-challenge/`, así que abrirlo no expone
+      contenido: solo habilita la renovación. Después, comprobarlo de verdad con
+      `certbot renew --dry-run`.
+- [ ] Recompilar el APK contra `https://aquora.xpertic.co` — el APK distribuido lleva horneada la
+      URL del túnel, que ya está apagado, así que **no conecta**. Con dominio estable debería ser la
+      última recompilación por cambio de URL.
 - [ ] Borrar el TXT `_acme-challenge.aquora` del cPanel (ya cumplió su función)
-- [ ] Confirmar el 443 en ufw (no se pudo verificar sin sudo; el puerto sí está en escucha)
-- [ ] Una vez validado el dominio: pedir a redes que **quite el DNAT** `191.102.61.123:5554 → :80`
+- [ ] Pedir a redes que retire el DNAT viejo `:5554` si aún existe
+- [ ] Replicar el `.env` nuevo en la copia local durable `.env.production.local` (gitignored)
 
-> 🔴 **La renovación NO es automática.** Al emitir, certbot informa que programó una tarea para
-> renovar solo. Es falso para este certificado: el `certbot.timer` corre como root sobre
-> `/etc/letsencrypt`, y el nuestro está en `~/letsencrypt/config` porque se emitió sin sudo. Si nadie
-> hace nada, **vence el 2026-10-29 en silencio**. Se arregla de raíz publicando el puerto 80.
+> 🔴 **La renovación NO es automática, y hay un segundo motivo además del puerto 80.** Al emitir,
+> certbot informa que programó una tarea para renovar solo. Es falso para este certificado: el
+> `certbot.timer` corre como root sobre `/etc/letsencrypt`, y el nuestro está en
+> `~/letsencrypt/config` porque se emitió sin sudo. **Vence el 2026-10-29**; hay que resolver ambas
+> cosas, no solo el puerto.
 
-> El quick tunnel efímero **sigue corriendo a propósito**, como red de seguridad. Matarlo recién
-> cuando el dominio esté validado desde Internet.
+### 🔒 Nota de seguridad: la NAT 1:1 cambió el perímetro
+
+Antes solo se publicaba un puerto concreto. Ahora **toda la VM está en Internet salvo lo que ufw
+filtre**: el firewall pasó de ser la segunda barrera a ser **la única**. Verificado desde fuera el
+2026-08-11:
+
+| Puerto | Estado | |
+|---|---|---|
+| 443 | abierto | correcto |
+| 22 | abierto | **decisión consciente**: solo-llave (contraseña deshabilitada) + fail2ban activo |
+| 80 | cerrado | hay que abrirlo (ver arriba) |
+| 3306 (MySQL), 4000 (API directa), 8080 | **cerrados** | ufw cumpliendo |
+
+- [ ] *(defensa en profundidad)* La API escucha en `*:4000`. ufw la bloquea, pero atarla a
+      `127.0.0.1:4000` dejaría a nginx como único camino posible, sin depender de que una regla siga
+      bien puesta. Con NAT 1:1 esta recomendación pesa más que antes.
 
 ### `.env` de producción
 
-- [x] **Hecho el 2026-07-31:** `~/deploy-scripts/env-dominio.sh` agregó `https://aquora.xpertic.co`
-      a `CORS_ORIGINS` conservando los 3 orígenes previos. Los 4 verificados como PERMITIDO, y un
-      origen inventado sigue dando RECHAZADO (el CORS no quedó abierto).
-- [ ] `APP_PUBLIC_URL` sigue apuntando al túnel efímero. Moverlo con
-      `bash ~/deploy-scripts/env-dominio.sh --publicar` **recién cuando el dominio responda desde
-      Internet** — de ahí salen los enlaces absolutos.
-- [ ] Replicar el cambio en la copia local durable `.env.production.local` (gitignored)
+- [x] `CORS_ORIGINS` con el dominio, la IP de LAN y localhost. El origen del túnel se retiró el
+      2026-08-11 al apagarlo.
+- [x] `APP_PUBLIC_URL` = `https://aquora.xpertic.co` (2026-08-11).
 
 > Conservar `http://192.168.30.50` en `CORS_ORIGINS` para no perder el acceso por LAN/VPN si el
 > dominio falla. El gateway de Socket.IO valida `Origin`: si el valor no coincide exacto, el tablero
