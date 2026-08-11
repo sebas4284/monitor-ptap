@@ -3,7 +3,7 @@
 > **Único tracker de pendientes.** Fusiona los tres que existían por separado (`PENDIENTES_VPN.md`,
 > `PENDIENTE_DESPLIEGUE.md`, `SEMANA1-4_PENDIENTES.md`) y que se contradecían entre sí.
 >
-> Última revisión: **2026-08-05**.
+> Última revisión: **2026-08-11**.
 >
 > Incidente abierto aparte: [`INCIDENTE_CONEXION_PLC.md`](./INCIDENTE_CONEXION_PLC.md).
 > Checklist de endurecimiento: [`CHECKLIST_PRODUCCION.md`](./CHECKLIST_PRODUCCION.md).
@@ -45,14 +45,18 @@ Falta:
       URL correcta horneada y `trycloudflare` ausente. Copia en `~/monitor-ptap-20260811.apk` y en
       `C:\Users\USUARIO\Downloads\`. Procedimiento completo y trampas en
       [`ANDROID_APK.md §8`](./ANDROID_APK.md).
-- [ ] 🔴 **Publicar el APK nuevo** — `/var/www/ptap-download/` sigue sirviendo el viejo, que apunta
-      al túnel apagado: quien lo descargue hoy se lleva algo que **no conecta**. Necesita sudo, y
-      **sin usar `host-apk.sh`** (pisa la config de nginx y borra el HTTPS; lleva aviso en su
-      cabecera):
-      ```bash
-      sudo install -o www-data -g www-data -m 644 \
-        ~/monitor-ptap-20260811.apk /var/www/ptap-download/monitor-ptap.apk
-      ```
+- [x] ✅ **APK nuevo publicado** el 2026-08-11 en `/var/www/ptap-download/monitor-ptap.apk`.
+      Verificado: **35 503 027 bytes, byte a byte idéntico** al de `C:\Users\USUARIO\Downloads\`.
+      Se hizo **sin `host-apk.sh`** (ese script pisa la config de nginx y borraría el HTTPS; lleva
+      aviso en su cabecera), con `sudo install -o www-data -g www-data -m 644`.
+- [ ] 🟠 **Recompilar el APK sin el HMI.** El publicado se compiló a las **13:50** del 2026-08-11 y
+      el commit que retira el HMI (`622ecaf`) es de las **17:48**: el bundle todavía contiene
+      `openHmiSession` y `/api/hmi/session`, endpoint que **ya responde 404**. La pestaña la ve todo
+      usuario con `view_dashboard` y falla al tocarla. No es urgente (el resto de la app funciona y
+      apunta bien al dominio), pero deja la app con una función rota a la vista.
+      > **Coste real:** la toolchain se limpió tras el build del 11-ago — `~/android-build`,
+      > `~/.gradle` y `apps/mobile/android/` ya no existen, y `javac` tampoco. Rehacerlo son
+      > **~6 GB de descarga + ~40 min**, y empieza por `sudo apt install -y openjdk-17-jdk`.
 - [ ] Borrar el TXT `_acme-challenge.aquora` del cPanel (ya cumplió su función)
 - [ ] Pedir a redes que retire el DNAT viejo `:5554` si aún existe
 - [ ] Replicar el `.env` nuevo en la copia local durable `.env.production.local` (gitignored)
@@ -142,10 +146,24 @@ sudo bash ~/deploy-scripts/web-publish.sh
 > La web se compila con `API_BASE_URL` **vacío** (mismo origen): no hay URL horneada, así que solo
 > hace falta recompilar cuando cambia el código, no por el dominio.
 
-**Último despliegue: 2026-08-06, commit `56b9130`. COMPLETO y verificado.** Backend y web en la VM,
-con la bandeja de notificaciones y el detector de sensores congelados ya activos. Comprobantes en
-verde: API `/health`, `/health/db`, `/health/opc`, la web por HTTP y por HTTPS, y
-`/api/notifications` respondiendo 401 sin token. Puente OPC `Connected`, 41 buffers, 0 en fallo.
+**Último despliegue: 2026-08-11, commit `622ecaf` (retiro del HMI). COMPLETO y verificado.**
+Comprobantes en verde: `/api/health`, `/health/db`, `/health/opc` en 200, la web en 200,
+`/api/notifications` respondiendo 401 sin token, y `/api/hmi/session` devolviendo **404** como
+corresponde. El despliegue anterior fue el 2026-08-06 (`56b9130`, bandeja de notificaciones y
+detector de sensores congelados).
+
+> 🔴 **Un despliegue que ELIMINA archivos exige borrar `dist/` a mano.** `tsc` compila las fuentes
+> que existen pero **no borra las salidas de las que ya no están**. Al desplegar `622ecaf` quedó un
+> `dist/modules/hmi/` huérfano, y el resultado fue el peor modo de fallo posible: el proceso
+> arrancaba, sobrevivía y consumía 160 MB, pero **nunca llegaba a escuchar en el 4000 y no emitía
+> ni una línea de log** — `pm2` lo reportaba `online` mientras todos los endpoints daban `000`.
+> Es el mismo síntoma que produce `--update-env`, con otra causa; no confundirlos. La cura:
+> ```bash
+> pm2 stop ptap-api
+> rm -rf apps/api/dist packages/shared/dist
+> npm run build && pm2 start ptap-api
+> ```
+> Costó ~10 min de caída el 2026-08-11. `deploy.sh` **no** hace esta limpieza: hay que acordarse.
 
 > 🔴 **El detector encontró 10 plantas con sensores congelados** en su primer barrido — cuatro más
 > de las que se habían visto revisando a mano. Ver §Sensores congelados abajo.
@@ -155,9 +173,9 @@ Pendiente:
 - [ ] **NTP** — para que el KPI de latencia OPC sea fiable: `sudo timedatectl set-ntp true`
 - [ ] Considerar rotar el token de GitHub de **LorJosh** (token *classic* con scope `repo`; los
       fine-grained no sirven en repos de otra cuenta personal).
-- [ ] **APK:** sí hay que recompilarla, la URL va horneada (`API_BASE_URL=https://aquora.xpertic.co`).
-      Procedimiento en [`ANDROID_APK.md`](./ANDROID_APK.md) §"Build en la VM". Con dominio propio esta
-      debería ser la **última** recompilación por cambio de URL.
+- [x] ✅ **APK recompilado contra el dominio** el 2026-08-11 y publicado. Con dominio propio esa fue
+      la **última** recompilación por cambio de URL. (Queda una pendiente por *código*, no por URL:
+      quitar el HMI del bundle — ver §1.)
 - [ ] Verificar tras desplegar:
       ```bash
       curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:4000/api/health/opc   # 200
@@ -244,10 +262,23 @@ esquema de alertas en BD depende de la misma decisión que D1: conviene resolver
       la proyección del HMI de WinCC dentro de la app se retiró (decisión de producto), y con ella
       el módulo `hmi/`, su cookie `hmi_session` y el gate `auth_request`. Era la brecha de cobertura
       más seria del proyecto; deja de existir junto con el código.
-      > 🔧 **Queda una tarea de infraestructura:** el snippet `/etc/nginx/snippets/ptap-hmi.conf`
-      > sigue incluido desde el server block de `:443` y ya apunta a un backend que no existe.
-      > Retirarlo necesita sudo. No rompe nada mientras tanto (solo devuelve 401 en `/hmi/`), pero
-      > conviene limpiarlo.
+      > 🔴 **Queda una exposición de red abierta, y NO es inofensiva.** El snippet
+      > `/etc/nginx/snippets/ptap-hmi.conf` sigue incluido desde el server block de `:443`
+      > (`sites-available/ptap`, línea 51) y **no apunta a un backend inexistente**: hace
+      > `proxy_pass https://10.10.51.225/` — el WinCC Unified de la planta, vivo. Verificado el
+      > 2026-08-11: `https://aquora.xpertic.co/hmi/` responde **HTTP 200 desde Internet**.
+      >
+      > **No hay autenticación delante de esa ruta**: ni `auth_request`, ni `auth_basic`, ni
+      > restricción por IP. Ya era así antes — la app solo repartía el enlace, nunca lo protegía —
+      > pero ahora que la función no existe es superficie de ataque sin ninguna contraparte, y con
+      > NAT 1:1 está publicada a Internet entero. Retirarlo necesita sudo:
+      > ```bash
+      > sudo cp /etc/nginx/sites-available/ptap /etc/nginx/sites-available/ptap.bak-sin-hmi
+      > sudo sed -i '/ptap-hmi.conf/d' /etc/nginx/sites-available/ptap
+      > sudo nginx -t && sudo systemctl reload nginx
+      > sudo rm -f /etc/nginx/snippets/ptap-hmi.conf
+      > ```
+      > Después `/hmi/` debe pasar a **404**.
 - [ ] **El parseo de tramas del adaptador OPC UA real está casi sin cubrir.** `DataValue →
       RawBufferSample`, `channelDataType()`, `isGoodStatus()` y el camino de escritura por
       `IndexRange` en `opcua-connectivity.adapter.ts` solo se ejercitan de refilón; el resto de la
@@ -310,9 +341,18 @@ Funcionando desde el 2026-08-06. Parámetros por variable de entorno, sin recomp
 
 ## Orden sugerido
 
-1. Publicar el 443 y el 80 (§1) — destraba el dominio y la renovación automática.
-2. `git push origin yosh:dev` + desplegar (§2) — el código ya está probado y verde.
-3. Cerrar D1 con el cliente (§3) — es lo único que bloquea trabajo futuro.
-4. Test del gate del HMI y typecheck de `test/`+`scripts/` (§4) — barato y cierra las dos brechas
-   de cobertura más serias.
-5. Soak test (§5), que necesita la VM estable y desplegada.
+Actualizado el 2026-08-11. Los tres primeros necesitan **sudo en la VM** y son de minutos:
+
+1. **Cerrar `/hmi/` (§4)** — es lo único que hoy expone un equipo de planta a Internet sin
+   autenticación, y ya no sirve a nada. Lo más urgente de la lista.
+2. **Abrir el puerto 80 (§1)** — sin él la renovación falla y el certificado **vence el 2026-10-29**.
+   Es el único pendiente con fecha límite.
+3. **NTP (§2)** — `sudo timedatectl set-ntp true`, para que el KPI de latencia OPC sea fiable.
+4. **Escalar los sensores congelados al integrador (§2b)** — no depende de nosotros y es lo que más
+   afecta al dato que ve el operador.
+5. **Cerrar D1 con el cliente (§3)** — es lo único que bloquea trabajo futuro de desarrollo.
+6. **Recompilar el APK sin el HMI (§1)** — cosmético; conviene agruparlo con el próximo cambio de
+   front que valga una recompilación, porque cuesta ~6 GB y ~40 min rehacer la toolchain.
+7. **Typecheck de `test/`+`scripts/` (§4)** — barato, cierra la brecha de cobertura que queda ahora
+   que la del HMI desapareció por eliminación.
+8. **Soak test (§5)**, que necesita la VM estable y desplegada.

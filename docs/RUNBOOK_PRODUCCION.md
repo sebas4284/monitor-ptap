@@ -57,7 +57,7 @@ aquora.xpertic.co ──► 191.102.61.125 ──[NAT 1:1]──► 192.168.30.5
 
 | Servicio | Qué hace | Notas |
 |---|---|---|
-| **nginx** (:80/:443) | Reverse proxy: web SPA en `/`, API en `/api/`, WebSocket en `/socket.io/`, APK en `/descargar/` | Config en `/etc/nginx/sites-available/ptap`. Cabeceras de seguridad + cache (index no-cache, chunks immutable). El snippet `ptap-hmi.conf` quedó **obsoleto** al retirar el HMI (2026-08-11): sigue incluido pero apunta a un backend que ya no existe |
+| **nginx** (:80/:443) | Reverse proxy: web SPA en `/`, API en `/api/`, WebSocket en `/socket.io/`, APK en `/descargar/` | Config en `/etc/nginx/sites-available/ptap`. Cabeceras de seguridad + cache (index no-cache, chunks immutable). 🔴 El snippet `ptap-hmi.conf` quedó obsoleto al retirar el HMI (2026-08-11) pero **sigue incluido y sigue funcionando**: hace `proxy_pass https://10.10.51.225/` (el WinCC Unified de la planta, vivo) y `https://aquora.xpertic.co/hmi/` responde **200 desde Internet sin autenticación alguna**. Retirarlo — ver [`PENDIENTES.md §4`](./PENDIENTES.md) |
 | **pm2 → `ptap-api`** | Backend NestJS (`node dist/main.js`) | Arranca en cada reboot (`pm2 startup` systemd), `pm2 save` |
 | **MySQL 8** (`ptapapp`) | BD (users, audit_log, command_log, tokens) | Escucha **solo localhost** (`bind-address 127.0.0.1`) |
 | ~~**cloudflared**~~ | *(apagado el 2026-08-11)* | Fue el stopgap mientras no había dominio. El binario y `cf-run.sh` siguen en la VM por si hiciera falta un acceso de emergencia |
@@ -126,9 +126,14 @@ Mientras no hubo dominio se usó un quick tunnel efímero (`cf-run.sh`), que dab
 `*.trycloudflare.com` distinta en cada arranque. **Se apagó el 2026-08-11** y su origen se retiró de
 `CORS_ORIGINS`.
 
-> ⚠️ **El APK distribuido antes de esa fecha lleva horneada la URL del túnel y ya no conecta.** Hay
-> que recompilarlo contra `https://aquora.xpertic.co` — ver [`ANDROID_APK.md`](./ANDROID_APK.md).
-> Con dominio estable, debería ser la última recompilación motivada por un cambio de URL.
+> ✅ **Resuelto el 2026-08-11.** El APK anterior llevaba horneada la URL del túnel y dejó de
+> conectar; se recompiló contra `https://aquora.xpertic.co` y **ya está publicado** en
+> `/var/www/ptap-download/monitor-ptap.apk` (35 503 027 B, firma `fac61745…` idéntica a la del APK
+> instalado, así que se instala encima sin desinstalar). Con dominio estable, fue la última
+> recompilación motivada por un cambio de URL. Ver [`ANDROID_APK.md`](./ANDROID_APK.md).
+>
+> Nota: ese APK se compiló **antes** del retiro del HMI (commit `622ecaf`), así que todavía muestra
+> esa pestaña y falla al tocarla. Pendiente cosmético en [`PENDIENTES.md §1`](./PENDIENTES.md).
 
 > El camino del **named tunnel** de Cloudflare queda descartado, no pendiente: se había planteado
 > porque solo había un puerto publicado, y la NAT 1:1 eliminó ese problema.
@@ -142,6 +147,16 @@ Mientras no hubo dominio se usó un quick tunnel efímero (`cf-run.sh`), que dab
    scope `repo`).
 2. En la VM: `bash ~/deploy.sh` (hace `fetch` + `pull --ff-only` + `npm ci` + migraciones + build +
    `pm2 restart`).
+   > 🔴 **Si el commit ELIMINA archivos fuente, antes hay que borrar `dist/` a mano.** `deploy.sh`
+   > no lo hace y `tsc` **no borra las salidas de fuentes que ya no existen**. El huérfano deja la
+   > API en el peor estado posible: proceso vivo, `pm2` diciendo `online`, **sin escuchar el 4000 y
+   > sin un solo log**. Pasó el 2026-08-11 al retirar el HMI (~10 min de caída). Ver **SRV-08** en
+   > [`CATALOGO_ERRORES.md`](./CATALOGO_ERRORES.md).
+   > ```bash
+   > pm2 stop ptap-api
+   > rm -rf ~/monitor-ptap/apps/api/dist ~/monitor-ptap/packages/shared/dist
+   > cd ~/monitor-ptap && npm run build && pm2 start ptap-api
+   > ```
 3. Si cambió el **front**: recompilar y publicar la web
    ```bash
    cd ~/monitor-ptap/apps/mobile && API_BASE_URL= npx expo export -p web --clear
