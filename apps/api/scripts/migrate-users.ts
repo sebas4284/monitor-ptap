@@ -34,6 +34,16 @@ interface Fila {
   email: string;
   planta: string;
   rol: string;
+  /**
+   * `si` = puede entrar desde el primer día. `no` = queda PENDIENTE de aprobación.
+   *
+   * Existe por un caso real de la migración: de los 22 usuarios del sistema anterior, 13 no traían
+   * ningún dato que permitiera saber su planta. Inventarla haría que vieran un sitio que no es el
+   * suyo. Creándolos pendientes quedan migrados pero sin acceso, y aparecen en la pestaña
+   * "Pendientes" de la pantalla Usuarios para que un admin les asigne planta y rol al verificarlos
+   * — que es justo el flujo que la aplicación ya tiene.
+   */
+  activo: boolean;
   linea: number;
 }
 
@@ -68,11 +78,20 @@ function parseCsv(ruta: string): Fila[] {
     if (!linea || linea.startsWith('#')) return;
     const campos = linea.split(',').map((c) => c.trim());
     if (campos[0]?.toLowerCase() === 'usuario') return; // cabecera
-    const [usuario, nombre, email, planta, rol] = campos;
+    const [usuario, nombre, email, planta, rol, activo] = campos;
     if (!usuario || !nombre || !email || !planta || !rol) {
-      throw new Error(`Línea ${i + 1}: faltan columnas (se esperan usuario,nombre,email,planta,rol)`);
+      throw new Error(`Línea ${i + 1}: faltan columnas (se esperan usuario,nombre,email,planta,rol[,activo])`);
     }
-    filas.push({ usuario, nombre, email: email.toLowerCase(), planta, rol, linea: i + 1 });
+    filas.push({
+      usuario,
+      nombre,
+      email: email.toLowerCase(),
+      planta,
+      rol,
+      // Sin columna `activo` se asume activo, para no romper CSV existentes.
+      activo: (activo ?? 'si').toLowerCase() !== 'no',
+      linea: i + 1,
+    });
   });
   return filas;
 }
@@ -120,7 +139,14 @@ async function runCli(): Promise<void> {
 
   const pool = createPool({ ...readDatabaseConfig(), connectionLimit: 4 });
   const hashing = new PasswordHashingService();
-  const creados: { usuario: string; email: string; planta: string; rol: string; password: string }[] = [];
+  const creados: {
+    usuario: string;
+    email: string;
+    planta: string;
+    rol: string;
+    password: string;
+    activo: boolean;
+  }[] = [];
   let existentes = 0;
 
   try {
@@ -136,25 +162,43 @@ async function runCli(): Promise<void> {
         const { passwordHash, pepperVersion } = await hashing.hashPassword(password);
         await pool.query(
           `INSERT INTO users (id, email, name, role, plant, password_hash, pepper_version, is_active)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
-          [randomUUID(), f.email, f.nombre, f.rol, f.planta, passwordHash, pepperVersion],
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [randomUUID(), f.email, f.nombre, f.rol, f.planta, passwordHash, pepperVersion, f.activo ? 1 : 0],
         );
       }
-      creados.push({ usuario: f.usuario, email: f.email, planta: f.planta, rol: f.rol, password });
+      creados.push({
+        usuario: f.usuario,
+        email: f.email,
+        planta: f.planta,
+        rol: f.rol,
+        password,
+        activo: f.activo,
+      });
     }
 
     console.log('');
     console.log(aplicar ? '=== CUENTAS CREADAS ===' : '=== SIMULACRO (no se escribió nada) ===');
     console.log('');
-    console.log('usuario                    | correo                                | planta          | rol      | contraseña');
-    console.log('-'.repeat(120));
+    console.log('usuario                    | correo                                | planta          | rol      | estado     | contraseña');
+    console.log('-'.repeat(135));
     for (const c of creados) {
       console.log(
-        `${c.usuario.padEnd(26)} | ${c.email.padEnd(37)} | ${c.planta.padEnd(15)} | ${c.rol.padEnd(8)} | ${c.password}`,
+        `${c.usuario.padEnd(26)} | ${c.email.padEnd(37)} | ${c.planta.padEnd(15)} | ${c.rol.padEnd(8)} | ` +
+          `${(c.activo ? 'activo' : 'PENDIENTE').padEnd(10)} | ${c.password}`,
       );
     }
+    const pendientes = creados.filter((c) => !c.activo).length;
     console.log('');
-    console.log(`  ${creados.length} ${aplicar ? 'creadas' : 'por crear'}, ${existentes} ya existían.`);
+    console.log(
+      `  ${creados.length} ${aplicar ? 'creadas' : 'por crear'} ` +
+        `(${creados.length - pendientes} activas, ${pendientes} pendientes), ${existentes} ya existían.`,
+    );
+    if (pendientes > 0) {
+      console.log(
+        `  Las ${pendientes} pendientes NO pueden entrar hasta que un admin las apruebe en\n` +
+          '  Usuarios → pestaña "Pendientes", donde además se les asigna planta y rol.',
+      );
+    }
     if (aplicar) {
       console.log('');
       console.log('  ⚠️ Estas contraseñas se muestran UNA sola vez: en la base quedan hasheadas.');
