@@ -86,18 +86,64 @@ backend (la APK nativa no lo necesita — no manda `Origin`). Ver `.env.example`
 
 ---
 
-## 2. Generar el keystore de firma (una sola vez)
+## 2. La firma — leer antes de recompilar
 
-El release Android debe ir firmado. Genera un keystore y **guárdalo fuera del repo** (ya está en
-`.gitignore`; si se pierde, no podrás actualizar la app con la misma identidad):
+> 🔴 **Lo que se está usando realmente NO es el keystore de release.** Verificado el 2026-08-11: el
+> APK publicado está firmado con el **keystore de depuración**, y hay que seguir usando ESE.
+
+`android/app/build.gradle` (generado por `expo prebuild`) trae el default de Expo:
+
+```gradle
+release {
+    // Caution! In production, you need to generate your own keystore file.
+    signingConfig signingConfigs.debug     // ← firma el release con la llave de DEPURACIÓN
+}
+```
+
+Huella del APK publicado y del `debug.keystore` local — **idénticas**:
+
+```
+fac61745dc0903786fb9ede62a962b399f7348f0bb6f899b8332667591033b9c
+```
+
+**Por qué importa:** Android **rechaza instalar** sobre una app existente un APK firmado con otra
+llave. Si se recompila con el keystore de release (o con un `debug.keystore` regenerado), nadie
+podrá actualizar: habría que desinstalar y perder la sesión guardada.
+
+### Reglas para no romperlo
+
+1. 🔴 **`apps/mobile/android/` está gitignored por completo**, así que `debug.keystore` **existe solo
+   en la máquina que compila** y no hay copia en el repositorio. Si se pierde, se acabó la
+   posibilidad de actualizar la app instalada.
+   **Hay un respaldo en `C:\keys\respaldo-debug-keystore\`.** Consérvalo.
+2. **`expo prebuild --clean` borra `android/` entero**, incluido el keystore. Si se usa —y a veces
+   hay que usarlo, ver abajo— **restaurar el `debug.keystore` desde el respaldo antes de compilar**,
+   y comprobar la huella:
+   ```bash
+   keytool -list -v -keystore android/app/debug.keystore -storepass android -alias androiddebugkey
+   ```
+3. **Verificar SIEMPRE el APK resultante antes de publicarlo**, y compararlo con el que está en
+   producción:
+   ```bash
+   apksigner verify --print-certs app-release.apk
+   ```
+
+> **Cuándo hace falta `--clean`:** un `prebuild` normal fusiona sobre el manifest anterior y **no
+> retira** los `tools:node="remove"` de permisos que se hayan desbloqueado. Ocurrió el 2026-08-11 al
+> habilitar `VIBRATE` para las notificaciones: seguía marcado para eliminarse. Si se cambian
+> permisos en `app.config.js`, usar `--clean` y restaurar la llave.
+
+### Migrar al keystore de release (pendiente, con coste)
+
+Existe `C:\keys\monitor-ptap-release.keystore` pero **no se está usando**. Cambiar a él es lo
+correcto a futuro, y tiene un precio inevitable: **todos los usuarios tendrían que desinstalar y
+reinstalar**. Conviene hacerlo solo si se va a distribuir por una tienda o si el parque de
+instalaciones es pequeño. Se generó así:
 
 ```bash
 keytool -genkeypair -v -keystore monitor-ptap-release.keystore \
   -alias monitor-ptap -keyalg RSA -keysize 2048 -validity 10000
 ```
-
-Anota la contraseña del store y de la clave. Colócalo en un lugar seguro (p. ej.
-`C:\keys\monitor-ptap-release.keystore`), **no** dentro del proyecto.
 
 ---
 
