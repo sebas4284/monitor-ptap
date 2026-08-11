@@ -57,7 +57,7 @@ aquora.xpertic.co ──► 191.102.61.125 ──[NAT 1:1]──► 192.168.30.5
 
 | Servicio | Qué hace | Notas |
 |---|---|---|
-| **nginx** (:80) | Reverse proxy: web SPA en `/`, API en `/api/`, WebSocket en `/socket.io/`, APK en `/descargar/`, y el gate `auth_request` del HMI | Config en `/etc/nginx/sites-available/ptap`. Cabeceras de seguridad + cache (index no-cache, chunks immutable) |
+| **nginx** (:80/:443) | Reverse proxy: web SPA en `/`, API en `/api/`, WebSocket en `/socket.io/`, APK en `/descargar/` | Config en `/etc/nginx/sites-available/ptap`. Cabeceras de seguridad + cache (index no-cache, chunks immutable). El snippet `ptap-hmi.conf` quedó **obsoleto** al retirar el HMI (2026-08-11): sigue incluido pero apunta a un backend que ya no existe |
 | **pm2 → `ptap-api`** | Backend NestJS (`node dist/main.js`) | Arranca en cada reboot (`pm2 startup` systemd), `pm2 save` |
 | **MySQL 8** (`ptapapp`) | BD (users, audit_log, command_log, tokens) | Escucha **solo localhost** (`bind-address 127.0.0.1`) |
 | ~~**cloudflared**~~ | *(apagado el 2026-08-11)* | Fue el stopgap mientras no había dominio. El binario y `cf-run.sh` siguen en la VM por si hiciera falta un acceso de emergencia |

@@ -765,7 +765,6 @@ pichinde, carbonero, sirena, san-antonio, quijote`). Nada de `PTAP Norte` ni `pt
 | [`docs/plc/OBSERVACIONES_FASE0.md`](docs/plc/OBSERVACIONES_FASE0.md) | Las cuatro observaciones de solo lectura contra el PLC real, como una sola investigación: verificación del contrato, por qué DN/ER/TO **no** sirven como estado de conexión, cómo se llegó al modelo de frescura de 3 estados, y la validación del caudal de Montebello. |
 | [`docs/plc/`](docs/plc/) | Los 10 entregables de la ingeniería inversa OPC UA (`tools/plc-discovery`). |
 | [`docs/PROTOCOLO_VALVULAS_VORAGINE.md`](docs/PROTOCOLO_VALVULAS_VORAGINE.md) | Protocolo de comando y estado de válvulas (semántica de bits). |
-| [`docs/PLAN_HMI_OPTIX.md`](docs/PLAN_HMI_OPTIX.md) | Proyección del HMI de WinCC/Optix dentro de la plataforma. |
 
 ### Contratos y arquitectura
 

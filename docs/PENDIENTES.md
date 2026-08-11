@@ -240,9 +240,14 @@ esquema de alertas en BD depende de la misma decisión que D1: conviene resolver
 
 ## 4. Deuda técnica interna (no bloquea a nadie externo)
 
-- [ ] **El gate de sesión del HMI no tiene ni un test.** `apps/api/src/modules/hmi/hmi.controller.ts`
-      es la puerta (`auth_request` de nginx, cookie `hmi_session`) que protege el HMI de WinCC de
-      Internet, y ningún archivo de `test/` lo menciona. Es la brecha de cobertura más seria.
+- [x] ~~El gate de sesión del HMI no tiene ni un test.~~ **Resuelto por eliminación el 2026-08-11:**
+      la proyección del HMI de WinCC dentro de la app se retiró (decisión de producto), y con ella
+      el módulo `hmi/`, su cookie `hmi_session` y el gate `auth_request`. Era la brecha de cobertura
+      más seria del proyecto; deja de existir junto con el código.
+      > 🔧 **Queda una tarea de infraestructura:** el snippet `/etc/nginx/snippets/ptap-hmi.conf`
+      > sigue incluido desde el server block de `:443` y ya apunta a un backend que no existe.
+      > Retirarlo necesita sudo. No rompe nada mientras tanto (solo devuelve 401 en `/hmi/`), pero
+      > conviene limpiarlo.
 - [ ] **El parseo de tramas del adaptador OPC UA real está casi sin cubrir.** `DataValue →
       RawBufferSample`, `channelDataType()`, `isGoodStatus()` y el camino de escritura por
       `IndexRange` en `opcua-connectivity.adapter.ts` solo se ejercitan de refilón; el resto de la

@@ -186,14 +186,11 @@ function MenuModal({
 
 export default function AppLayout() {
   const [menuVisible, setMenuVisible] = useState(false);
-  const { user, token, isLoading, hasPermission } = useAuth();
-  // Ocultar la pestaña HMI a quien no ve el tablero es comodidad de UI: la propia pantalla vuelve a
-  // comprobar el permiso, igual que hacen tablero y electroválvulas.
-  const hasViewDashboard = hasPermission('view_dashboard');
+  const { user, token, isLoading } = useAuth();
   const isCivil = user?.role === 'civil';
 
-  // Opciones de cabecera ESTABLES: se esparcen en 8 `Tabs.Screen`, así que recrearlas en cada
-  // render obligaba a react-navigation a re-evaluar las 8. `setMenuVisible` es estable (useState),
+  // Opciones de cabecera ESTABLES: se esparcen en 7 `Tabs.Screen`, así que recrearlas en cada
+  // render obligaba a react-navigation a re-evaluar las 7. `setMenuVisible` es estable (useState),
   // y los conteos viven ahora dentro de `<AlertBell/>` y `<MenuButton/>`, no aquí.
   const HEADER_OPTS = useMemo(
     () => ({
@@ -260,19 +257,6 @@ export default function AppLayout() {
             tabBarLabel: 'Válvulas',
             tabBarIcon: ({ color, size, focused }) => (
               <Ionicons name={focused ? 'toggle' : 'toggle-outline'} size={size} color={color} />
-            ),
-          }}
-        />
-        {/* Proyección del HMI real (WinCC Unified) vía el proxy /hmi/ de nginx. Solo tiene sentido
-            para quien ve el tablero; en el APK la pantalla muestra su propio aviso (no hay WebView). */}
-        <Tabs.Screen
-          name="hmi"
-          options={{
-            ...HEADER_OPTS,
-            tabBarLabel: 'HMI',
-            href: hasViewDashboard ? undefined : null,
-            tabBarIcon: ({ color, size, focused }) => (
-              <Ionicons name={focused ? 'desktop' : 'desktop-outline'} size={size} color={color} />
             ),
           }}
         />
