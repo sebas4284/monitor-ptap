@@ -1,4 +1,14 @@
-import { Controller, Get, Inject, Post, Req, UnauthorizedException, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  ForbiddenException,
+  Get,
+  Inject,
+  Post,
+  Req,
+  UnauthorizedException,
+  UseGuards,
+} from '@nestjs/common';
+import { hasPermission } from '@ptap/shared';
 import type { AuthenticatedRequest } from '../auth/authenticated-request';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionGuard } from '../auth/guards/permission.guard';
@@ -18,6 +28,10 @@ const MAX_ITEMS = 200;
  *
  * Exige `view_dashboard`: el Civil no recibe avisos de proceso (coherente con el resto de la
  * matriz, que no le da señales detalladas).
+ *
+ * **Acotada POR PLANTA.** Aquí no sirve `PlantScopeGuard`: estas rutas no llevan `:plantId`, así
+ * que el guard es un no-op y el ámbito hay que aplicarlo en la consulta. Sin eso, un operador de
+ * Km 18 recibía —y le sonaban en el celular— los avisos de las otras once plantas.
  */
 @Controller('notifications')
 @UseGuards(JwtAuthGuard, PermissionGuard)
@@ -25,24 +39,32 @@ export class NotificationsController {
   constructor(@Inject(NotificationRepository) private readonly repo: NotificationRepository) {}
 
   /**
+   * Identidad y ámbito de quien pregunta.
+   *
    * El estado de lectura es POR usuario, así que sin identidad no hay respuesta posible.
    * `JwtAuthGuard` ya lo garantiza; esto es la red de seguridad para que el tipo opcional no
    * degenere en un `!` que oculte un fallo de wiring de guards.
+   *
+   * `plantScope: null` significa TODAS las plantas y solo lo concede `view_all_plants` (hoy el
+   * Admin). Para el resto es la planta de la cuenta — y si esa cuenta no trae planta, esto
+   * FALLA en vez de caer a `null`: un fallo de wiring debe cerrar la bandeja, no abrirla entera.
    */
-  private userIdOf(req: AuthenticatedRequest): string {
-    const id = req.user?.id;
-    if (!id) throw new UnauthorizedException('Sesión requerida');
-    return id;
+  private scopeOf(req: AuthenticatedRequest): { userId: string; plantScope: string | null } {
+    const user = req.user;
+    if (!user?.id) throw new UnauthorizedException('Sesión requerida');
+    if (hasPermission(user.role, 'view_all_plants')) return { userId: user.id, plantScope: null };
+    if (!user.plant) throw new ForbiddenException('Tu cuenta no tiene una planta asignada');
+    return { userId: user.id, plantScope: user.plant };
   }
 
-  /** Historial reciente, con el estado de visto DE QUIEN pregunta. */
+  /** Historial reciente de SU planta, con el estado de visto DE QUIEN pregunta. */
   @Get()
   @RequirePermission('view_dashboard')
   async list(@Req() req: AuthenticatedRequest): Promise<{ notifications: StoredNotification[]; unseen: number }> {
-    const userId = this.userIdOf(req);
+    const { userId, plantScope } = this.scopeOf(req);
     const [notifications, unseen] = await Promise.all([
-      this.repo.listRecent(userId, HISTORY_HOURS, MAX_ITEMS),
-      this.repo.countUnseen(userId, HISTORY_HOURS),
+      this.repo.listRecent(userId, plantScope, HISTORY_HOURS, MAX_ITEMS),
+      this.repo.countUnseen(userId, plantScope, HISTORY_HOURS),
     ]);
     return { notifications, unseen };
   }
@@ -51,7 +73,8 @@ export class NotificationsController {
   @Get('unseen-count')
   @RequirePermission('view_dashboard')
   async unseenCount(@Req() req: AuthenticatedRequest): Promise<{ unseen: number }> {
-    return { unseen: await this.repo.countUnseen(this.userIdOf(req), HISTORY_HOURS) };
+    const { userId, plantScope } = this.scopeOf(req);
+    return { unseen: await this.repo.countUnseen(userId, plantScope, HISTORY_HOURS) };
   }
 
   /**
@@ -61,6 +84,7 @@ export class NotificationsController {
   @Post('seen')
   @RequirePermission('view_dashboard')
   async markSeen(@Req() req: AuthenticatedRequest): Promise<{ marked: number }> {
-    return { marked: await this.repo.markAllSeen(this.userIdOf(req), HISTORY_HOURS) };
+    const { userId, plantScope } = this.scopeOf(req);
+    return { marked: await this.repo.markAllSeen(userId, plantScope, HISTORY_HOURS) };
   }
 }

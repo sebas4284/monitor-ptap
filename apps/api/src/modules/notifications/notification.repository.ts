@@ -37,6 +37,16 @@ function dedupeKeyOf(n: NewNotification): string {
 }
 
 /**
+ * Ámbito por planta de las consultas de la bandeja.
+ *
+ * `null` = sin acotar, y eso SOLO lo concede `view_all_plants` (hoy el Admin). Se devuelve como
+ * fragmento + parámetros en lugar de interpolar el identificador en el SQL.
+ */
+function plantFilter(plantScope: string | null): { sql: string; params: string[] } {
+  return plantScope === null ? { sql: '', params: [] } : { sql: ' AND n.plant_id = ?', params: [plantScope] };
+}
+
+/**
  * Bandeja de notificaciones.
  *
  * Dos decisiones que conviene no revertir sin pensarlo:
@@ -72,17 +82,26 @@ export class NotificationRepository {
     }
   }
 
-  /** Historial reciente con el estado de lectura DE ESE usuario. Más nuevas primero. */
-  async listRecent(userId: string, sinceHours: number, limit: number): Promise<StoredNotification[]> {
+  /**
+   * Historial reciente con el estado de lectura DE ESE usuario, acotado a `plantScope`
+   * (`null` = todas las plantas).
+   */
+  async listRecent(
+    userId: string,
+    plantScope: string | null,
+    sinceHours: number,
+    limit: number,
+  ): Promise<StoredNotification[]> {
+    const planta = plantFilter(plantScope);
     const [rows] = await this.pool.query<RowDataPacket[]>(
       `SELECT n.id, n.kind, n.severity, n.plant_id, n.subject, n.title, n.message, n.created_at,
               (s.user_id IS NOT NULL) AS seen
          FROM notification n
          LEFT JOIN notification_seen s ON s.notification_id = n.id AND s.user_id = ?
-        WHERE n.created_at >= NOW() - INTERVAL ? HOUR
+        WHERE n.created_at >= NOW() - INTERVAL ? HOUR${planta.sql}
         ORDER BY n.created_at DESC
         LIMIT ?`,
-      [userId, sinceHours, limit],
+      [userId, sinceHours, ...planta.params, limit],
     );
     return rows.map((r) => ({
       id: r.id as number,
@@ -97,29 +116,38 @@ export class NotificationRepository {
     }));
   }
 
-  /** Cuántos avisos del historial reciente NO ha visto este usuario (es el número de la campana). */
-  async countUnseen(userId: string, sinceHours: number): Promise<number> {
+  /**
+   * Cuántos avisos del historial reciente NO ha visto este usuario, dentro de su ámbito (es el
+   * número de la campana). Va acotado igual que `listRecent`: si contara de más, la campana
+   * marcaría avisos que la bandeja no llega a mostrar y nunca se podría dejar en cero.
+   */
+  async countUnseen(userId: string, plantScope: string | null, sinceHours: number): Promise<number> {
+    const planta = plantFilter(plantScope);
     const [rows] = await this.pool.query<RowDataPacket[]>(
       `SELECT COUNT(*) AS n
          FROM notification n
          LEFT JOIN notification_seen s ON s.notification_id = n.id AND s.user_id = ?
         WHERE n.created_at >= NOW() - INTERVAL ? HOUR
-          AND s.user_id IS NULL`,
-      [userId, sinceHours],
+          AND s.user_id IS NULL${planta.sql}`,
+      [userId, sinceHours, ...planta.params],
     );
     return Number(rows[0]?.n ?? 0);
   }
 
   /**
-   * Marca como vistos todos los avisos recientes de ese usuario. Idempotente: `INSERT IGNORE`
+   * Marca como vistos los avisos recientes DEL ÁMBITO de ese usuario. Idempotente: `INSERT IGNORE`
    * deja intacta la marca previa, así que `seen_at` conserva la PRIMERA vez que lo vio.
+   *
+   * Acotado a propósito: sin el filtro se marcarían como vistos avisos de plantas que la persona
+   * nunca vio, y si mañana un admin la reasigna a otra planta llegaría con el historial ya "leído".
    */
-  async markAllSeen(userId: string, sinceHours: number): Promise<number> {
+  async markAllSeen(userId: string, plantScope: string | null, sinceHours: number): Promise<number> {
+    const planta = plantFilter(plantScope);
     const [res] = await this.pool.query<ResultSetHeader>(
       `INSERT IGNORE INTO notification_seen (notification_id, user_id)
        SELECT n.id, ? FROM notification n
-        WHERE n.created_at >= NOW() - INTERVAL ? HOUR`,
-      [userId, sinceHours],
+        WHERE n.created_at >= NOW() - INTERVAL ? HOUR${planta.sql}`,
+      [userId, sinceHours, ...planta.params],
     );
     return res.affectedRows ?? 0;
   }
