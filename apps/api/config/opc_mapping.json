@@ -1031,6 +1031,17 @@
           }
         },
         {
+          "buffer": "intIn",
+          "sourceBuffer": "INT_IN_CASCAJAL",
+          "index": 1,
+          "domainKey": "valve1State",
+          "label": "Estado válvula 1",
+          "mappingStatus": "mapped",
+          "confidence": "confirmed",
+          "writable": false,
+          "stateEncoding": { "closed": 251 }
+        },
+        {
           "buffer": "realIn",
           "index": 0,
           "domainKey": "outletFlow1",
@@ -1100,6 +1111,18 @@
           "unit": "psi",
           "min": -15,
           "max": 232,
+          "mappingStatus": "mapped",
+          "confidence": "confirmed",
+          "writable": false
+        },
+        {
+          "buffer": "realIn",
+          "index": 14,
+          "domainKey": "inletFlow1",
+          "label": "Caudal de entrada 1",
+          "unit": "l/s",
+          "min": 0,
+          "max": 1000,
           "mappingStatus": "mapped",
           "confidence": "confirmed",
           "writable": false

@@ -5,8 +5,10 @@ import type { PlantSnapshotDto, SignalDto, ValveCommandResult } from './api';
  * Ya no hay mocks: si la planta no tiene válvula mapeada, la lista queda vacía y la pantalla lo dice.
  *
  * ESTADO de la válvula — dos métodos, por instrucción del operador (2026-07-30):
- *   1. `valve1State` (lectura directa de intIn[0]): máscara de bits del PLC → bit0 = abierta(1) /
- *      cerrada(0), con bit14 = estado válido. Es decir 16384 = CERRADA, 16385 = ABIERTA.
+ *   1. `valve1State` (lectura directa de intIn): máscara de bits del PLC → bit0 = abierta(1) /
+ *      cerrada(0), con bit14 = estado válido. Es decir 16384 = CERRADA, 16385 = ABIERTA. Los
+ *      sitios que no siguen esa máscara declaran sus valores literales en `stateEncoding`
+ *      (Cascajal: 251 = CERRADA) — ver `stateFromWord`.
  *   2. Caudal: si el caudal es <= 0.1 la válvula está CERRADA; por encima, ABIERTA.
  *
  * Se muestran AMBOS y se cruzan: el método 1 manda (es la lectura del propio equipo) y el 2 corrobora.
@@ -50,9 +52,31 @@ function numeric(signal: SignalDto | undefined): number | null {
   return signal && typeof signal.value === 'number' && signal.usable ? signal.value : null;
 }
 
-/** Método 1: decodifica la palabra de estado del PLC. */
-function stateFromWord(word: number | null): ValveState | null {
+/**
+ * Método 1: decodifica la palabra de estado del PLC.
+ *
+ * Dos convenciones, porque las plantas no son iguales:
+ *
+ *  1. **Valores literales** (`stateEncoding` en el mapping), si el sitio los declara. Cascajal
+ *     reporta `251` = CERRADA en `INT_IN[1]`, verificado en campo por el operador el 2026-08-13.
+ *     Ese valor NO trae el bit14, así que la regla de bits lo descartaba como "sin estado válido"
+ *     y la planta se quedaba muda: por eso los literales mandan cuando existen.
+ *  2. **Máscara de bits** (Vorágine/Sirena): bit14 = estado válido, bit0 = abierta.
+ *
+ * En ambas, un valor que no encaja devuelve `null` y el veredicto cae al caudal. Es deliberado:
+ * más vale no afirmar nada que enseñar una válvula "cerrada" que está abierta.
+ */
+function stateFromWord(word: number | null, encoding?: SignalDto['stateEncoding']): ValveState | null {
   if (word === null) return null;
+
+  if (encoding && (encoding.closed !== undefined || encoding.open !== undefined)) {
+    if (word === encoding.closed) return 'closed';
+    if (word === encoding.open) return 'open';
+    // El sitio declaró su convención y este valor no es ninguno de los suyos. NO se cae a la regla
+    // de bits: mezclarlas es justo como se inventaron estados falsos antes (ver fix-valve-state).
+    return null;
+  }
+
   // Sin bit14 el PLC no está reportando un estado válido → no se afirma nada.
   if ((word & BIT_VALID) === 0) return null;
   return (word & BIT_OPEN) !== 0 ? 'open' : 'closed';
@@ -95,7 +119,7 @@ export function valvesFromSnapshot(snapshot: PlantSnapshotDto | undefined): Valv
     const cmd = snapshot.signals[`valve${n}`];
     const stateSig = snapshot.signals[`valve${n}State`];
     const rawState = numeric(stateSig);
-    const byState = stateFromWord(rawState);
+    const byState = stateFromWord(rawState, stateSig?.stateEncoding);
     const byFlow = stateFromFlow(flow.value);
 
     const state: ValveState = byState ?? byFlow ?? 'unknown';

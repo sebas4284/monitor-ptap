@@ -134,7 +134,17 @@
         "mappingStatus": { "$ref": "#/$defs/mappingStatus" },
         "confidence": { "$ref": "#/$defs/confidence" },
         "writable": { "type": "boolean" },
-        "write": { "$ref": "#/$defs/writeSpec" }
+        "write": { "$ref": "#/$defs/writeSpec" },
+        "stateEncoding": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "closed": { "type": "number" },
+            "open": { "type": "number" }
+          },
+          "description": "Valores LITERALES de la palabra de estado de una válvula, para sitios que no usan la máscara de bits de Vorágine/Sirena (bit14 = estado válido, bit0 = abierta). Cascajal reporta 251 = CERRADA en INT_IN[1], verificado en campo (2026-08-13); ese valor no trae el bit14, así que sin esta declaración el front lo descarta como 'sin estado válido'. Solo se declara lo VERIFICADO: un valor que no coincida con ninguno no se interpreta, y el estado cae al método del caudal."
+        }
       },
       "allOf": [
         {

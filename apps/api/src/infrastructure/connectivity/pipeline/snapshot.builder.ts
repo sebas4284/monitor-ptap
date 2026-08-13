@@ -52,6 +52,7 @@ export function buildSnapshot(input: SnapshotInput): PlantSnapshotDto {
     if (verdict.reason) dto.reason = verdict.reason;
     if (typeof ex.opMin === 'number') dto.opMin = ex.opMin;
     if (typeof ex.opMax === 'number') dto.opMax = ex.opMax;
+    if (ex.stateEncoding) dto.stateEncoding = ex.stateEncoding;
     signals[ex.domainKey] = dto;
   }
 

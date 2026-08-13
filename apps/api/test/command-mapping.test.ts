@@ -117,7 +117,21 @@ test('mapping de PRODUCCIÓN: solo las plantas con estado VERIFICADO exponen val
   const conEstado = prod.plants
     .filter((p) => (p.signals ?? []).some((s) => s.domainKey === 'valve1State'))
     .map((p) => p.plantId);
-  assert.deepEqual(conEstado, ['sirena'], 'añadir otra planta exige confirmar su índice/patrón en campo primero');
+  // sirena: INT_IN[0] con la máscara de bits limpia (16384/16385), verificada en campo.
+  // cascajal: NO usa esa máscara — el operador verificó en campo (2026-08-13) que INT_IN[1] vale
+  //   251 con la válvula cerrada, y por eso la señal declara `stateEncoding` en vez de confiar en
+  //   los bits. Sin esa declaración el 251 (sin bit14) se descartaría como "sin estado válido".
+  // Las otras 8 siguen fuera: su patrón no está verificado y replicarlo a ciegas publicaría un
+  // estado INVENTADO (ver scripts/fix-valve-state.ts).
+  assert.deepEqual(conEstado, ['cascajal', 'sirena'], 'añadir otra planta exige confirmar su índice/patrón en campo primero');
+
+  // Y el que no siga la máscara de bits DEBE traer su convención declarada, o no dirá nada.
+  for (const p of prod.plants) {
+    const estado = (p.signals ?? []).find((s) => s.domainKey === 'valve1State') as
+      | { stateEncoding?: { closed?: number } }
+      | undefined;
+    if (p.plantId === 'cascajal') assert.deepEqual(estado?.stateEncoding, { closed: 251 });
+  }
 });
 
 test('mapping de PRODUCCIÓN: cada válvula escribe en el canal 0 con pulso y máscara de bits', () => {

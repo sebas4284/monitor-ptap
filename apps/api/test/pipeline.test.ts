@@ -9,6 +9,7 @@ import { evaluateQuality } from '../src/infrastructure/connectivity/pipeline/qua
 import { MappingEngine } from '../src/infrastructure/connectivity/pipeline/mapping.engine';
 import { DeadLetterBuffer } from '../src/infrastructure/connectivity/pipeline/dead-letter.buffer';
 import { PlantCache } from '../src/infrastructure/connectivity/pipeline/plant-cache';
+import { buildSnapshot } from '../src/infrastructure/connectivity/pipeline/snapshot.builder';
 import type { LoadedMapping } from '../src/infrastructure/connectivity/mapping/opc-mapping.loader';
 import type { RawBufferSample, RawPlantFrame } from '../src/infrastructure/connectivity/ports/connectivity-adapter.port';
 
@@ -130,6 +131,51 @@ function montebelloMapping(): LoadedMapping {
     raw: {},
   };
 }
+
+// `stateEncoding` es estático del mapping y solo sirve si llega ENTERO hasta el DTO: el front
+// decide con él si la válvula está cerrada. Se prueba el recorrido completo (mapping → engine →
+// snapshot) porque el fallo típico aquí es calcularlo y olvidar copiarlo al DTO — ya pasó con
+// `outOfRange` (fcfc2af).
+test('mapping: stateEncoding viaja del mapping al DTO (Cascajal: 251 = cerrada)', () => {
+  const mapping: LoadedMapping = {
+    version: '0.3.0', protocolVersion: 'v2', dtoVersion: 'v1',
+    plants: [{ plantId: 'cascajal', displayName: 'Cascajal', livenessWindowSec: null }],
+    targets: [],
+    signals: [
+      { plantId: 'cascajal', buffer: 'intIn', sourceBuffer: 'INT_IN_CASCAJAL', index: 1, domainKey: 'valve1State', label: 'Estado válvula 1', unit: null, min: null, max: null, mappingStatus: 'mapped', confidence: 'confirmed', writable: false, stateEncoding: { closed: 251 } },
+    ],
+    raw: {},
+  };
+  const dl = new DeadLetterBuffer();
+  const latest = new Map<string, RawBufferSample>();
+  latest.set('INT_IN_CASCAJAL', buf('INT_IN_CASCAJAL', 'intIn', [7826, 251, 0]));
+
+  const extracted = new MappingEngine(mapping).extract('cascajal', latest, dl);
+  assert.deepEqual(extracted[0]?.stateEncoding, { closed: 251 }, 'el engine debe conservarlo');
+
+  const snapshot = buildSnapshot({
+    plantId: 'cascajal', displayName: 'Cascajal', protocolVersion: 'v2', dtoVersion: 'v1',
+    sequence: 1, bridgeStatus: 'Connected',
+    liveness: { state: 'live', lastChangeAt: null, windowSec: 300 },
+    extracted, deadLetter: dl,
+  });
+  assert.equal(snapshot.signals.valve1State?.value, 251);
+  assert.deepEqual(snapshot.signals.valve1State?.stateEncoding, { closed: 251 }, 'y el DTO también');
+});
+
+test('mapping: una señal sin stateEncoding no lo inventa en el DTO', () => {
+  const engine = new MappingEngine(montebelloMapping());
+  const dl = new DeadLetterBuffer();
+  const latest = new Map<string, RawBufferSample>();
+  latest.set('REAL_IN_MONTEBELLO', buf('REAL_IN_MONTEBELLO', 'realIn', Array.from({ length: 50 }, (_, i) => i)));
+  const snapshot = buildSnapshot({
+    plantId: 'montebello', displayName: 'Montebello', protocolVersion: 'v2', dtoVersion: 'v1',
+    sequence: 1, bridgeStatus: 'Connected',
+    liveness: { state: 'live', lastChangeAt: null, windowSec: 300 },
+    extracted: engine.extract('montebello', latest, dl), deadLetter: dl,
+  });
+  assert.equal('stateEncoding' in (snapshot.signals.inletFlow1 ?? {}), false);
+});
 
 test('mapping: extrae realIn[0]→inletFlow1 y realIn[5]→inletFlow2 del buffer primario', () => {
   const engine = new MappingEngine(montebelloMapping());

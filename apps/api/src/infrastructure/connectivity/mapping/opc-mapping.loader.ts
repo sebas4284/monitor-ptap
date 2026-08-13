@@ -97,6 +97,11 @@ export interface SignalMapping {
   writable: boolean;
   /** Presente solo si writable (⇒ confidence:confirmed, garantizado por el schema). */
   write?: WriteSpec;
+  /**
+   * Valores literales de la palabra de estado de válvula para sitios que NO usan la máscara
+   * bit14/bit0. Viaja al DTO para que el front no tenga que conocer cada planta. Ver `SignalDto`.
+   */
+  stateEncoding?: { closed?: number; open?: number };
 }
 
 export interface LoadedPlant {
@@ -170,6 +175,20 @@ interface RawSignal {
   confidence?: string;
   writable?: boolean;
   write?: RawWriteSpec;
+  stateEncoding?: { closed?: unknown; open?: unknown };
+}
+
+/**
+ * Valores literales de estado, solo si son números. Se descarta la clave que no lo sea en vez de
+ * dejarla pasar: un `closed: "251"` que llegara como texto nunca casaría con el número del PLC y
+ * daría una válvula eternamente "sin estado" difícil de explicar.
+ */
+function parseStateEncoding(raw: RawSignal['stateEncoding']): SignalMapping['stateEncoding'] {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const enc: { closed?: number; open?: number } = {};
+  if (typeof raw.closed === 'number') enc.closed = raw.closed;
+  if (typeof raw.open === 'number') enc.open = raw.open;
+  return enc.closed === undefined && enc.open === undefined ? undefined : enc;
 }
 
 /**
@@ -289,6 +308,7 @@ export function loadMapping(explicitPath?: string): LoadedMapping {
         confidence: (s.confidence as SignalMapping['confidence']) ?? 'inferred',
         writable: s.writable === true,
         write: s.writable === true ? parseWriteSpec(s.write) : undefined,
+        stateEncoding: parseStateEncoding(s.stateEncoding),
       });
     }
   }

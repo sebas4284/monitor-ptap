@@ -142,6 +142,19 @@ export interface SignalDto {
   /** Rango operativo/normativo entregado por el operador; el front lo muestra junto al valor. */
   opMin?: number;
   opMax?: number;
+  /**
+   * Convención de la palabra de estado de una válvula, cuando la planta NO usa la máscara de bits
+   * (bit14 = estado válido, bit0 = abierta) de Vorágine/Sirena.
+   *
+   * Nace de Cascajal: el operador verificó en campo que `INT_IN[1]` vale `251` con la válvula
+   * cerrada. Ese valor no tiene el bit14, así que el decodificador de bits lo descartaba como
+   * "el PLC no reporta estado válido" y la planta se quedaba sin estado. Declarando aquí los
+   * valores literales, cada sitio puede traer su propia convención sin que el front adivine.
+   *
+   * Ausente ⇒ se aplica la regla de bits de siempre. Un valor que no coincida con ninguno de los
+   * declarados NO se interpreta: se prefiere no afirmar nada antes que inventar un estado.
+   */
+  stateEncoding?: { closed?: number; open?: number };
 }
 
 /**

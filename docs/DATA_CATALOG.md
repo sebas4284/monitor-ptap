@@ -135,20 +135,23 @@ Fuente: `REAL_IN_MONTEBELLO` (Float[50], nsUri `AQUATECH`, `g=EBA8E3EB-53A2-0CCD
 | 16 | `inletPressure2` | Presión de entrada 2 | psi | -15 a 232 | — | confirmed |
 | 17 | `outletPressure1` | Presión de salida | psi | -15 a 232 | — | confirmed |
 
-### Cascajal (`cascajal`) — 8 señales
+### Cascajal (`cascajal`) — 10 señales
 
 Fuente: `INT_OUT_CASCAJAL` (Int16[20], nsUri `AQUATECH`, `g=37DF3BEA-3F5A-323A-F63B-1BE2930508C7`)
+Fuente: `INT_IN_CASCAJAL` (Int16[20], nsUri `AQUATECH`, `g=987A872E-DA0B-8C66-51F7-11E6B473591E`)
 Fuente: `REAL_IN_CASCAJAL` (Float[50], nsUri `AQUATECH`, `g=F0C27430-68DC-74D7-BDAB-B9EDCC19F8A7`)
 
 | Índice | domainKey | Señal | Unidad | Validez | Rango operativo | Confianza |
 |---|---|---|---|---|---|---|
 | 0 | `valve1` | Válvula 1 | — | — | — | confirmed |
 | 0 | `outletFlow1` | Caudal de salida 1 | l/s | 0 a 1000 | — | confirmed |
+| 1 | `valve1State` | Estado válvula 1 | — | — | — | confirmed |
 | 5 | `tank1Level` | Nivel tanque 1 | m | 0 a 5 | 1 a 3 | confirmed |
 | 6 | `tank1Volume` | Volumen tanque 1 | m³ | 0 a 10000 | — | confirmed |
 | 7 | `outletFlow2` | Caudal de salida 2 | l/s | 0 a 1000 | — | confirmed |
 | 12 | `outletPressure1` | Presión de salida 1 | psi | -15 a 232 | — | confirmed |
 | 13 | `outletPressure2` | Presión de salida 2 | psi | -15 a 232 | — | confirmed |
+| 14 | `inletFlow1` | Caudal de entrada 1 | l/s | 0 a 1000 | — | confirmed |
 | 19 | `inletPressure1` | Presión de entrada | psi | -15 a 232 | — | inferred |
 
 ### Km 18 (`km18`) — 9 señales

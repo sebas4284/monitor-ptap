@@ -57,6 +57,38 @@ test('valves: método 1 — 16385 (bit14+bit0) → ABIERTA', () => {
   assert.equal(v.state, 'open');
 });
 
+// ── Método 1b: convención de valores LITERALES (stateEncoding) ──
+// Cascajal no usa la máscara de bits: reporta 251 = CERRADA en INT_IN[1], verificado en campo
+// (2026-08-13). Sin esta convención el valor no trae bit14 y la planta se quedaba sin estado.
+test('valves: stateEncoding — 251 declarado como cerrada → CERRADA (aunque no tenga bit14)', () => {
+  const v = valvesFromSnapshot(
+    snap({ valve1: sig(0), valve1State: sig(251, { stateEncoding: { closed: 251 } }) }),
+  )[0];
+  assert.equal(v.byState, 'closed');
+  assert.equal(v.state, 'closed');
+  assert.equal(v.source, 'estado');
+});
+
+test('valves: stateEncoding — un valor NO declarado no se interpreta (no cae a la regla de bits)', () => {
+  // 16385 tiene bit14+bit0 → la regla de bits diría "abierta". Pero el sitio declaró su propia
+  // convención, y mezclarlas es exactamente como se inventaron estados falsos antes.
+  const v = valvesFromSnapshot(
+    snap({ valve1: sig(0), valve1State: sig(16385, { stateEncoding: { closed: 251 } }) }),
+  )[0];
+  assert.equal(v.byState, null, 'no se afirma nada con un valor ajeno a la convención declarada');
+});
+
+test('valves: stateEncoding — también sirve para declarar el valor de abierta', () => {
+  const enc = { stateEncoding: { closed: 251, open: 1056 } };
+  assert.equal(valvesFromSnapshot(snap({ valve1: sig(0), valve1State: sig(1056, enc) }))[0].byState, 'open');
+  assert.equal(valvesFromSnapshot(snap({ valve1: sig(0), valve1State: sig(251, enc) }))[0].byState, 'closed');
+});
+
+test('valves: sin stateEncoding se conserva la regla de bits de siempre', () => {
+  assert.equal(valvesFromSnapshot(snap({ valve1: sig(0), valve1State: sig(16384) }))[0].byState, 'closed');
+  assert.equal(valvesFromSnapshot(snap({ valve1: sig(0), valve1State: sig(251) }))[0].byState, null);
+});
+
 test('valves: método 1 — sin bit14 el PLC no reporta estado válido → no se afirma nada', () => {
   const v = valvesFromSnapshot(snap({ valve1: sig(0), valve1State: sig(1) }))[0];
   assert.equal(v.byState, null, 'sin bit de validez no se puede decidir');
