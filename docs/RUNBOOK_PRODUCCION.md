@@ -98,6 +98,14 @@ aquora.xpertic.co ──► 191.102.61.125 ──[NAT 1:1]──► 192.168.30.5
   (allowlist de nombre, honeypot, bloqueo de correos desechables, doble campo correo/contraseña,
   celular 10 dígitos, contraseña con símbolo); `trust proxy` para rate-limit correcto tras el proxy;
   aprobación **manual** del admin como muro anti-bot.
+- **Ámbito por planta en los TRES canales** (2026-08-13). `PlantScopeGuard` solo cubre rutas con
+  `:plantId`, así que había dos huecos: la bandeja de notificaciones (`cd1dcd6`) y el gateway
+  Socket.IO (`93a52de`), donde `opc:subscribe` aceptaba **cualquier** planta y bastaba una cuenta
+  autenticada para leer la telemetría en vivo de las doce. `opc:liveness` dejó de ser broadcast
+  global. Regla única en todos: `view_all_plants` (Admin) ve todo, el resto solo su planta.
+  > ⚠️ En el socket el ámbito sale del **token**, no de la base: el módulo es DB-free a propósito.
+  > Si un admin cambia la planta o el rol de alguien, su socket ya abierto conserva el ámbito viejo
+  > hasta que reconecte (máx. 8 h, la vida del JWT). Por HTTP el cambio es inmediato.
 - **Escritura al PLC**: el canal está **abierto** desde el 2026-08-03, autorizado por Operación, con
   `OPCUA_ALLOW_INSECURE_WRITES=true` — obligado porque el servidor OPC UA del equipo solo admite
   Anonymous + None (ver [`SECURITY_FINDING_P0.md`](./SECURITY_FINDING_P0.md)). La protección real es

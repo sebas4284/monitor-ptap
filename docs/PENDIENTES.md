@@ -310,7 +310,13 @@ esquema de alertas en BD depende de la misma decisión que D1: conviene resolver
 
 ## 4b. Notificaciones — ajustes posibles
 
-Funcionando desde el 2026-08-06. Parámetros por variable de entorno, sin recompilar:
+Funcionando desde el 2026-08-06. **Acotadas por planta desde el 2026-08-13** (`cd1dcd6`): antes
+`listRecent`/`countUnseen`/`markAllSeen` filtraban solo por tiempo, así que un operador recibía —y
+le sonaban en el celular— los avisos de las doce plantas. `view_all_plants` (Admin) sigue viéndolos
+todos. Se limpiaron además 194 marcas de lectura ajenas que dejó el fallo, en dos cuentas de
+operador; respaldo previo en `~/backups/notification-seen-<fecha>.sql` en la VM.
+
+Parámetros por variable de entorno, sin recompilar:
 
 | Variable | Por defecto | Qué hace |
 |---|---|---|
