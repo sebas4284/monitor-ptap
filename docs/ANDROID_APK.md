@@ -155,13 +155,19 @@ keytool -genkeypair -v -keystore monitor-ptap-release.keystore \
 
 ## 3. Construir la APK
 
-Desde `apps/mobile`, horneando la URL del túnel en el build:
+Desde `apps/mobile`, horneando la URL del backend en el build. **Es el dominio, no un túnel**: el
+quick tunnel de Cloudflare se apagó el 2026-08-11 al publicarse `aquora.xpertic.co` tras la NAT 1:1
+(`ceffdc8`). Una APK compilada con la URL del túnel no conecta con nada.
 
 ```bash
 # Windows PowerShell
-$env:API_BASE_URL = "https://<tu-tunel>.trycloudflare.com"
+$env:API_BASE_URL = "https://aquora.xpertic.co"
 npx expo prebuild -p android      # genera apps/mobile/android/ (ignorado por git)
 ```
+
+> En la VM esto ya está resuelto: `~/deploy-scripts/apk-build.sh` exporta esa misma URL. Y los
+> perfiles de `eas.json` también la traen — aunque hoy la APK NO se construye con EAS, sino con
+> gradlew en la VM (ver "Build en la VM").
 
 `expo prebuild` aplica `app.config.js`: inyecta `extra.apiBaseUrl`, `usesCleartextTraffic=false`,
 ProGuard/R8, y el permiso único `INTERNET`.
@@ -246,11 +252,17 @@ de tu red: inicia sesión → Sensores muestra telemetría en vivo → cerrar se
 
 ## 7. Cuando cambie la URL del backend
 
-- **Túnel gratuito reiniciado** → nueva URL → repetir §3 con la `API_BASE_URL` nueva y redistribuir
-  la APK.
-- **Migración futura a dominio propio/HTTPS permanente** → misma receta, cambiando solo
-  `API_BASE_URL` al dominio definitivo. No hay nada más que tocar en el código (la URL no está
-  hardcodeada: se inyecta en el build).
+- **Ya migrado a dominio propio** (2026-08-11): `https://aquora.xpertic.co`, con TLS de Let's
+  Encrypt. El túnel de Cloudflare está apagado y no debe volver a usarse en builds nuevos.
+- **Si algún día cambia el dominio** → misma receta, cambiando `API_BASE_URL` en TRES sitios:
+  `~/deploy-scripts/apk-build.sh` (la build real), `apps/mobile/eas.json` (por si se usa EAS) y §3
+  de este documento. No hay nada más que tocar en el código: la URL no está hardcodeada, se inyecta
+  en el build.
+
+> ⚠️ **La URL viaja HORNEADA en la APK.** Quien tenga una APK vieja seguirá apuntando a donde se
+> compiló, y no existe actualización automática: no hay `expo-updates` ni canal de EAS Update
+> configurado (verificado el 2026-08-13). Cambiar de dominio obliga a recompilar y a que **cada
+> persona reinstale**.
 
 ---
 

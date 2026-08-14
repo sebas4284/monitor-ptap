@@ -131,13 +131,29 @@ Procedimiento vigente:
 # 1. local
 git push origin yosh
 
-# 2. en la VM (por VPN + SSH `ptap`)
-bash ~/deploy.sh          # fetch + pull + npm ci + migraciones + build + pm2 restart
+# 2. en la VM. OJO: `bash ~/deploy.sh` a secas NO actualiza nada (ver aviso abajo).
+cd ~/monitor-ptap
+git fetch origin && git reset --hard origin/yosh
+npm ci                                  # SOLO si cambió package-lock.json
+npm run db:migrate -w @ptap/api         # idempotente
+npm run build
+pm2 restart ptap-api && pm2 save        # jamás con --update-env
 
 # 3. si cambió el front, recompilar y publicar la web
 cd ~/monitor-ptap/apps/mobile && API_BASE_URL= npx expo export -p web --clear
 sudo bash ~/deploy-scripts/web-publish.sh
 ```
+
+> 🔴 **`bash ~/deploy.sh` NO sirve tal cual** (comprobado el 2026-08-13). El script despliega la
+> rama ACTUAL del checkout, y en la VM esa rama se llama **`dev`** y trackea `origin/dev`, que va
+> ~22 commits por detrás. Como el HEAD local ya está por delante, `git pull --ff-only origin dev`
+> responde "Already up to date" y **no trae nada**: el script sigue, recompila el mismo código y
+> reinicia — todo en verde, sin haber actualizado. El historial real de despliegues es
+> `git reset --hard origin/yosh` (ver `git reflog show dev`). Que la rama local se llame `dev` y
+> siga a `yosh` es la trampa.
+>
+> Tras `pm2 restart`, `/api/health` devuelve **000 durante ~5 s** mientras conecta el bridge OPC UA.
+> No es una caída: esperar y reintentar antes de diagnosticar.
 
 > ⚠️ Para publicar la web usar **`web-publish.sh`**, nunca `web-setup.sh`: este último termina
 > pisando `/etc/nginx/sites-available/ptap` con una copia guardada, lo que **borraría los server
@@ -146,11 +162,20 @@ sudo bash ~/deploy-scripts/web-publish.sh
 > La web se compila con `API_BASE_URL` **vacío** (mismo origen): no hay URL horneada, así que solo
 > hace falta recompilar cuando cambia el código, no por el dominio.
 
-**Último despliegue: 2026-08-11, commit `622ecaf` (retiro del HMI). COMPLETO y verificado.**
-Comprobantes en verde: `/api/health`, `/health/db`, `/health/opc` en 200, la web en 200,
-`/api/notifications` respondiendo 401 sin token, y `/api/hmi/session` devolviendo **404** como
-corresponde. El despliegue anterior fue el 2026-08-06 (`56b9130`, bandeja de notificaciones y
-detector de sensores congelados).
+**Último despliegue: 2026-08-13, commit `9fcd072`.** Backend COMPLETO y verificado: ámbito por
+planta en la bandeja (`cd1dcd6`) y en el socket (`93a52de`), y Cascajal con caudal de entrada y
+convención de estado de válvula (`286523f`). Comprobantes en verde: `/api/health`, `/health/db`,
+`/health/opc` en 200; la bandeja de dos cuentas reales de Km 18 devolviendo solo `km18`; el socket
+respondiendo `denied` a una planta ajena y `snapshot` a la propia.
+
+> ⚠️ **El bundle WEB se publica aparte y se quedó atrás.** Estaba en `/var/www/ptap-web` con fecha
+> **2026-08-06** mientras el backend ya iba por el 13: desplegar el API no actualiza la web. Todo
+> cambio de `apps/mobile/` (la web y la APK salen del mismo código) necesita el paso 3, y el paso 3
+> **necesita sudo**, que no tiene la cuenta `xpertic_app`. Si nadie lo corre, la web sigue vieja sin
+> ningún síntoma visible.
+
+El despliegue anterior fue el 2026-08-11 (`622ecaf`, retiro del HMI), y antes el 2026-08-06
+(`56b9130`, bandeja de notificaciones y detector de sensores congelados).
 
 > 🔴 **Un despliegue que ELIMINA archivos exige borrar `dist/` a mano.** `tsc` compila las fuentes
 > que existen pero **no borra las salidas de las que ya no están**. Al desplegar `622ecaf` quedó un
