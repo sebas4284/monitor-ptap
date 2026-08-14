@@ -85,6 +85,20 @@ aquora.xpertic.co ──► 191.102.61.125 ──[NAT 1:1]──► 192.168.30.5
 - **Revisar la BD desde el PC** sin abrir MySQL a la red: túnel SSH `ssh -L 3307:localhost:3306 ptap`
   y conectar un cliente a `127.0.0.1:3307` (user `ptapapp`).
 - Los admins **no** se degradan desde la app (regla de "intocables") → gestión por BD/seed.
+- ⚠️ **Excepción de La Sirena — NO "corregir".** `jefe.ptap.sirena@gmail.com` se llama
+  **JEFE PTAP SIRENA** pero tiene rol **`operador`**, y es deliberado (2026-08-14): en esa planta
+  no habrá operarios, así que el jefe asume ambas funciones. Su cuenta de operario se eliminó.
+  > La clave para entenderlo: en la matriz, **`jefe` es un subconjunto de `operador`**. Comparten
+  > los cinco permisos y el operador añade `control_valves`. Es decir, "jefe + operador combinados"
+  > NO necesita un rol nuevo: es exactamente el conjunto de `operador`.
+  >
+  > Se descartó crear un rol propio (p. ej. `jefe_operador`) porque `ROLE_LABELS` viaja COMPILADO
+  > en el front: en la APK y la web publicadas el rol saldría **en blanco** hasta reconstruir ambas.
+  > Cuando el front se pueda desplegar, un rol dedicado sería solo cosmético — la capacidad ya es
+  > la correcta.
+  >
+  > La excepción es **por cuenta, no por planta**: nada en el código la ata a Sirena. Si a otro
+  > usuario de Sirena se le pone `jefe`, ese no podrá accionar válvulas.
 
 ## 5. Seguridad (endurecimiento aplicado)
 
