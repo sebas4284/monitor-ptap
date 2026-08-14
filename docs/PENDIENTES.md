@@ -177,6 +177,32 @@ respondiendo `denied` a una planta ajena y `snapshot` a la propia.
 El despliegue anterior fue el 2026-08-11 (`622ecaf`, retiro del HMI), y antes el 2026-08-06
 (`56b9130`, bandeja de notificaciones y detector de sensores congelados).
 
+### 🔴 Front desactualizado en producción — web compilada, APK no
+
+Comprobado el 2026-08-13 **dentro de los propios artefactos**, no deducido. A los dos les faltan
+exactamente los mismos dos commits de `apps/mobile/`:
+
+| | web (`/var/www/ptap-web`) | APK (`/descargar/`) |
+|---|---|---|
+| Fecha del artefacto | 2026-08-06 | 2026-08-11 14:27 |
+| `622ecaf` retiro del HMI | ❌ falta | ❌ falta (el commit es de las 17:48, posterior al build) |
+| `286523f` `stateEncoding` de válvula | ❌ falta | ❌ falta |
+
+- [ ] **Publicar la web** — el bundle YA está compilado en `~/monitor-ptap/apps/mobile/dist`
+      (2026-08-13 21:40, verificado: contiene `stateEncoding`). Solo falta
+      `sudo bash ~/deploy-scripts/web-publish.sh`.
+- [ ] **Recompilar la APK** — cadena completa, porque el toolchain se borra tras cada build:
+      `install-sdk.sh → prebuild-vm.sh → config-and-ndk.sh → apk-build.sh` (~8,6 GB, más de una
+      hora; probado el 2026-08-11 que no tumba producción). Respaldo de la APK vigente en
+      `~/monitor-ptap-20260811.apk`. Verificar la firma con `apksigner` antes de publicar.
+
+**Lo que SÍ le llega ya a la APK vieja**, porque es backend: el caudal de entrada de Cascajal (el
+tablero pinta las señales que manda el servidor, sin lista blanca), el ámbito por planta de las
+notificaciones y el del socket. Nada de control de acceso quedó atascado detrás del front.
+
+**El síntoma visible hoy**: la pestaña **HMI** sigue en la web y en la APK, y su endpoint
+`/api/hmi/session` devuelve **404** desde el 2026-08-11. Quien la abra ve un error.
+
 > 🔴 **Un despliegue que ELIMINA archivos exige borrar `dist/` a mano.** `tsc` compila las fuentes
 > que existen pero **no borra las salidas de las que ya no están**. Al desplegar `622ecaf` quedó un
 > `dist/modules/hmi/` huérfano, y el resultado fue el peor modo de fallo posible: el proceso
