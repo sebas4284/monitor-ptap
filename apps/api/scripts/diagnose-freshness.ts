@@ -39,6 +39,17 @@ import { resolveNamespaces } from '../src/infrastructure/connectivity/opcua/name
 /** Umbral por encima del cual una lectura se considera CONGELADA. */
 const UMBRAL_MIN = 60;
 
+/**
+ * Canales de ENTRADA: los que el PLC refresca por su cuenta. Son los únicos que pueden estar
+ * "congelados" en un sentido útil.
+ *
+ * `intOut` queda FUERA del veredicto a propósito: es el canal de COMANDO, lo escribimos nosotros.
+ * Que lleve 24 días sin cambiar solo significa que nadie mandó una orden a esa válvula — es lo
+ * normal y lo deseable. Incluirlo daba falsos congelados (Campoalegre salía congelada por su
+ * INT_OUT mientras su REAL_IN respondía).
+ */
+const CANALES_DE_ENTRADA = new Set(['realIn', 'intIn']);
+
 interface BufferRef {
   plantId: string;
   browseName: string;
@@ -191,9 +202,11 @@ async function main(): Promise<void> {
     console.log('─'.repeat(100));
 
     for (const [plantId, ms] of [...porPlanta.entries()].sort()) {
-      const edades = ms.map((m) => m.edadMin).filter((e): e is number => e !== null);
+      // El veredicto se decide SOLO con los canales de entrada (ver CANALES_DE_ENTRADA).
+      const entradas = ms.filter((m) => CANALES_DE_ENTRADA.has(m.channel));
+      const edades = entradas.map((m) => m.edadMin).filter((e): e is number => e !== null);
       const masVieja = edades.length ? Math.max(...edades) : null;
-      const algunCambio = ms.some((m) => m.indicesQueCambian.length > 0);
+      const algunCambio = entradas.some((m) => m.indicesQueCambian.length > 0);
       if (masVieja !== null && masVieja > UMBRAL_MIN && !algunCambio) congeladas.push(plantId);
       else vivas.push(plantId);
 
@@ -201,7 +214,16 @@ async function main(): Promise<void> {
         const edad =
           m.edadMin === null ? 'sin timestamp' : m.edadMin < 60 ? `${m.edadMin.toFixed(1)} min` : `${(m.edadMin / 1440).toFixed(1)} días`;
         const cambia = m.indicesQueCambian.length > 0 ? `sí (${m.indicesQueCambian.length})` : 'NO';
-        const estado = !m.ok ? `⚠ ${m.status}` : m.indicesQueCambian.length > 0 ? 'vivo' : 'quieto';
+        const esComando = !CANALES_DE_ENTRADA.has(m.channel);
+        const estado = !m.ok
+          ? `⚠ ${m.status}`
+          : esComando
+            ? 'comando (no cuenta)'
+            : m.indicesQueCambian.length > 0
+              ? 'vivo'
+              : m.edadMin !== null && m.edadMin > UMBRAL_MIN
+                ? '🔴 CONGELADO'
+                : 'quieto';
         console.log(
           `${plantId.padEnd(17)} ${m.browseName.padEnd(28)} ${edad.padStart(14)}   ${cambia.padStart(8)}   ${estado}`,
         );
@@ -213,7 +235,9 @@ async function main(): Promise<void> {
     console.log(`VIVAS      (${vivas.length}): ${vivas.join(', ') || '—'}`);
 
     // ── Veredicto de culpa, que es lo que decide a quién llamar ───────────
-    const conTimestampViejo = medidas.filter((m) => m.edadMin !== null && m.edadMin > UMBRAL_MIN);
+    const conTimestampViejo = medidas.filter(
+      (m) => CANALES_DE_ENTRADA.has(m.channel) && m.edadMin !== null && m.edadMin > UMBRAL_MIN,
+    );
     const conMalStatus = medidas.filter((m) => !m.ok);
     console.log('\nVEREDICTO');
     if (conMalStatus.length > 0) {
@@ -222,10 +246,13 @@ async function main(): Promise<void> {
     }
     if (conTimestampViejo.length > 0) {
       console.log(
-        `  → ${conTimestampViejo.length} buffer(s) con SourceTimestamp viejo leídos DIRECTAMENTE (sin\n` +
-          '    pasar por nuestra Subscription). El servidor entrega el dato viejo por su cuenta:\n' +
-          '    NO lo arregla reconectar. Es de campo — escalar al integrador.',
+        `  → ${conTimestampViejo.length} buffer(s) DE ENTRADA con SourceTimestamp viejo, leídos\n` +
+          '    DIRECTAMENTE (sin pasar por nuestra Subscription). El servidor entrega el dato\n' +
+          '    viejo por su cuenta: NO lo arregla reconectar. Es de campo — escalar al integrador.',
       );
+      for (const m of conTimestampViejo) {
+        console.log(`      ${m.plantId.padEnd(17)} ${m.browseName.padEnd(28)} ${(m.edadMin! / 1440).toFixed(1)} días`);
+      }
     }
     if (conTimestampViejo.length === 0 && conMalStatus.length === 0) {
       console.log('  → Todos los buffers responden Good y con timestamp fresco.');
