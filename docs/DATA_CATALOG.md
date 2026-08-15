@@ -237,15 +237,13 @@ Fuente: `REAL_IN_CARBONERO` (Float[50], nsUri `AQUATECH`, `g=A1323D1F-4114-A49D-
 | 14 | `outletTemperature` | Temperatura de salida | °C | 0 a 50 | 10 a 30 | confirmed |
 | 20 | `outletPressure1` | Presión de salida | psi | -15 a 232 | 1 a 3 | confirmed |
 
-### La Sirena (`sirena`) — 23 señales
+### La Sirena (`sirena`) — 22 señales
 
-Fuente: `INT_IN_SIRENA` (Int16[10], nsUri `AQUATECH`, `g=184E4071-DC15-213A-3DE8-442A4E0A354B`)
 Fuente: `INT_OUT_SIRENA` (Int16[20], nsUri `AQUATECH`, `g=4AB6ECB4-D019-D4F1-A8A8-6177C3FE3278`)
 Fuente: `REAL_IN_SIRENA` (Float[50], nsUri `AQUATECH`, `g=A7B368C5-2F51-723A-8108-500CFEB52374`)
 
 | Índice | domainKey | Señal | Unidad | Validez | Rango operativo | Confianza |
 |---|---|---|---|---|---|---|
-| 0 | `valve1State` | Estado de la válvula 1 | — | — | — | inferred |
 | 0 | `valve1` | Válvula 1 | — | — | — | confirmed |
 | 0 | `inletFlow1` | Caudal de entrada | l/s | 0 a 1000 | — | confirmed |
 | 2 | `inletTurbidity` | Turbiedad de entrada | NTU | 0 a 1000 | — | confirmed |

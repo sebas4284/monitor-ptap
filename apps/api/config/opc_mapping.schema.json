@@ -135,6 +135,10 @@
         "confidence": { "$ref": "#/$defs/confidence" },
         "writable": { "type": "boolean" },
         "write": { "$ref": "#/$defs/writeSpec" },
+        "flowDomainKey": {
+          "type": "string",
+          "description": "Solo en señales de VÁLVULA: domainKey del caudal que corresponde a ESA válvula, para inferir su estado cuando la palabra de estado no es fiable. Por defecto el front prefiere el caudal de SALIDA, y esa preferencia es incorrecta si la válvula está en la ENTRADA — La Sirena es ese caso (operador, 2026-08-15). No es cosmético: con la válvula de entrada cerrada, el tanque puede seguir entregando agua aguas abajo, y el caudal de salida diría 'abierta' mientras la válvula está cerrada y el tanque se vacía."
+        },
         "stateEncoding": {
           "type": "object",
           "additionalProperties": false,

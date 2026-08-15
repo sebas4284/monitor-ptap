@@ -12,6 +12,8 @@ export interface ExtractedSignal {
   opMax: number | null;
   /** Convención literal de la palabra de estado de válvula, si el sitio no usa la de bits. */
   stateEncoding?: { closed?: number; open?: number };
+  /** Solo en válvulas: el caudal que corresponde a ESA válvula. */
+  flowDomainKey?: string;
   mappingStatus: 'mapped' | 'unmapped';
   confidence: 'confirmed' | 'inferred' | 'estimated';
   value: number | boolean | null; // crudo; puede ser no-finito (lo evalúa QualityService)
@@ -69,6 +71,7 @@ export class MappingEngine {
       opMin: sig.opMin ?? null,
       opMax: sig.opMax ?? null,
       stateEncoding: sig.stateEncoding,
+      flowDomainKey: sig.flowDomainKey,
       mappingStatus: sig.mappingStatus,
       confidence: sig.confidence,
     };

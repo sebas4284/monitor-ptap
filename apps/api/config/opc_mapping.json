@@ -2351,21 +2351,12 @@
       },
       "signals": [
         {
-          "buffer": "intIn",
-          "sourceBuffer": "INT_IN_SIRENA",
-          "index": 0,
-          "domainKey": "valve1State",
-          "label": "Estado de la válvula 1",
-          "mappingStatus": "mapped",
-          "confidence": "inferred",
-          "writable": false
-        },
-        {
           "buffer": "intOut",
           "sourceBuffer": "INT_OUT_SIRENA",
           "index": 0,
           "domainKey": "valve1",
           "label": "Válvula 1",
+          "flowDomainKey": "inletFlow1",
           "mappingStatus": "mapped",
           "confidence": "confirmed",
           "writable": true,

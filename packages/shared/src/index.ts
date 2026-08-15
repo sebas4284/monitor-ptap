@@ -155,6 +155,16 @@ export interface SignalDto {
    * declarados NO se interpreta: se prefiere no afirmar nada antes que inventar un estado.
    */
   stateEncoding?: { closed?: number; open?: number };
+  /**
+   * Solo en señales de VÁLVULA: qué caudal corresponde a ESA válvula, para inferir su estado.
+   *
+   * Por defecto el front prefiere el caudal de SALIDA, y esa preferencia es incorrecta cuando la
+   * válvula está en la entrada. En La Sirena lo está (dato del operador, 2026-08-15), y la
+   * diferencia no es cosmética: con la válvula de entrada CERRADA, el tanque puede seguir
+   * entregando agua aguas abajo — el caudal de salida diría "abierta" mientras la válvula está
+   * cerrada y el tanque se vacía.
+   */
+  flowDomainKey?: string;
 }
 
 /**

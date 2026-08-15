@@ -102,6 +102,8 @@ export interface SignalMapping {
    * bit14/bit0. Viaja al DTO para que el front no tenga que conocer cada planta. Ver `SignalDto`.
    */
   stateEncoding?: { closed?: number; open?: number };
+  /** Solo en válvulas: el caudal que corresponde a ESA válvula. Ver `SignalDto.flowDomainKey`. */
+  flowDomainKey?: string;
 }
 
 export interface LoadedPlant {
@@ -176,6 +178,7 @@ interface RawSignal {
   writable?: boolean;
   write?: RawWriteSpec;
   stateEncoding?: { closed?: unknown; open?: unknown };
+  flowDomainKey?: unknown;
 }
 
 /**
@@ -309,6 +312,7 @@ export function loadMapping(explicitPath?: string): LoadedMapping {
         writable: s.writable === true,
         write: s.writable === true ? parseWriteSpec(s.write) : undefined,
         stateEncoding: parseStateEncoding(s.stateEncoding),
+        flowDomainKey: typeof s.flowDomainKey === 'string' ? s.flowDomainKey : undefined,
       });
     }
   }

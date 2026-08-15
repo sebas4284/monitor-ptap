@@ -220,3 +220,55 @@ test('detectManual: sin cambio de lado del caudal no hay evento', () => {
   assert.equal(detectManual('open', 'open', 'open', 'open', false), null);
   assert.equal(detectManual(null, 'open', null, null, false), null, 'sin lectura previa no se juzga');
 });
+
+// ── Qué caudal corresponde a cada válvula ────────────────────────────────────
+// El orden por defecto prefiere la SALIDA. La Sirena tiene su única válvula en la ENTRADA
+// (operador, 2026-08-15), y ahí la preferencia miente en el caso que importa: con la válvula de
+// entrada cerrada, el tanque sigue entregando agua aguas abajo.
+test('valves: si el mapping declara flowDomainKey, ese caudal MANDA sobre la preferencia', () => {
+  const v = valvesFromSnapshot(
+    snap({
+      valve1: sig(0, { flowDomainKey: 'inletFlow1' }),
+      inletFlow1: sig(23.3),
+      outletFlow1: sig(0), // la salida diría CERRADA; la entrada, que es la que vale, dice ABIERTA
+    }),
+  )[0];
+  assert.equal(v.byFlow, 'open');
+  assert.equal(v.state, 'open');
+});
+
+test('valves: el caso inverso — entrada cerrada y el tanque vaciándose aguas abajo', () => {
+  // Sin flowDomainKey esto habría dicho ABIERTA: 19 l/s saliendo del tanque con la válvula cerrada.
+  const v = valvesFromSnapshot(
+    snap({ valve1: sig(0, { flowDomainKey: 'inletFlow1' }), inletFlow1: sig(0), outletFlow1: sig(19.6) }),
+  )[0];
+  assert.equal(v.byFlow, 'closed');
+});
+
+test('valves: sin flowDomainKey se conserva la preferencia de siempre (salida primero)', () => {
+  const v = valvesFromSnapshot(snap({ valve1: sig(0), inletFlow1: sig(0), outletFlow1: sig(19.6) }))[0];
+  assert.equal(v.byFlow, 'open', 'sin declaración explícita manda el caudal de salida');
+});
+
+test('valves: cada válvula resuelve SU caudal por separado', () => {
+  const v = valvesFromSnapshot(
+    snap({
+      valve1: sig(0, { flowDomainKey: 'inletFlow1' }),
+      valve2: sig(0), // esta usa la preferencia por defecto
+      inletFlow1: sig(20),
+      outletFlow1: sig(0),
+    }),
+  );
+  assert.equal(v[0].byFlow, 'open', 'valve1 mira la entrada');
+  assert.equal(v[1].byFlow, 'closed', 'valve2 cae a la salida, que está en 0');
+});
+
+// El caso REAL que reportó el cliente: la app decía CERRADA con 23,33 l/s entrando.
+test('valves: sin palabra de estado, el veredicto lo da el caudal (caso Sirena)', () => {
+  const v = valvesFromSnapshot(
+    snap({ valve1: sig(0, { flowDomainKey: 'inletFlow1' }), inletFlow1: sig(23.33) }),
+  )[0];
+  assert.equal(v.byState, null, 'Sirena ya no expone valve1State: su palabra no era fiable');
+  assert.equal(v.state, 'open');
+  assert.equal(v.source, 'caudal');
+});

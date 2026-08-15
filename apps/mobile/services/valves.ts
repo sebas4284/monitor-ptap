@@ -93,9 +93,16 @@ function stateFromFlow(flow: number | null): ValveState | null {
  * planta no la tiene mapeada, se usa la entrada. Devuelve también su etiqueta para poder mostrar de
  * dónde salió el veredicto.
  */
-function referenceFlow(signals: Record<string, SignalDto>): { value: number | null; unit: string | null; label: string | null } {
-  const preferred = ['outletFlow1', 'outletFlow2', 'inletFlow1', 'inletFlow2'];
-  for (const key of preferred) {
+function referenceFlow(
+  signals: Record<string, SignalDto>,
+  declarado?: string,
+): { value: number | null; unit: string | null; label: string | null } {
+  // Si el mapping declara QUÉ caudal corresponde a esta válvula, manda ese y no se adivina.
+  // La Sirena tiene la válvula en la ENTRADA (operador, 2026-08-15) y el orden de abajo habría
+  // usado el de salida: con la válvula cerrada, el tanque sigue entregando agua aguas abajo, así
+  // que el caudal de salida diría "abierta" mientras la válvula está cerrada y el tanque se vacía.
+  const orden = declarado ? [declarado] : ['outletFlow1', 'outletFlow2', 'inletFlow1', 'inletFlow2'];
+  for (const key of orden) {
     const sig = signals[key];
     const value = numeric(sig);
     if (value !== null) return { value, unit: sig?.unit ?? null, label: sig?.label ?? key };
@@ -106,7 +113,6 @@ function referenceFlow(signals: Record<string, SignalDto>): { value: number | nu
 export function valvesFromSnapshot(snapshot: PlantSnapshotDto | undefined): ValveView[] {
   if (!snapshot) return [];
   const out: ValveView[] = [];
-  const flow = referenceFlow(snapshot.signals);
 
   // Una válvula por cada señal de comando valve<N> presente en el mapping de la planta.
   const nums = new Set<number>();
@@ -117,6 +123,8 @@ export function valvesFromSnapshot(snapshot: PlantSnapshotDto | undefined): Valv
 
   for (const n of [...nums].sort((a, b) => a - b)) {
     const cmd = snapshot.signals[`valve${n}`];
+    // El caudal se resuelve POR VÁLVULA: cada una puede estar en un punto distinto del proceso.
+    const flow = referenceFlow(snapshot.signals, cmd?.flowDomainKey);
     const stateSig = snapshot.signals[`valve${n}State`];
     const rawState = numeric(stateSig);
     const byState = stateFromWord(rawState, stateSig?.stateEncoding);
