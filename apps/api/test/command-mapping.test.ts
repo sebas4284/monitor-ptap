@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { loadJson, validateMapping } from '../scripts/validate-mapping';
+import { motivoSecuenciaInvalida } from '../src/infrastructure/connectivity/mapping/opc-mapping.loader';
 
 const schema = loadJson(join(__dirname, '..', 'config', 'opc_mapping.schema.json')) as object;
 
@@ -143,35 +144,135 @@ test('mapping de PRODUCCIÓN: solo las plantas con estado VERIFICADO exponen val
   assert.equal(porPlanta.get('sirena')?.stateTrusted, false, 'la palabra de Sirena no está verificada: no puede decidir');
 });
 
+interface ProdWrite {
+  target?: { index?: number };
+  commands?: Record<string, number>;
+  sequences?: Record<string, Array<{ index: number; value: number }>>;
+  latched?: boolean;
+  _riesgo?: string;
+  mode?: string;
+  pulse?: { holdMs?: number };
+  readBack?: { channel?: string; confirmsWrittenValue?: boolean };
+}
+
+function valvulasDeProduccion(): Array<{ plantId: string; w: ProdWrite | undefined }> {
+  const prod = loadJson(join(__dirname, '..', 'config', 'opc_mapping.json')) as {
+    plants: Array<{ plantId: string; signals?: Array<{ writable?: boolean; write?: ProdWrite }> }>;
+  };
+  return prod.plants.flatMap((p) => (p.signals ?? []).filter((s) => s.writable).map((s) => ({ plantId: p.plantId, w: s.write })));
+}
+
 test('mapping de PRODUCCIÓN: cada válvula escribe en el canal 0 con pulso y máscara de bits', () => {
   // Protege la forma verificada en campo: si alguien cambia el índice, el modo o quita el pulso,
   // el comando podría pisar bits ajenos o quedar ENCLAVADO (ver docs/archivo/PRUEBA_VALVULA_SIRENA.md).
-  const prod = loadJson(join(__dirname, '..', 'config', 'opc_mapping.json')) as {
-    plants: Array<{
-      plantId: string;
-      signals?: Array<{
-        domainKey?: string;
-        writable?: boolean;
-        write?: {
-          target?: { index?: number };
-          commands?: Record<string, number>;
-          mode?: string;
-          pulse?: { holdMs?: number };
-          readBack?: { channel?: string; confirmsWrittenValue?: boolean };
-        };
-      }>;
-    }>;
-  };
-  const valves = prod.plants.flatMap((p) => (p.signals ?? []).filter((s) => s.writable).map((s) => ({ plantId: p.plantId, w: s.write })));
+  // La Sirena está fuera a propósito: ver el test siguiente.
+  const valves = valvulasDeProduccion();
   assert.ok(valves.length > 0);
   for (const { plantId, w } of valves) {
     assert.equal(w?.target?.index, 0, `${plantId}: se escribe por el canal 0`);
+    if (plantId === 'sirena') continue;
+
     assert.equal(w?.commands?.open, 4096, `${plantId}: abrir = 4096 (bit12)`);
     assert.equal(w?.mode, 'bitmask', `${plantId}: modo bitmask (no pisar bits ajenos de la palabra)`);
     assert.ok((w?.pulse?.holdMs ?? 0) > 0, `${plantId}: debe declarar pulso (si no, el bit queda enclavado al confirmar)`);
     assert.equal(w?.readBack?.channel, 'intIn', `${plantId}: el read-back va por el canal de ESTADO`);
     assert.equal(w?.readBack?.confirmsWrittenValue, false, `${plantId}: un pulso no se confirma releyendo lo escrito`);
+    assert.equal(w?.sequences, undefined, `${plantId}: sin ladder no se inventa una orden compuesta`);
   }
+});
+
+test('mapping de PRODUCCIÓN: CERRAR solo existe donde se verificó en campo', () => {
+  // El verbo `close` es el que de verdad puede hacer daño: abrir de más desperdicia agua, cerrar de
+  // más deja a un pueblo sin ella. Por eso no se replica "porque el patrón parece el mismo" — en
+  // Vorágine lo probó el cliente sobre la planta (2026-08-15) y en el resto no hay nada que lo
+  // respalde. Sin `close` en el mapping, la app responde UNKNOWN_COMMAND: no acciona a ciegas.
+  const conCierre = valvulasDeProduccion()
+    .filter((v) => v.w?.commands && 'close' in v.w.commands)
+    .map((v) => `${v.plantId}=${v.w?.commands?.close}`)
+    .sort();
+  assert.deepEqual(conCierre, ['sirena=0', 'voragine=8192']);
+
+  const voragine = valvulasDeProduccion().find((v) => v.plantId === 'voragine')?.w;
+  // 4096 = bit12 y 8192 = bit13: dos bits distintos de la MISMA palabra, cada uno como pulso. Que
+  // sean bits contiguos es lo que hace fácil confundirlos al teclear, y confundirlos aquí significa
+  // cerrar cuando alguien pidió abrir.
+  assert.deepEqual(voragine?.commands, { open: 4096, close: 8192 });
+  assert.equal(voragine?.mode, 'bitmask', 'dos comandos en la misma palabra: absoluto pisaría el otro');
+  assert.ok((voragine?.pulse?.holdMs ?? 0) > 0, 'sin pulso, abrir dejaría el bit puesto y cerrar no podría actuar');
+  assert.ok(typeof voragine?._riesgo === 'string', 'un comando de cierre debe llevar al lado qué lo respalda');
+});
+
+test('mapping de PRODUCCIÓN: La Sirena manda una ORDEN COMPUESTA, y ninguna otra planta la copia', () => {
+  // EXCEPCIÓN DELIBERADA (cliente, 2026-08-15). El 4096/bit12 heredado de Vorágine no podía mover
+  // nada en este sitio: la válvula la maneja un relé conmutador en montaje de inversión de giro, así
+  // que hay que poner el SENTIDO en una posición y quitarlo en la otra dentro de la misma orden.
+  //
+  // Se aísla en su propio test en vez de relajar la regla para todos, porque el resto sigue con la
+  // forma verificada y esto es lo único que impide que una prueba de campo se propague sin querer:
+  // el ladder del MicroLogix sigue sin leerse, así que ni el índice del sentido ni la necesidad de
+  // señal sostenida están confirmados.
+  const sirena = valvulasDeProduccion().find((v) => v.plantId === 'sirena')?.w;
+
+  assert.deepEqual(sirena?.commands, { open: 1, close: 0 });
+  assert.deepEqual(sirena?.sequences, {
+    open: [{ index: 1, value: 0 }, { index: 0, value: 1 }],
+    close: [{ index: 0, value: 0 }, { index: 1, value: 1 }],
+  });
+
+  // LO QUE DE VERDAD PROTEGE ESTE TEST: el orden. Energizar antes de soltar la dirección contraria
+  // abre una ventana con las dos activas a la vez — el fallo que el protocolo declara ERROR.
+  for (const [verb, pasos] of Object.entries(sirena?.sequences ?? {})) {
+    const primerEnergizado = pasos.findIndex((s) => s.value !== 0);
+    assert.ok(
+      primerEnergizado === -1 || !pasos.slice(primerEnergizado + 1).some((s) => s.value === 0),
+      `sirena/${verb}: se desenergiza DESPUÉS de energizar`,
+    );
+    assert.ok(pasos.filter((s) => s.value !== 0).length <= 1, `sirena/${verb}: dos direcciones energizadas a la vez`);
+  }
+
+  // Sostenida y sin pulso: cada verbo define un estado eléctrico completo, y su opuesto es el otro
+  // verbo. Limpiar a 0/0 dejaría el actuador sin dirección, ni abierto ni cerrado.
+  assert.equal(sirena?.latched, true);
+  assert.equal(sirena?.pulse, undefined, 'un pulso borraría la orden a los 300 ms');
+  assert.equal(sirena?.mode, 'absolute', 'la posición del array es el canal, no un bit de una palabra');
+  assert.ok(
+    typeof sirena?._riesgo === 'string' && sirena._riesgo.length > 200,
+    'una orden no verificada en el ladder DEBE llevar al lado qué se sabe, qué no y cómo revertirla',
+  );
+
+  const otrasConSecuencia = valvulasDeProduccion().filter((v) => v.plantId !== 'sirena' && v.w?.sequences);
+  assert.deepEqual(otrasConSecuencia.map((v) => v.plantId), [], 'el cableado de Sirena no se replica sin verificarlo en cada sitio');
+});
+
+// Las reglas ELÉCTRICAS de una orden compuesta se comprueban al CARGAR, no al accionar: una
+// secuencia mal escrita debe descubrirse en `validate:mapping` o en el arranque, no con el operador
+// delante del tablero y la válvula a medio recorrido. Un spec que las incumple se descarta entero y
+// la señal queda no-writable — el lado seguro.
+test('loader: las reglas eléctricas de una orden compuesta', () => {
+  const spec = {
+    target: { channel: 'intOut', sourceBuffer: 'INT_OUT_TEST', index: 0 },
+    commands: { open: 1 as number | boolean },
+    mode: 'absolute' as const,
+  };
+  const ok = motivoSecuenciaInvalida('open', [{ index: 1, value: 0 }, { index: 0, value: 1 }], spec);
+  assert.equal(ok, null, `la secuencia buena debe pasar, y dijo: ${ok}`);
+
+  const casos: Array<[string, Array<{ index: number; value: number }>, RegExp]> = [
+    ['energiza dos direcciones', [{ index: 1, value: 1 }, { index: 0, value: 1 }], /energizadas a la vez/],
+    ['desenergiza al final', [{ index: 0, value: 1 }, { index: 1, value: 0 }], /desenergiza DESPU/],
+    ['no toca el canal primario', [{ index: 1, value: 0 }], /canal primario/],
+    ['contradice a commands', [{ index: 1, value: 0 }, { index: 0, value: 7 }], /commands dice/],
+    ['repite una posición', [{ index: 0, value: 0 }, { index: 0, value: 1 }], /dos veces/],
+    ['vacía', [], /vac/],
+  ];
+  for (const [nombre, pasos, esperado] of casos) {
+    const motivo = motivoSecuenciaInvalida('open', pasos, spec);
+    assert.ok(motivo && esperado.test(motivo), `${nombre}: se esperaba ${esperado}, hubo: ${motivo}`);
+  }
+
+  // Una secuencia escribe POSICIONES completas del array; bitmask hablaría de bits dentro de una
+  // palabra. Mezclar los dos modelos produce escrituras que nadie puede razonar.
+  assert.ok(motivoSecuenciaInvalida('open', [{ index: 0, value: 1 }], { ...spec, mode: 'bitmask' }));
 });
 
 test('mapping de PRODUCCIÓN: la válvula de La Sirena declara cuál es SU caudal', () => {
@@ -183,13 +284,17 @@ test('mapping de PRODUCCIÓN: la válvula de La Sirena declara cuál es SU cauda
   const prod = loadJson(join(__dirname, '..', 'config', 'opc_mapping.json')) as {
     plants: { plantId: string; signals?: { domainKey?: string; flowDomainKey?: string }[] }[];
   };
-  const sirena = prod.plants.find((p) => p.plantId === 'sirena');
-  const valvula = (sirena?.signals ?? []).find((s) => s.domainKey === 'valve1');
-  assert.equal(valvula?.flowDomainKey, 'outletFlow1');
+  // Vorágine se suma el 2026-08-15: el cliente confirmó que su válvula también actúa sobre la
+  // salida, al probar en planta que 4096/8192 mueven `outletFlow1`.
+  for (const plantId of ['sirena', 'voragine']) {
+    const planta = prod.plants.find((p) => p.plantId === plantId);
+    const valvula = (planta?.signals ?? []).find((s) => s.domainKey === 'valve1');
+    assert.equal(valvula?.flowDomainKey, 'outletFlow1', `${plantId}: la válvula declara su caudal`);
 
-  // Y el caudal declarado tiene que EXISTIR en esa planta, o el método se queda sin dato.
-  assert.ok(
-    (sirena?.signals ?? []).some((s) => s.domainKey === 'outletFlow1'),
-    'la señal declarada en flowDomainKey debe estar mapeada en la misma planta',
-  );
+    // Y el caudal declarado tiene que EXISTIR en esa planta, o el método se queda sin dato.
+    assert.ok(
+      (planta?.signals ?? []).some((s) => s.domainKey === 'outletFlow1'),
+      `${plantId}: la señal declarada en flowDomainKey debe estar mapeada en la misma planta`,
+    );
+  }
 });

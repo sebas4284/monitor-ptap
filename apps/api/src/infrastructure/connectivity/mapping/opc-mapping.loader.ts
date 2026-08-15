@@ -31,10 +31,49 @@ export interface BufferElementRef {
   index: number;
 }
 
+/** Un paso de una orden compuesta: qué valor va a qué posición del buffer de salida. */
+export interface WriteStep {
+  index: number;
+  value: number | boolean;
+}
+
 /** Fase 5: traducción de comando de dominio a escritura de buffer/bit (vive en el mapping, regla 2). */
 export interface WriteSpec {
   target: BufferElementRef; // buffer de SALIDA donde se escribe
   commands: Record<string, number | boolean>; // verbo → valor a escribir
+  /**
+   * ORDEN COMPUESTA: un verbo que necesita escribir VARIAS posiciones del mismo buffer para que el
+   * equipo se mueva.
+   *
+   * Existe porque en La Sirena (y probablemente en el resto) la válvula la maneja un relé
+   * conmutador en montaje de inversión de giro: una posición del buffer da el sentido y otra lo
+   * quita. Escribir solo una **no puede mover la válvula jamás** — es exactamente por lo que la
+   * prueba de campo del 2026-08-03 concluyó "canal sin actuador" cuando en realidad la orden
+   * estaba incompleta.
+   *
+   * Reglas que el loader EXIGE (una secuencia que las incumpla invalida el spec entero y deja la
+   * señal como no-writable, que es el lado seguro):
+   *  1. el verbo debe existir también en `commands`, y el paso que toca `target.index` debe llevar
+   *     el mismo valor — si no, el mapping se contradice a sí mismo;
+   *  2. **primero se desenergiza, después se energiza**: ningún paso a cero puede ir detrás de uno
+   *     distinto de cero. Al revés existe una ventana con las dos direcciones activas a la vez, que
+   *     es justo lo que el protocolo declara ERROR;
+   *  3. como mucho UNA posición queda energizada al final, por el mismo motivo;
+   *  4. sin índices repetidos (dos valores para la misma posición es ambigüedad, no orden).
+   *
+   * Los pasos se escriben SIEMPRE en absoluto: la posición es el canal, no un bit dentro de una
+   * palabra compartida, así que `mode: bitmask` es incompatible y también invalida el spec.
+   */
+  sequences?: Record<string, WriteStep[]>;
+  /**
+   * `true` ⇒ la orden es SOSTENIDA: el valor se queda puesto y NO se hace rollback si el estado no
+   * confirma. Es lo correcto cuando cada verbo define un estado eléctrico completo y su opuesto es
+   * el otro verbo (abrir = c0:1/c1:0, cerrar = c0:0/c1:1): deshacer un "abrir" a 0/0 dejaría el
+   * actuador en un estado que no es ni abierto ni cerrado, y que nadie pidió.
+   *
+   * Incompatible con `pulse` (uno se limpia solo, el otro no debe limpiarse).
+   */
+  latched?: boolean;
   /**
    * Cómo se aplica el valor sobre el elemento:
    *  - `absolute` (default): se escribe el valor tal cual (pisa la palabra completa).
@@ -148,6 +187,8 @@ function resolvePath(explicit?: string): string {
 interface RawWriteSpec {
   target?: { channel?: string; sourceBuffer?: string; index?: number };
   commands?: Record<string, number | boolean>;
+  sequences?: Record<string, Array<{ index?: unknown; value?: unknown }>>;
+  latched?: unknown;
   mode?: string;
   pulse?: { holdMs?: number };
   readBack?: {
@@ -197,6 +238,83 @@ function parseStateEncoding(raw: RawSignal['stateEncoding']): SignalMapping['sta
   return enc.closed === undefined && enc.open === undefined ? undefined : enc;
 }
 
+/** Un paso está "energizado" si su valor no es cero/false. La posición en reposo es el 0. */
+function energizado(value: number | boolean): boolean {
+  return value !== 0 && value !== false;
+}
+
+/**
+ * Valida una orden compuesta y devuelve el motivo del rechazo, o null si es correcta.
+ *
+ * Esto NO es una comprobación de forma (de eso se encarga el schema): son las reglas ELÉCTRICAS.
+ * Se comprueban aquí, al cargar, y no al ejecutar, porque una secuencia mal escrita es un error del
+ * mapping que debe descubrirse en `validate:mapping` o en el arranque — no con el operador delante
+ * del tablero y la válvula a medio recorrido.
+ */
+export function motivoSecuenciaInvalida(
+  verb: string,
+  steps: WriteStep[],
+  spec: { target: BufferElementRef; commands: Record<string, number | boolean>; mode: 'absolute' | 'bitmask' },
+): string | null {
+  if (steps.length === 0) return `${verb}: secuencia vacía`;
+  if (spec.mode === 'bitmask') {
+    return `${verb}: una secuencia escribe posiciones completas, no bits — mode debe ser 'absolute'`;
+  }
+
+  const vistos = new Set<number>();
+  for (const s of steps) {
+    if (vistos.has(s.index)) return `${verb}: la posición ${s.index} aparece dos veces`;
+    vistos.add(s.index);
+  }
+
+  // El paso que toca el target primario tiene que decir lo mismo que `commands`, o el mapping se
+  // contradice y no hay forma de saber cuál de los dos valores es el que se quiso.
+  const primario = steps.find((s) => s.index === spec.target.index);
+  if (!primario) return `${verb}: la secuencia no toca el canal primario (posición ${spec.target.index})`;
+  if (primario.value !== spec.commands[verb]) {
+    return `${verb}: la secuencia escribe ${String(primario.value)} en la posición ${spec.target.index} pero commands dice ${String(spec.commands[verb])}`;
+  }
+
+  // Desenergizar SIEMPRE antes de energizar: si un paso a cero va detrás de uno energizado, existe
+  // una ventana con las dos direcciones activas.
+  const primeroEnergizado = steps.findIndex((s) => energizado(s.value));
+  if (primeroEnergizado >= 0) {
+    const ceroTardio = steps.findIndex((s, i) => i > primeroEnergizado && !energizado(s.value));
+    if (ceroTardio >= 0) {
+      return `${verb}: el paso ${ceroTardio} (posición ${steps[ceroTardio].index}) desenergiza DESPUÉS de energizar — hay que soltar la dirección contraria primero`;
+    }
+  }
+
+  const energizados = steps.filter((s) => energizado(s.value));
+  if (energizados.length > 1) {
+    return `${verb}: dejaría ${energizados.length} posiciones energizadas a la vez (${energizados.map((s) => s.index).join(', ')}) — dos direcciones opuestas activas es el fallo que el protocolo prohíbe`;
+  }
+  return null;
+}
+
+function parseSequences(
+  raw: RawWriteSpec['sequences'],
+  spec: { target: BufferElementRef; commands: Record<string, number | boolean>; mode: 'absolute' | 'bitmask' },
+): { sequences?: Record<string, WriteStep[]>; error?: string } {
+  if (!raw || typeof raw !== 'object') return {};
+  const out: Record<string, WriteStep[]> = {};
+  for (const [verb, pasos] of Object.entries(raw)) {
+    if (!Array.isArray(pasos)) return { error: `${verb}: sequences debe ser una lista de pasos` };
+    if (!(verb in spec.commands)) return { error: `${verb}: tiene secuencia pero no está en commands` };
+    const steps: WriteStep[] = [];
+    for (const p of pasos) {
+      if (typeof p?.index !== 'number' || (typeof p?.value !== 'number' && typeof p?.value !== 'boolean')) {
+        return { error: `${verb}: paso inválido (se espera {index: number, value: number|boolean})` };
+      }
+      steps.push({ index: p.index, value: p.value });
+    }
+    const motivo = motivoSecuenciaInvalida(verb, steps, spec);
+    if (motivo) return { error: motivo };
+    out[verb] = steps;
+  }
+  return { sequences: Object.keys(out).length > 0 ? out : undefined };
+}
+
 /**
  * Parsea el write spec. Confía en que el schema ya validó la forma (validate:mapping es el
  * gate); aquí solo se normaliza. Devuelve undefined si la señal no es writable o no lo trae.
@@ -208,11 +326,32 @@ function parseWriteSpec(raw: RawWriteSpec | undefined): WriteSpec | undefined {
   if (typeof raw.readBack.channel !== 'string' || typeof raw.readBack.index !== 'number') return undefined;
   if (typeof raw.timeoutMs !== 'number' || typeof raw.permission !== 'string') return undefined;
   if (raw.rollbackValue === undefined) return undefined;
+
+  const mode = raw.mode === 'bitmask' ? 'bitmask' : 'absolute';
+  const pulse = typeof raw.pulse?.holdMs === 'number' && raw.pulse.holdMs > 0 ? { holdMs: raw.pulse.holdMs } : null;
+  const latched = raw.latched === true;
+
+  // Fallar CERRADO: un spec compuesto que no cumple las reglas eléctricas deja la señal como no
+  // writable (el WriteService responderá TARGET_NOT_WRITABLE) en vez de accionar equipo con una
+  // orden que el propio mapping declara contradictoria. Se grita en el log porque una válvula que
+  // deja de responder sin explicación es peor que un arranque ruidoso.
+  const seq = parseSequences(raw.sequences, { target: { channel, sourceBuffer, index }, commands: raw.commands, mode });
+  if (seq.error) {
+    console.error(`[opc-mapping] write spec DESCARTADO en ${sourceBuffer}[${index}]: ${seq.error}`);
+    return undefined;
+  }
+  if (latched && pulse) {
+    console.error(`[opc-mapping] write spec DESCARTADO en ${sourceBuffer}[${index}]: latched y pulse son excluyentes`);
+    return undefined;
+  }
+
   return {
     target: { channel, sourceBuffer, index },
     commands: raw.commands,
-    mode: raw.mode === 'bitmask' ? 'bitmask' : 'absolute',
-    pulse: typeof raw.pulse?.holdMs === 'number' && raw.pulse.holdMs > 0 ? { holdMs: raw.pulse.holdMs } : null,
+    ...(seq.sequences ? { sequences: seq.sequences } : {}),
+    ...(latched ? { latched: true } : {}),
+    mode,
+    pulse,
     readBack: {
       channel: raw.readBack.channel,
       sourceBuffer: typeof raw.readBack.sourceBuffer === 'string' ? raw.readBack.sourceBuffer : null,

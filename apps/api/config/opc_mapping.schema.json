@@ -182,9 +182,23 @@
           "description": "Un PULSO se limpia antes del read-back, así que NO puede confirmarse releyendo el valor escrito: su readBack debe apuntar al canal de ESTADO (confirmsWrittenValue:false + expectedValue).",
           "if": { "required": ["pulse"] },
           "then": { "properties": { "readBack": { "properties": { "confirmsWrittenValue": { "const": false } }, "required": ["confirmsWrittenValue"] } } }
+        },
+        {
+          "description": "pulse y latched son EXCLUYENTES: uno se limpia solo tras holdMs, el otro debe quedarse puesto. Declarar los dos es pedir cosas opuestas.",
+          "if": { "required": ["pulse"] },
+          "then": { "properties": { "latched": { "const": false } } }
+        },
+        {
+          "description": "Una secuencia escribe posiciones COMPLETAS del array (la posición es el canal físico), no bits dentro de una palabra compartida: bitmask no aplica.",
+          "if": { "required": ["sequences"] },
+          "then": { "properties": { "mode": { "const": "absolute" } } }
         }
       ],
       "properties": {
+        "_riesgo": {
+          "type": "string",
+          "description": "Advertencia escrita AL LADO del comando al que se refiere. Existe porque un valor de escritura puede ser deliberado y aun asi peligroso, y quien lo lea dentro de seis meses no tendra el contexto: JSON no admite comentarios, y una nota en otro archivo no se lee cuando toca. Documenta por que se puso ese valor, que se sabe y que no, y como revertirlo."
+        },
         "target": {
           "type": "object",
           "additionalProperties": false,
@@ -206,6 +220,29 @@
           "minProperties": 1,
           "propertyNames": { "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" },
           "additionalProperties": { "type": ["number", "boolean"] }
+        },
+        "sequences": {
+          "type": "object",
+          "description": "ORDEN COMPUESTA: verbo → pasos ordenados {index, value} sobre el MISMO buffer de salida. Necesaria cuando el equipo lo mueve un relé conmutador (una posición da el sentido y otra lo quita): escribir una sola posición NO puede moverlo — es lo que hizo que la prueba de campo del 2026-08-03 concluyera 'canal sin actuador' con la orden a medias. Reglas que el loader EXIGE (incumplirlas descarta el spec y deja la señal no-writable): el verbo debe estar también en commands y el paso del canal primario debe llevar ese mismo valor; primero se desenergiza y después se energiza (ningún cero detrás de un no-cero); como mucho UNA posición queda energizada al final; sin índices repetidos.",
+          "minProperties": 1,
+          "propertyNames": { "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" },
+          "additionalProperties": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["index", "value"],
+              "properties": {
+                "index": { "type": "integer", "minimum": 0 },
+                "value": { "type": ["number", "boolean"] }
+              }
+            }
+          }
+        },
+        "latched": {
+          "type": "boolean",
+          "description": "true ⇒ la orden es SOSTENIDA: el valor se queda puesto y NO se hace rollback si el estado no confirma. Correcto cuando cada verbo define un estado eléctrico completo y su opuesto es el otro verbo (abrir = c0:1/c1:0, cerrar = c0:0/c1:1): deshacer un 'abrir' a 0/0 dejaría el actuador sin dirección, ni abierto ni cerrado, y sin que nadie lo pidiera. Excluyente con pulse."
         },
         "mode": {
           "type": "string",

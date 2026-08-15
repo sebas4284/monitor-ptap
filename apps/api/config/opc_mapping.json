@@ -152,12 +152,14 @@
           "index": 0,
           "domainKey": "valve1",
           "label": "Válvula 1",
+          "flowDomainKey": "outletFlow1",
           "mappingStatus": "mapped",
           "confidence": "confirmed",
           "writable": true,
           "write": {
+            "_riesgo": "VERIFICADO EN CAMPO por el cliente (2026-08-15) y ya operando: abrir = 4096 (bit12) y cerrar = 8192 (bit13) en INT_OUT[0], como PULSOS sobre la misma palabra. Actua sobre el CAUDAL DE SALIDA. Lectura del PLC ese dia con la valvula pasando agua (outletFlow1 = 1,61 l/s, entrada 6,93 l/s): INT_OUT[0..19] todos a 0 (el canal de comando queda en reposo, coherente con el pulso) e INT_IN[0] = 7192 = bits{3,4,10,11,12}, INT_IN[1] = 1025 = bits{0,10}. HIPOTESIS, NO CONFIRMADA: el bit12 presente en INT_IN[0] es el mismo bit del comando de abrir, y el bit13 (cerrar) esta ausente — encajaria con que el estado refleje la ultima orden. Es UNA sola muestra y con la valvula en UNA sola posicion: no basta para declarar una codificacion, asi que el readBack sigue con stateVerified:false y el veredicto lo da el caudal de salida. Falta la lectura con la valvula cerrada; ValveStateObserver la captura sola en cuanto alguien la cierre.",
             "target": { "channel": "intOut", "sourceBuffer": "INT_OUT_VORAGINE", "index": 0 },
-            "commands": { "open": 4096 },
+            "commands": { "open": 4096, "close": 8192 },
             "mode": "bitmask",
             "pulse": { "holdMs": 300 },
             "readBack": {
@@ -2372,10 +2374,15 @@
           "confidence": "confirmed",
           "writable": true,
           "write": {
+            "_riesgo": "ORDEN COMPUESTA de campo pedida por el cliente (2026-08-15), SOLO en La Sirena. Abrir = canal 0 a 1 con el canal 1 a 0; cerrar = canal 0 a 0 con el canal 1 a 1. Sustituye al 4096/bit12 heredado de Voragine, que en este sitio no podia mover nada: la valvula la maneja un rele conmutador Relpol R2N-2012-23-1024-WTL en montaje de inversion de giro, asi que hace falta poner el SENTIDO en una posicion y quitarlo en la otra dentro de la misma orden. Escribir solo el canal 0 es lo que hizo que la prueba del 2026-08-03 concluyera 'canal sin actuador'. LO QUE NO ESTA VERIFICADO: el ladder del MicroLogix 1100 sigue sin leerse, asi que no consta que INT_OUT[1] sea la posicion del sentido (el operador describio el canal 2 el 2026-08-15 y luego pidio el 1 'por ahora'), ni si el actuador necesita la senal sostenida hasta el final de carrera. Por eso va 'latched': la orden se queda puesta y solo la deshace el verbo contrario. COMPROBACION REAL: outletFlow1, que es la salida donde esta la electrovalvula, no INT_IN[0] (stateTrusted:false, valia 17408 con 18 l/s saliendo). Revertir: commands {open:4096}, mode bitmask, pulse 300 ms, sin sequences ni latched.",
             "target": { "channel": "intOut", "sourceBuffer": "INT_OUT_SIRENA", "index": 0 },
-            "commands": { "open": 4096 },
-            "mode": "bitmask",
-            "pulse": { "holdMs": 300 },
+            "commands": { "open": 1, "close": 0 },
+            "sequences": {
+              "open":  [ { "index": 1, "value": 0 }, { "index": 0, "value": 1 } ],
+              "close": [ { "index": 0, "value": 0 }, { "index": 1, "value": 1 } ]
+            },
+            "latched": true,
+            "mode": "absolute",
             "readBack": {
               "channel": "intIn",
               "sourceBuffer": "INT_IN_SIRENA",
