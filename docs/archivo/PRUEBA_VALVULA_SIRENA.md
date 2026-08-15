@@ -1,5 +1,35 @@
 # Prueba de accionamiento — Electroválvula de La Sirena (`sirena`)
 
+> # 🔴 CORREGIDO EL 2026-08-15 — LA CONCLUSIÓN DE ESTE DOCUMENTO ERA FALSA
+>
+> Este documento concluyó que `INT_OUT[0]` era un **"canal sin actuador"**, porque se escribió
+> `4096`, `INT_IN[0]` no se movió y el caudal no cambió. La conclusión era razonable con lo que se
+> sabía entonces, pero **el canal sí tiene actuador: lo que estaba incompleto era la orden.**
+>
+> El operador aportó el cableado real (2026-08-15), con fotos del tablero. La válvula —que es la de
+> **SALIDA** de la planta— la mueven **dos relés Relpol R2N-2012-23-1024-WTL** (2 contactos
+> conmutados, bobina 24 VDC) en montaje de inversión de giro, y hace falta **escribir en varias
+> posiciones a la vez**:
+>
+> | Acción | `INT_OUT[0]` | `INT_OUT[2]` | `INT_OUT[3]` |
+> |---|---|---|---|
+> | **ABRIR** | energizado | desenergizado | — |
+> | **CERRAR** | desenergizado | — | energizado |
+>
+> Escribir SOLO en `[0]` no puede mover la válvula: falta poner el relé de dirección en el mismo
+> acto. Y hay una segunda causa posible del mismo fracaso: el **pulso de 300 ms**. Un actuador
+> motorizado suele necesitar la señal sostenida hasta el final de carrera.
+>
+> **Qué sigue siendo válido de este documento:** las capturas crudas, los candados de seguridad, el
+> procedimiento de testigo independiente y la constatación de que el eco de escritura funcionaba
+> (la señal SÍ salía). **Qué NO:** toda deducción que parta de "el canal no tiene actuador", y por
+> extensión la semántica `16384`=CERRADA / `16385`=ABIERTA que de ahí se dio por buena — el
+> `INT_IN[0]` de Sirena hoy vale `17408` y su patrón no lo cumple ni la propia Vorágine (7176, sin
+> bit14).
+>
+> Plan de corrección y lo que falta (leer el ladder del MicroLogix 1100 antes de escribir nada):
+> ver el plan de "escritura coordinada en varias posiciones".
+
 > # ⛔ ACCIONAMIENTO FÍSICO REAL
 > Escribir en `INT_OUT_SIRENA` puede **abrir/cerrar una válvula física**. Este documento **prepara,
 > lista y registra** el procedimiento de prueba de campo. **No se dispara ninguna escritura** hasta

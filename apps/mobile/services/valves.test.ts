@@ -222,25 +222,26 @@ test('detectManual: sin cambio de lado del caudal no hay evento', () => {
 });
 
 // ── Qué caudal corresponde a cada válvula ────────────────────────────────────
-// El orden por defecto prefiere la SALIDA. La Sirena tiene su única válvula en la ENTRADA
-// (operador, 2026-08-15), y ahí la preferencia miente en el caso que importa: con la válvula de
-// entrada cerrada, el tanque sigue entregando agua aguas abajo.
+// El orden por defecto (salida, luego entrada) es una SUPOSICIÓN: acierta o falla según dónde esté
+// físicamente la válvula. Declararlo en el mapping convierte un dato de campo en configuración.
+// La Sirena declara `outletFlow1`: su única válvula es la de SALIDA (operador, 2026-08-15).
 test('valves: si el mapping declara flowDomainKey, ese caudal MANDA sobre la preferencia', () => {
   const v = valvesFromSnapshot(
     snap({
       valve1: sig(0, { flowDomainKey: 'inletFlow1' }),
       inletFlow1: sig(23.3),
-      outletFlow1: sig(0), // la salida diría CERRADA; la entrada, que es la que vale, dice ABIERTA
+      outletFlow1: sig(0), // la preferencia por defecto diría CERRADA; lo declarado dice ABIERTA
     }),
   )[0];
   assert.equal(v.byFlow, 'open');
   assert.equal(v.state, 'open');
 });
 
-test('valves: el caso inverso — entrada cerrada y el tanque vaciándose aguas abajo', () => {
-  // Sin flowDomainKey esto habría dicho ABIERTA: 19 l/s saliendo del tanque con la válvula cerrada.
+test('valves: elegir el caudal equivocado miente — válvula de SALIDA con la entrada llenando', () => {
+  // El caso real que protege esto: la válvula de salida está cerrada y la entrada sigue llenando
+  // el tanque. Mirar la entrada diría ABIERTA con la válvula cerrada.
   const v = valvesFromSnapshot(
-    snap({ valve1: sig(0, { flowDomainKey: 'inletFlow1' }), inletFlow1: sig(0), outletFlow1: sig(19.6) }),
+    snap({ valve1: sig(0, { flowDomainKey: 'outletFlow1' }), inletFlow1: sig(23.3), outletFlow1: sig(0) }),
   )[0];
   assert.equal(v.byFlow, 'closed');
 });
@@ -264,11 +265,46 @@ test('valves: cada válvula resuelve SU caudal por separado', () => {
 });
 
 // El caso REAL que reportó el cliente: la app decía CERRADA con 23,33 l/s entrando.
-test('valves: sin palabra de estado, el veredicto lo da el caudal (caso Sirena)', () => {
+test('valves: con la palabra declarada no fiable, el veredicto lo da el caudal (caso Sirena)', () => {
+  // El caso REAL que reportó el cliente: la app decía CERRADA con el agua pasando.
   const v = valvesFromSnapshot(
-    snap({ valve1: sig(0, { flowDomainKey: 'inletFlow1' }), inletFlow1: sig(23.33) }),
+    snap({
+      valve1: sig(0, { flowDomainKey: 'outletFlow1' }),
+      valve1State: sig(17408, { stateTrusted: false }),
+      outletFlow1: sig(19.66),
+    }),
   )[0];
-  assert.equal(v.byState, null, 'Sirena ya no expone valve1State: su palabra no era fiable');
+  assert.equal(v.byState, null, 'su palabra no está verificada: no puede decidir');
   assert.equal(v.state, 'open');
   assert.equal(v.source, 'caudal');
+});
+
+// La Sirena: su INT_IN[0] paso de 16384 a 17408 con 23,33 l/s entrando, y ninguna convencion
+// conocida lo explica. Se conserva MAPEADO como diagnostico (rawState sigue visible) pero se
+// declara no fiable, para que el veredicto lo de el caudal — que es evidencia fisica.
+test('valves: stateTrusted:false → la palabra NO decide, pero se sigue viendo como diagnóstico', () => {
+  const v = valvesFromSnapshot(
+    snap({
+      valve1: sig(0, { flowDomainKey: 'inletFlow1' }),
+      valve1State: sig(17408, { stateTrusted: false }),
+      inletFlow1: sig(23.33),
+    }),
+  )[0];
+  assert.equal(v.byState, null, 'no se afirma nada desde un registro declarado no fiable');
+  assert.equal(v.rawState, 17408, 'pero el valor crudo SIGUE disponible para diagnosticar');
+  assert.equal(v.state, 'open', 'manda el caudal de entrada');
+  assert.equal(v.source, 'caudal');
+});
+
+test('valves: stateTrusted:false no marca discrepancia (no hay dos veredictos que comparar)', () => {
+  const v = valvesFromSnapshot(
+    snap({ valve1: sig(0), valve1State: sig(16384, { stateTrusted: false }), outletFlow1: sig(19.6) }),
+  )[0];
+  assert.equal(v.disagreement, false, 'la palabra no opina, asi que no puede contradecir al caudal');
+});
+
+test('valves: sin stateTrusted la palabra sigue mandando (las demás plantas no cambian)', () => {
+  const v = valvesFromSnapshot(snap({ valve1: sig(0), valve1State: sig(16384), outletFlow1: sig(19.6) }))[0];
+  assert.equal(v.byState, 'closed');
+  assert.equal(v.source, 'estado');
 });

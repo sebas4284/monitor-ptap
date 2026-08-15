@@ -104,6 +104,8 @@ export interface SignalMapping {
   stateEncoding?: { closed?: number; open?: number };
   /** Solo en válvulas: el caudal que corresponde a ESA válvula. Ver `SignalDto.flowDomainKey`. */
   flowDomainKey?: string;
+  /** Solo en palabras de estado: `false` = se lee como diagnóstico pero NO decide el veredicto. */
+  stateTrusted?: boolean;
 }
 
 export interface LoadedPlant {
@@ -179,6 +181,7 @@ interface RawSignal {
   write?: RawWriteSpec;
   stateEncoding?: { closed?: unknown; open?: unknown };
   flowDomainKey?: unknown;
+  stateTrusted?: unknown;
 }
 
 /**
@@ -313,6 +316,7 @@ export function loadMapping(explicitPath?: string): LoadedMapping {
         write: s.writable === true ? parseWriteSpec(s.write) : undefined,
         stateEncoding: parseStateEncoding(s.stateEncoding),
         flowDomainKey: typeof s.flowDomainKey === 'string' ? s.flowDomainKey : undefined,
+        stateTrusted: typeof s.stateTrusted === 'boolean' ? s.stateTrusted : undefined,
       });
     }
   }

@@ -158,13 +158,31 @@ export interface SignalDto {
   /**
    * Solo en señales de VÁLVULA: qué caudal corresponde a ESA válvula, para inferir su estado.
    *
-   * Por defecto el front prefiere el caudal de SALIDA, y esa preferencia es incorrecta cuando la
-   * válvula está en la entrada. En La Sirena lo está (dato del operador, 2026-08-15), y la
-   * diferencia no es cosmética: con la válvula de entrada CERRADA, el tanque puede seguir
-   * entregando agua aguas abajo — el caudal de salida diría "abierta" mientras la válvula está
-   * cerrada y el tanque se vacía.
+   * Sin esto, el front aplica una preferencia fija (salida y luego entrada) que es una SUPOSICIÓN:
+   * acierta o falla según dónde esté físicamente cada válvula, y el código no tenía forma de
+   * saberlo. Declararlo convierte un dato de campo en configuración.
+   *
+   * Y la diferencia no es cosmética. Elegir el caudal equivocado miente justo en el caso que
+   * importa: una válvula de SALIDA cerrada con la entrada llenando el tanque, o una de ENTRADA
+   * cerrada con el tanque vaciándose aguas abajo. En ambos hay caudal en el lado que no manda, y
+   * la app diría "abierta" con la válvula cerrada.
+   *
+   * La Sirena declara `outletFlow1`: su única válvula es la de salida (operador, 2026-08-15).
    */
   flowDomainKey?: string;
+  /**
+   * Solo en palabras de ESTADO de válvula: ¿se puede derivar el estado de este registro?
+   *
+   * `false` = el registro se sigue leyendo y mostrando como DIAGNÓSTICO, pero no se usa para
+   * decidir si la válvula está abierta. La Sirena está así desde el 2026-08-15: su `INT_IN[0]`
+   * pasó de 16384 a 17408 mientras entraban 23,33 l/s, y ninguna de las convenciones conocidas lo
+   * explica (bit10 está encendido en casi todas las plantas, con caudal y sin él).
+   *
+   * Se conserva mapeado a propósito en vez de borrarlo: es lo que permite que
+   * `ValveStateObserver` siga acumulando evidencia y algún día se pueda decodificar de verdad.
+   * Borrarlo dejaba al sistema ciego justo donde falta conocimiento.
+   */
+  stateTrusted?: boolean;
 }
 
 /**

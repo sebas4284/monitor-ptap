@@ -117,27 +117,30 @@ test('mapping de PRODUCCIÓN: solo las plantas con estado VERIFICADO exponen val
   const conEstado = prod.plants
     .filter((p) => (p.signals ?? []).some((s) => s.domainKey === 'valve1State'))
     .map((p) => p.plantId);
-  // Solo CASCAJAL: el operador verificó en campo (2026-08-13) que su INT_IN[1] vale 251 con la
-  // válvula cerrada, y la señal declara `stateEncoding` en vez de confiar en la máscara de bits.
-  //
-  // SIRENA se retiró el 2026-08-15. Era la última que quedaba con el patrón "limpio" bit14/bit0,
-  // y la evidencia lo tumbó: su INT_IN[0] pasó de 16384 a **17408** (= bit14 + bit10) mientras
-  // entraban 23,33 l/s — o sea, la app decía CERRADA con la válvula claramente abierta. Y bit10
-  // NO significa "abierta": está encendido en casi todas las plantas, con caudal (Carbonero) y sin
-  // él (Soledad, 0,00 l/s). El patrón bit14/bit0 heredado del protocolo de Vorágine no lo cumple
-  // ni la propia Vorágine, cuyo INT_IN[0] hoy es 7176 y NO tiene bit14.
-  //
-  // Sin palabra de estado fiable, el veredicto de Sirena queda en el método del caudal, que es
-  // evidencia física — y su válvula está en la ENTRADA, por eso declara `flowDomainKey`.
-  assert.deepEqual(conEstado, ['cascajal'], 'añadir otra planta exige confirmar su índice/patrón en campo primero');
+  assert.deepEqual(conEstado, ['cascajal', 'sirena'], 'añadir otra planta exige confirmar su índice/patrón en campo primero');
 
-  // Y el que no siga la máscara de bits DEBE traer su convención declarada, o no dirá nada.
-  for (const p of prod.plants) {
-    const estado = (p.signals ?? []).find((s) => s.domainKey === 'valve1State') as
-      | { stateEncoding?: { closed?: number } }
-      | undefined;
-    if (p.plantId === 'cascajal') assert.deepEqual(estado?.stateEncoding, { closed: 251 });
-  }
+  // LA REGLA QUE DE VERDAD IMPORTA: exponer la palabra no es lo mismo que creerle. Cada una que
+  // esté mapeada debe declarar POR QUÉ se le hace caso — o declarar que no se le hace.
+  const porPlanta = new Map(
+    prod.plants.map((p) => [
+      p.plantId,
+      (p.signals ?? []).find((s) => s.domainKey === 'valve1State') as
+        | { stateEncoding?: { closed?: number }; stateTrusted?: boolean }
+        | undefined,
+    ]),
+  );
+
+  // Cascajal: el operador verificó en campo (2026-08-13) que su INT_IN[1] vale 251 con la válvula
+  // cerrada. Declara `stateEncoding` en vez de confiar en la máscara de bits heredada.
+  assert.deepEqual(porPlanta.get('cascajal')?.stateEncoding, { closed: 251 });
+
+  // Sirena: se conserva MAPEADA a propósito —es la evidencia que necesita ValveStateObserver— pero
+  // NO decide. Su INT_IN[0] pasó de 16384 a 17408 (= bit14 + bit10) con 23,33 l/s entrando: la app
+  // decía CERRADA con la válvula claramente abierta. Y bit10 no significa "abierta", está encendido
+  // en casi todas las plantas, con caudal (Carbonero) y sin él (Soledad, 0,00 l/s). El patrón
+  // bit14/bit0 del protocolo de Vorágine no lo cumple ni la propia Vorágine, cuyo INT_IN[0] hoy es
+  // 7176 y NO tiene bit14. Su veredicto sale del caudal de SALIDA, que es evidencia física.
+  assert.equal(porPlanta.get('sirena')?.stateTrusted, false, 'la palabra de Sirena no está verificada: no puede decidir');
 });
 
 test('mapping de PRODUCCIÓN: cada válvula escribe en el canal 0 con pulso y máscara de bits', () => {
@@ -171,21 +174,22 @@ test('mapping de PRODUCCIÓN: cada válvula escribe en el canal 0 con pulso y m�
   }
 });
 
-test('mapping de PRODUCCIÓN: la válvula de La Sirena declara que su caudal es el de ENTRADA', () => {
-  // El operador confirmó (2026-08-15) que la única válvula de Sirena está en la entrada. Sin
-  // declararlo, el front prefiere el caudal de SALIDA, y eso miente en el caso que importa: con la
-  // válvula de entrada cerrada, el tanque sigue entregando agua aguas abajo, así que el caudal de
-  // salida diría "abierta" mientras la válvula está cerrada y el tanque se vacía.
+test('mapping de PRODUCCIÓN: la válvula de La Sirena declara cuál es SU caudal', () => {
+  // El operador confirmó (2026-08-15) que la única válvula de Sirena es la de SALIDA. Se declara
+  // explícitamente aunque coincida con la preferencia por defecto: esa preferencia es una
+  // SUPOSICIÓN del código, y aquí es un dato de campo verificado. Elegir el caudal equivocado
+  // miente justo en el caso que importa — la válvula de salida cerrada con la entrada llenando el
+  // tanque: hay caudal en el lado que no manda, y se afirmaría "abierta" con la válvula cerrada.
   const prod = loadJson(join(__dirname, '..', 'config', 'opc_mapping.json')) as {
     plants: { plantId: string; signals?: { domainKey?: string; flowDomainKey?: string }[] }[];
   };
   const sirena = prod.plants.find((p) => p.plantId === 'sirena');
   const valvula = (sirena?.signals ?? []).find((s) => s.domainKey === 'valve1');
-  assert.equal(valvula?.flowDomainKey, 'inletFlow1');
+  assert.equal(valvula?.flowDomainKey, 'outletFlow1');
 
   // Y el caudal declarado tiene que EXISTIR en esa planta, o el método se queda sin dato.
   assert.ok(
-    (sirena?.signals ?? []).some((s) => s.domainKey === 'inletFlow1'),
+    (sirena?.signals ?? []).some((s) => s.domainKey === 'outletFlow1'),
     'la señal declarada en flowDomainKey debe estar mapeada en la misma planta',
   );
 });

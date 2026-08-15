@@ -66,8 +66,16 @@ function numeric(signal: SignalDto | undefined): number | null {
  * En ambas, un valor que no encaja devuelve `null` y el veredicto cae al caudal. Es deliberado:
  * más vale no afirmar nada que enseñar una válvula "cerrada" que está abierta.
  */
-function stateFromWord(word: number | null, encoding?: SignalDto['stateEncoding']): ValveState | null {
+function stateFromWord(
+  word: number | null,
+  encoding?: SignalDto['stateEncoding'],
+  trusted?: boolean,
+): ValveState | null {
   if (word === null) return null;
+  // El sitio declara que su palabra de estado NO es fiable: se sigue mostrando como diagnóstico
+  // (`rawState`), pero el veredicto lo da el caudal, que es evidencia física. La Sirena está así:
+  // su registro decía CERRADA con 23,33 l/s entrando.
+  if (trusted === false) return null;
 
   if (encoding && (encoding.closed !== undefined || encoding.open !== undefined)) {
     if (word === encoding.closed) return 'closed';
@@ -97,10 +105,11 @@ function referenceFlow(
   signals: Record<string, SignalDto>,
   declarado?: string,
 ): { value: number | null; unit: string | null; label: string | null } {
-  // Si el mapping declara QUÉ caudal corresponde a esta válvula, manda ese y no se adivina.
-  // La Sirena tiene la válvula en la ENTRADA (operador, 2026-08-15) y el orden de abajo habría
-  // usado el de salida: con la válvula cerrada, el tanque sigue entregando agua aguas abajo, así
-  // que el caudal de salida diría "abierta" mientras la válvula está cerrada y el tanque se vacía.
+  // Si el mapping declara QUÉ caudal corresponde a esta válvula, manda ese y no se adivina. El
+  // orden de abajo es una SUPOSICIÓN que acierta o falla según dónde esté físicamente la válvula,
+  // y elegir mal miente justo en el caso que importa: una válvula de salida cerrada con la entrada
+  // llenando el tanque, o una de entrada cerrada con el tanque vaciándose aguas abajo. En ambos
+  // hay caudal en el lado que NO manda, y se afirmaría "abierta" con la válvula cerrada.
   const orden = declarado ? [declarado] : ['outletFlow1', 'outletFlow2', 'inletFlow1', 'inletFlow2'];
   for (const key of orden) {
     const sig = signals[key];
@@ -127,7 +136,7 @@ export function valvesFromSnapshot(snapshot: PlantSnapshotDto | undefined): Valv
     const flow = referenceFlow(snapshot.signals, cmd?.flowDomainKey);
     const stateSig = snapshot.signals[`valve${n}State`];
     const rawState = numeric(stateSig);
-    const byState = stateFromWord(rawState, stateSig?.stateEncoding);
+    const byState = stateFromWord(rawState, stateSig?.stateEncoding, stateSig?.stateTrusted);
     const byFlow = stateFromFlow(flow.value);
 
     const state: ValveState = byState ?? byFlow ?? 'unknown';

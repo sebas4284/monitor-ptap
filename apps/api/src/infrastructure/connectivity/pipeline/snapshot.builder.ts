@@ -54,6 +54,7 @@ export function buildSnapshot(input: SnapshotInput): PlantSnapshotDto {
     if (typeof ex.opMax === 'number') dto.opMax = ex.opMax;
     if (ex.stateEncoding) dto.stateEncoding = ex.stateEncoding;
     if (ex.flowDomainKey) dto.flowDomainKey = ex.flowDomainKey;
+    if (typeof ex.stateTrusted === 'boolean') dto.stateTrusted = ex.stateTrusted;
     signals[ex.domainKey] = dto;
   }
 
