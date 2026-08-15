@@ -341,14 +341,20 @@ esquema de alertas en BD depende de la misma decisión que D1: conviene resolver
       > **No hay autenticación delante de esa ruta**: ni `auth_request`, ni `auth_basic`, ni
       > restricción por IP. Ya era así antes — la app solo repartía el enlace, nunca lo protegía —
       > pero ahora que la función no existe es superficie de ataque sin ninguna contraparte, y con
-      > NAT 1:1 está publicada a Internet entero. Retirarlo necesita sudo:
+      > NAT 1:1 está publicada a Internet entero.
+      >
+      > **Reconfirmado el 2026-08-15 desde fuera de la red**, no desde la VM:
+      > `https://aquora.xpertic.co/hmi/` → **200**, mientras `/api/notifications` → 401. La app se
+      > protege sola; esa ruta no.
+      >
+      > Retirarlo necesita sudo, y ya está preparado en un solo comando:
       > ```bash
-      > sudo cp /etc/nginx/sites-available/ptap /etc/nginx/sites-available/ptap.bak-sin-hmi
-      > sudo sed -i '/ptap-hmi.conf/d' /etc/nginx/sites-available/ptap
-      > sudo nginx -t && sudo systemctl reload nginx
-      > sudo rm -f /etc/nginx/snippets/ptap-hmi.conf
+      > ssh -t ptap "sudo bash ~/deploy-scripts/hmi-retirar.sh"
       > ```
-      > Después `/hmi/` debe pasar a **404**.
+      > El script respalda la config, **comenta** el `include` (no lo borra: deja rastro de que fue
+      > deliberado y se revierte quitando la almohadilla), pasa `nginx -t`, recarga y verifica solo.
+      > Probado en seco sobre una copia: toca **una línea**, deja intactos los 3 bloques `server` y
+      > el `listen 443`. Después `/hmi/` debe pasar a **404**.
 - [ ] **El parseo de tramas del adaptador OPC UA real está casi sin cubrir.** `DataValue →
       RawBufferSample`, `channelDataType()`, `isGoodStatus()` y el camino de escritura por
       `IndexRange` en `opcua-connectivity.adapter.ts` solo se ejercitan de refilón; el resto de la
