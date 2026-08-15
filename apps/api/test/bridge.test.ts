@@ -129,6 +129,41 @@ test('simulador: start conecta y emite frames crudos de las plantas del mapping'
   assert.equal(sample.quality, 'Good');
 });
 
+/**
+ * EL test que faltaba, y el que habría evitado el incidente del 2026-08-13: tras un ciclo
+ * stop()+start() —que es EXACTAMENTE lo que hace la recuperación en cada reconexión— los datos
+ * deben volver a fluir.
+ *
+ * No bastaba con probar el FrameCoalescer aislado ni con probar que la recuperación llama a
+ * stop()+start(): ambas cosas pasaban en verde. El agujero estaba en el CABLEADO — el adaptador
+ * reutiliza el coalescer y su start() no lo revivía —, así que solo un test sobre el adaptador
+ * real, atravesando el ciclo completo, lo detecta.
+ */
+test('simulador: tras stop()+start() los frames VUELVEN a fluir (regresión de reconexión)', async () => {
+  const adapter = new SimulatorBridgeAdapter(fastConfig(), twoPlantMapping());
+  const frames: RawPlantFrame[] = [];
+  adapter.onFrame((f) => frames.push(f));
+
+  await adapter.start();
+  await delay(80);
+  await adapter.stop();
+  const antes = frames.length;
+  assert.ok(antes > 0, 'el primer arranque debe emitir');
+
+  // Segundo ciclo: es el camino de la reconexión real.
+  frames.length = 0;
+  await adapter.start();
+  await delay(80);
+  const despues = frames.length;
+  await adapter.stop();
+
+  assert.ok(
+    despues > 0,
+    `tras reconectar deben volver a llegar frames (llegaron ${despues}). Si es 0, el puente quedó ` +
+      'mudo reportándose Connected: el modo de fallo que congeló 41 h de datos en producción.',
+  );
+});
+
 test('simulador: coalescing — una planta con 7 buffers emite 1 frame con 7 buffers (A2)', async () => {
   const adapter = new SimulatorBridgeAdapter(fastConfig(), sevenBufferMapping());
   const frames: RawPlantFrame[] = [];

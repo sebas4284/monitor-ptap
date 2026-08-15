@@ -56,6 +56,13 @@ export interface AdapterDiagnostics {
   provider: 'simulator' | 'opcua';
   bridgeStatus: BridgeStatus;
   lastNotificationAt: string | null;
+  /**
+   * Último frame EMITIDO al dominio. Es el otro extremo de la tubería: `lastNotificationAt` dice
+   * que el PLC nos habla, esto dice que el dato llegó a valer para algo. Si el primero avanza y
+   * este no, hay un atasco entre medias — el fallo que congeló 41 h de datos el 2026-08-13 con
+   * todos los demás indicadores en verde.
+   */
+  lastFrameEmittedAt?: string | null;
   lastNotificationLatencyMs: number | null;
   subscriptionCount: number;
   monitoredItemCount: number;

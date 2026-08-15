@@ -109,6 +109,9 @@ export class OpcUaConnectivityAdapter implements ConnectivityAdapter {
   private lastNotificationAt: string | null = null;
   private lastNotificationLatencyMs: number | null = null;
   private readonly lastFrameByPlant = new Map<string, string>();
+  /** Último frame EMITIDO al dominio (ms). Con `connectedSinceMs`, detecta el atasco aguas abajo. */
+  private lastFrameEmittedAtMs: number | null = null;
+  private connectedSinceMs: number | null = null;
   private starting = false;
   private recycling = false; // guard: evita reciclajes concurrentes (watchdog vs heartbeat)
 
@@ -142,8 +145,17 @@ export class OpcUaConnectivityAdapter implements ConnectivityAdapter {
       this.logger.log('sesión abierta; resolviendo NodeIds');
       await this.resolveTargets();
       await this.setupSubscription();
+      // El coalescer se REUTILIZA entre ciclos y `stop()` lo deja mudo: reactivarlo aquí es lo
+      // único que hace que los datos vuelvan a fluir tras una reconexión (ver FrameCoalescer).
+      this.coalescer.start();
       this.heartbeat.start();
       this.watchdog.start();
+      // Un `start()` que no es el primero ES una reconexión: sin esto, `reconnectCount` solo
+      // contaba las que resuelve node-opcua por dentro y reportaba 0 tras recuperaciones reales
+      // que pasan por Faulted → cliente nuevo. Como señal de salud, mentía justo cuando importa.
+      if (this.connectedSinceMs !== null) this.reconnectCount++;
+      this.connectedSinceMs = Date.now();
+      this.lastFrameEmittedAtMs = null; // el reloj del atasco cuenta desde esta conexión
       this.bridge.transition('Connected', 'sesión + subscription listas');
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -271,6 +283,7 @@ export class OpcUaConnectivityAdapter implements ConnectivityAdapter {
     try {
       await this.resolveTargets();
       await this.setupSubscription();
+      this.coalescer.start(); // idempotente; defensa por si algún camino lo dejó parado
       this.watchdog.start();
       this.bridge.transition('Connected', 'reconectado; subscription re-creada');
     } catch (err) {
@@ -362,10 +375,40 @@ export class OpcUaConnectivityAdapter implements ConnectivityAdapter {
 
     // Coalescing por planta (A2): un RawPlantFrame por planta por ventana, no por buffer.
     this.coalescer.add(target.plantId, sample);
+
+    // El watchdog de arriba vigila que ENTREN notificaciones; esto vigila que SALGAN frames.
+    this.detectarAtascoAguasAbajo(now);
+  }
+
+  /**
+   * Notificaciones entrando pero ningún frame saliendo: el dato llega y se pierde entre medias.
+   *
+   * Es el modo de fallo que costó 41 h de datos congelados el 2026-08-13 sin que nada lo notara,
+   * porque TODOS los indicadores (contadores, `lastNotificationAt`, watchdog, buffers activos) se
+   * miden aguas ARRIBA del coalescer. Con el enlace sano y la suscripción entregando, nadie
+   * miraba el otro extremo de la tubería.
+   *
+   * Se evalúa en cada notificación en vez de con un temporizador propio: si no entra nada, ya se
+   * ocupa el watchdog; este caso SOLO existe cuando sí entra.
+   */
+  private detectarAtascoAguasAbajo(now: number): void {
+    if (!this.bridge.is('Connected')) return;
+    const desde = this.lastFrameEmittedAtMs ?? this.connectedSinceMs;
+    if (desde === null || now - desde <= this.config.watchdogTimeoutMs) return;
+
+    const seg = Math.round((now - desde) / 1000);
+    this.logger.error(
+      `atasco aguas abajo: llegan notificaciones pero no sale ningún frame desde hace ${seg}s ` +
+        '(coalescer o listeners). Reciclando la sesión.',
+    );
+    this.lastFrameEmittedAtMs = now; // evita reciclar en bucle mientras se recupera
+    this.bridge.transition('Recovering', `sin frames emitidos en ${seg}s pese a recibir datos`);
+    void this.recycleSession('atasco aguas abajo');
   }
 
   /** Callback del coalescer: un frame por planta con todos los buffers de la ventana. */
   private emitFrame(frame: RawPlantFrame): void {
+    this.lastFrameEmittedAtMs = Date.now();
     this.lastFrameByPlant.set(frame.plantId, frame.receivedAt);
     for (const l of this.frameListeners) {
       try {
@@ -518,6 +561,9 @@ export class OpcUaConnectivityAdapter implements ConnectivityAdapter {
       provider: this.provider,
       bridgeStatus: this.bridge.get(),
       lastNotificationAt: this.lastNotificationAt,
+      // El OTRO extremo de la tubería. Comparado con lastNotificationAt delata el atasco aguas
+      // abajo de un vistazo: entran datos, no salen frames.
+      lastFrameEmittedAt: this.lastFrameEmittedAtMs ? new Date(this.lastFrameEmittedAtMs).toISOString() : null,
       lastNotificationLatencyMs: this.lastNotificationLatencyMs,
       subscriptionCount: this.subscription ? 1 : 0,
       monitoredItemCount: this.monitoredItems.length,

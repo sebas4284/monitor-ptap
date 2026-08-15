@@ -78,6 +78,8 @@ export class SimulatorBridgeAdapter implements ConnectivityAdapter {
     this.started = true;
     this.bridge.transition('Connecting', 'inicio del simulador');
     this.bridge.transition('Connected', 'simulador listo');
+    // El coalescer se REUTILIZA entre ciclos y `stop()` lo deja mudo (ver FrameCoalescer).
+    this.coalescer.start();
     this.watchdog.start();
     this.heartbeat.start();
     this.startEmitTimer();

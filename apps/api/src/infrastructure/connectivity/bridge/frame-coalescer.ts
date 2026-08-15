@@ -15,6 +15,12 @@ interface PendingPlant {
  * - `receivedAt` es el instante del flush (metadato de transporte); la verdad de
  *   proceso sigue siendo el sourceTimestamp de cada sample (regla 7).
  * - `stop()` flushea lo pendiente antes de morir (regla 12: nada se pierde).
+ * - **`start()` es OBLIGATORIO tras un `stop()`.** El ciclo apagar/encender es parte del contrato,
+ *   no solo un apagado final: los adaptadores hacen `stop()`+`start()` en cada reconexión y
+ *   REUTILIZAN esta instancia. Sin volver a llamar a `start()`, `add()` queda como no-op para
+ *   siempre y el puente sigue "Connected" tirando en silencio todo lo que llega — el fallo de
+ *   producción del 2026-08-13, que dejó 41 h de datos congelados con todos los indicadores en
+ *   verde (se miden AGUAS ARRIBA de aquí).
  * - Con windowMs=0 el flush corre en el siguiente macrotask, así que un batch
  *   síncrono (un publish response, un tick del simulador) igual coalesce en un frame.
  *
@@ -59,6 +65,17 @@ export class FrameCoalescer {
   stop(): void {
     this.flushAll();
     this.stopped = true;
+  }
+
+  /**
+   * Vuelve a aceptar samples tras un `stop()`. Idempotente.
+   *
+   * Lo llama el `start()` de cada adaptador, junto al del watchdog y el heartbeat: sin esto, la
+   * PRIMERA reconexión deja el coalescer muerto y el puente entrega cero frames al dominio para
+   * siempre, mientras se reporta sano.
+   */
+  start(): void {
+    this.stopped = false;
   }
 
   private flushPlant(plantId: string): void {
