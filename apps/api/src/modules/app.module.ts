@@ -8,6 +8,7 @@ import { OpcObservabilityModule } from '../infrastructure/connectivity/opc-obser
 import { AuthModule } from './auth/auth.module';
 import { CommandsModule } from './commands/commands.module';
 import { HealthModule } from './health/health.module';
+import { AppReleaseModule } from './app-release/app-release.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { PlantsModule } from './plants/plants.module';
 import { ReportsModule } from './reports/reports.module';
@@ -27,6 +28,7 @@ import { UsersModule } from './users/users.module';
     CommandsModule,
     ReportsModule,
     NotificationsModule,
+    AppReleaseModule,
   ],
 })
 export class AppModule implements NestModule {

@@ -13,6 +13,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import { AppUpdateBanner } from '../../components/AppUpdateBanner';
 import { useAuth } from '../../context/AuthContext';
 import { apiLogin } from '../../services/auth';
 import { toast } from '../../services/toast-store';
@@ -135,6 +136,12 @@ export default function LoginScreen() {
             <Text style={styles.btnOutlineText}>Crear cuenta nueva</Text>
           </TouchableOpacity>
           <Text style={styles.hint}>Las cuentas nuevas se crean como Civil (solo consulta).</Text>
+
+          {/* En WEB ofrece descargar la app (mismo gesto que "crear cuenta nueva"); en la APK avisa
+              si la instalada se quedó atrás. El propio componente decide cuál aplica y si mostrarse
+              — aquí no hace falta ramificar por plataforma. */}
+          <AppUpdateBanner modo="descarga" />
+          <AppUpdateBanner modo="actualizacion" />
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>

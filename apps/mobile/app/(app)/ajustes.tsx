@@ -14,6 +14,8 @@ import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../services/api';
 import { ConnectionDiagnostics } from '../../components/ConnectionDiagnostics';
 import { NotificationPermissionCard } from '../../components/NotificationPermissionCard';
+import { AppUpdateBanner } from '../../components/AppUpdateBanner';
+import { runningVersion } from '../../services/app-release';
 import Colors from '../../constants/colors';
 
 /**
@@ -75,6 +77,18 @@ export default function AjustesScreen() {
         <Text style={styles.hint}>
           Tu rol lo asigna un administrador; no se puede cambiar desde aquí.
         </Text>
+
+        {/* ── Versión de la app ──────────────────────────────────── */}
+        <Text style={styles.sectionTitle}>Aplicación</Text>
+        <View style={styles.card}>
+          <View style={styles.row}>
+            <Text style={styles.rowLabel}>Versión instalada</Text>
+            <Text style={styles.rowValue}>{runningVersion() ?? '—'}</Text>
+          </View>
+          {/* Solo aparece si de verdad hay una más nueva: una franja permanente de "actualizar"
+              se vuelve parte del decorado y deja de leerse. */}
+          <AppUpdateBanner modo="actualizacion" />
+        </View>
 
         {/* ── Avisos en el dispositivo ───────────────────────────── */}
         <Text style={styles.sectionTitle}>Notificaciones</Text>
