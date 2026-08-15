@@ -238,6 +238,25 @@ Pendiente:
 
 ## 2b. 🔴 Sensores congelados — ESCALAR AL INTEGRADOR
 
+> ⚠️ **CIFRAS RE-MEDIDAS el 2026-08-15.** Las de la tabla de abajo (2026-08-06) mezclaban DOS
+> causas y exageraban el problema de campo. Encima de las plantas realmente muertas había un fallo
+> NUESTRO —el puente dejó de entregar frames durante 41 h, ver `CATALOGO_ERRORES.md` **SRV-09**—
+> que congelaba también a las plantas sanas. Con el puente ya arreglado, la medición limpia es:
+>
+> | Planta | Antigüedad real (2026-08-15) |
+> |---|---|
+> | **KM18** | **25,0 días** — planta entera |
+> | **Pichindé** | **25,0 días** — planta entera |
+> | **Cascajal** | **22,6 días** — planta entera (`REAL_IN` **y** `INT_IN`) |
+>
+> **VIVAS y refrescando**: La Vorágine, Soledad, Montebello, Carbonero, Alto de los Mangos,
+> La Sirena y Campoalegre. El `INT_IN` de Sirena (estado de válvula), que el 14-ago marcaba
+> 9,8 días, **se recuperó solo**.
+>
+> Se mide en 30 s con `npx tsx scripts/diagnose-freshness.ts`, que lee el `SourceTimestamp` con
+> `session.read` DIRECTO —sin pasar por nuestra Subscription— y por eso separa "el servidor
+> entrega viejo" de "nosotros no lo leemos".
+
 Detectado el 2026-08-06 y confirmado leyendo el `SourceTimestamp` directamente del servidor OPC UA.
 **No es un fallo de la plataforma:** el servidor entrega esos valores sin refrescarlos.
 

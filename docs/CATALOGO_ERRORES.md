@@ -195,6 +195,57 @@ nada que mirar en los logs. Se ha producido por dos causas sin relación entre s
 > hace. Diagnóstico rápido para distinguirlas: `ls apps/api/dist/modules/` — si aparece un módulo
 > que ya no existe en `src/`, es la segunda.
 
+### SRV-09 — el puente entrega CERO datos y se reporta sano (2026-08-13, 41 h)
+
+Peor que SRV-08: allí al menos todo devolvía `000`. Aquí **todo respondía 200** y la aplicación
+mostraba números plausibles… de hacía dos días.
+
+**Qué pasó.** El PLC maestro se cayó, volvió, y el puente reconectó correctamente (`stop()` →
+backoff → `Connected`, 41/41 MonitoredItems). Pero `FrameCoalescer.stop()` marca `stopped = true` y
+**no existía `start()`**: los adaptadores reutilizan la instancia, así que desde esa primera
+reconexión `add()` fue un no-op permanente. El PLC hablaba, nosotros contábamos sus notificaciones,
+y tirábamos todos los frames a la basura.
+
+**Por qué nadie lo vio.** TODOS los indicadores se miden **aguas arriba** del coalescer:
+
+| Indicador | Decía | Realidad |
+|---|---|---|
+| `notificationsTotal` | 679.620 → 679.708 en 20 s | cierto, pero no llegaban al dominio |
+| `lastNotificationAt` | de hace segundos | cierto |
+| `bridgeStatus` / `buffersActive` | `Connected` / 41-0 | cierto |
+| `reconnectCount` | **0** | había reconectado dos veces |
+| snapshot de las 12 plantas | — | **41 h sin cambiar** |
+
+**Cómo se diagnostica en 30 s.** `curl /api/health/opc` y comparar los DOS extremos: si
+`lastNotificationAt` avanza y `lastFrameEmittedAt` se queda atrás, es esto. Se añadió esa métrica
+justo por este incidente.
+
+**Cura inmediata:** `pm2 restart ptap-api` (instancias nuevas). **Arreglo:** `FrameCoalescer.start()`
+llamado desde el `start()` de ambos adaptadores, + detección activa que recicla la sesión si entran
+notificaciones y no sale ningún frame, + `reconnectCount` contando también las recuperaciones que
+pasan por `Faulted`.
+
+> **La lección que vale más que el bug:** vigilar solo la ENTRADA de una tubería no dice nada sobre
+> si algo sale por el otro lado. Todo indicador de salud debe medirse lo más cerca posible del
+> resultado que le importa al usuario, no de la primera etapa.
+
+### DAT-09 — `stable` sin cota superior ocultaba plantas muertas (2026-08-15)
+
+`LivenessTracker` tenía tres estados y una omisión: `windowSec` se configuraba, se exponía en el
+DTO y **no se consultaba en ninguna parte**. Con el puente `Connected`, el veredicto era
+`ageSec <= liveSec ? 'live' : 'stable'` — sin límite por arriba. Una planta con datos de **25 días**
+devolvía `stable` y `usable: true`, indistinguible de un tanque quieto 30 segundos.
+
+Nació de una corrección legítima (antes marcaba `stale` a plantas en régimen estable, que es un
+falso positivo) que se pasó de largo: quitó el criterio de reloj **entero** en vez de alargarlo.
+
+Ahora: dentro de `windowSec` es `stable` (operación normal); pasada la ventana es `frozen`, y la
+señal pasa a `usable: false` con motivo `BRIDGE_STALE`. Verificado en KM18: antes `stable` con
+25 días y dato usable; ahora `FROZEN` e inutilizable.
+
+> **Regla:** un estado que significa "todo bien" no puede ser también el destino de todo lo que no
+> encaja en los demás. Si `stable` es el `else`, tarde o temprano esconde una avería.
+
 ---
 
 ## FRT — Seguridad del cliente (app móvil/web)
