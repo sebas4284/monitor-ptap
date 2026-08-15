@@ -59,7 +59,7 @@ export class TankOverflowDetector implements OnModuleInit, OnModuleDestroy {
 
         const hist = this.ensure(this.historial, plant.plantId);
         const maxObs = this.ensure(this.maxObservado, plant.plantId);
-        const findings = analyzeTanks(snapshot, plant.displayName, hist, maxObs);
+        const findings = analyzeTanks(snapshot, plant.displayName, hist, maxObs, now);
 
         for (const f of findings) {
           const n: NewNotification = {

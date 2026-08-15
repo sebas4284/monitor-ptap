@@ -33,6 +33,22 @@ const TOLERANCIA_REBOSE_PCT = 3;
 const CAMBIO_SIGNIFICATIVO_M = 0.01;
 /** Caudal por debajo del cual no se puede afirmar que "está entrando agua" (l/s). */
 const CAUDAL_MINIMO_LPS = 0.1;
+/**
+ * Antigüedad a partir de la cual NO se juzga el nivel. Mismo umbral y mismo motivo que el detector
+ * de frescura: alarmar por un valor que ya sabemos viejo es ruido, y además apunta a la causa
+ * equivocada — el problema es el sensor, no el tanque.
+ *
+ * Lo destapó el primer despliegue (2026-08-15): KM18 lleva 25 días congelada con el nivel clavado
+ * en 0.00 m y salió un aviso crítico de "el tanque bajó del mínimo de servicio". Ese tanque no ha
+ * bajado de nada; lo que pasa es que nadie sabe cómo está.
+ */
+const ANTIGUEDAD_MAXIMA_H = Number(process.env.NOTIFY_STALE_HOURS ?? 1);
+
+function edadHoras(ts: string | null | undefined, now: Date): number | null {
+  if (!ts) return null;
+  const t = Date.parse(ts);
+  return Number.isFinite(t) ? (now.getTime() - t) / 3_600_000 : null;
+}
 
 export type TankVerdict =
   | 'rebosando'
@@ -126,6 +142,7 @@ export function analyzeTanks(
   displayName: string,
   historial: Map<string, TankSample>,
   maxObservado: Map<string, number>,
+  now: Date = new Date(),
 ): TankFinding[] {
   const out: TankFinding[] = [];
   const caudal = inletFlow(snapshot.signals);
@@ -138,6 +155,10 @@ export function analyzeTanks(
     const maxM = signal.opMax ?? null;
     const minM = signal.opMin ?? null;
     if (levelM === null) continue;
+
+    // Un nivel viejo no se juzga: el aviso correcto lo da el detector de frescura.
+    const edad = edadHoras(signal.ts, now);
+    if (edad !== null && edad >= ANTIGUEDAD_MAXIMA_H) continue;
 
     const previo = historial.get(`tank${tankN}`);
     const trend = previo ? levelM - previo.levelM : null;

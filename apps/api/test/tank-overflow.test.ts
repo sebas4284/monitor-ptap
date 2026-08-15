@@ -22,7 +22,9 @@ function sig(value: number | null, over: Partial<SignalDto> = {}): SignalDto {
     mappingStatus: 'mapped',
     confidence: 'confirmed',
     label: null,
-    ts: '2026-08-15T12:00:00.000Z',
+    // FRESCO por defecto: el analizador no juzga niveles viejos (eso lo cubre el detector de
+    // frescura), así que una marca de tiempo fija haría que todos estos casos se saltaran.
+    ts: new Date().toISOString(),
     ...over,
   } as SignalDto;
 }
@@ -203,4 +205,26 @@ test('tanque: un rebose real es crítico y un máximo mal medido no (severidad p
   // El detector traduce verdict → severity; aquí se fija el criterio que usa.
   assert.equal(rebose.verdict, 'rebosando', 'pierde agua tratada AHORA → critical');
   assert.equal(maxMal.verdict, 'maximo_mal', 'es un dato nuestro que corregir → warning');
+});
+
+// KM18 lleva 25 dias congelada con el nivel clavado en 0.00 m. En el primer despliegue salio un
+// aviso critico de "el tanque bajo del minimo de servicio": ese tanque no ha bajado de nada, lo
+// que pasa es que nadie sabe como esta. El aviso correcto lo da el detector de frescura.
+test('tanque: un nivel VIEJO no se juzga (lo cubre el aviso de sensor sin refrescar)', () => {
+  const viejo = new Date(Date.now() - 25 * 24 * 3_600_000).toISOString();
+  const s = snap({
+    tank1Level: sig(0, { opMin: 1, opMax: 2, label: 'Nivel tanque 1', ts: viejo }),
+    inletFlow1: sig(0, { unit: 'l/s', ts: viejo }),
+  });
+  assert.equal(analyzeTanks(s, 'Km 18', sinHistoria(), new Map()).length, 0);
+});
+
+test('tanque: el mismo nivel pero FRESCO sí se juzga', () => {
+  const s = snap({
+    tank1Level: sig(0, { opMin: 1, opMax: 2, label: 'Nivel tanque 1', ts: new Date().toISOString() }),
+    inletFlow1: sig(0, { unit: 'l/s' }),
+  });
+  const r = analyzeTanks(s, 'Km 18', sinHistoria(), new Map());
+  assert.equal(r.length, 1);
+  assert.equal(r[0].verdict, 'bajo_minimo_cayendo');
 });
