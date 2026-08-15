@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { Pool, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { MYSQL_POOL } from '../../infrastructure/database/database.tokens';
 
-export type NotificationKind = 'sensor_stale' | 'signal_out_of_range';
+export type NotificationKind = 'sensor_stale' | 'signal_out_of_range' | 'tank_over_max';
 export type NotificationSeverity = 'critical' | 'warning' | 'info';
 
 export interface NewNotification {

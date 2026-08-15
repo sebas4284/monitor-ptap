@@ -32,7 +32,14 @@ function statusLabel(pct: number): string {
 function TankGaugeCardBase({ tank, frozen = false }: Props) {
   // percentage llega null hasta que la planta confirme la capacidad real del tanque;
   // en ese caso NO se dibuja % de llenado (sería inventado), solo nivel y volumen reales.
-  const pct = tank.percentage !== null ? Math.min(100, Math.max(0, tank.percentage)) : null;
+  //
+  // Se separan dos cosas que antes eran una sola y por eso ocultaban un fallo:
+  //  - `pctReal`  es lo que se ESCRIBE. Puede pasar de 100 (Carbonero midió 2.96 m contra un
+  //     máximo configurado de 2.80 → 106 %). Recortarlo hacía que el tanque dijera "lleno"
+  //     mientras seguía subiendo sin derramar, que es exactamente el defecto reportado.
+  //  - `pctBarra` es lo que se DIBUJA, acotado a [0,100] porque la barra no tiene dónde crecer.
+  const pctReal = tank.percentage;
+  const pct = pctReal !== null ? Math.min(100, Math.max(0, pctReal)) : null;
   const hasLevel = tank.levelM !== null;
   // Fuera de rango: aviso del backend, o una lectura físicamente imposible (nivel negativo o
   // por encima del 100 % del tanque). Se muestra el valor crudo + etiqueta roja (política acordada).
@@ -102,10 +109,17 @@ function TankGaugeCardBase({ tank, frozen = false }: Props) {
 
       {pct !== null ? (
         <>
-          <Text style={styles.pctText}>{Math.round(pct)}%</Text>
+          {/* El número es el REAL, sin recortar: si marca 106 % hay que verlo, no esconderlo. */}
+          <Text style={styles.pctText}>{Math.round(pctReal as number)}%</Text>
           <View style={[styles.statusBadge, { backgroundColor: waterColor(pct) + '30', borderColor: waterColor(pct) }]}>
             <Text style={[styles.statusText, { color: waterColor(pct) }]}>{statusLabel(pct)}</Text>
           </View>
+          {(pctReal as number) > 100 && (
+            <Text style={styles.excedido}>
+              Por encima del máximo configurado ({tank.levelOpMax?.toFixed(2) ?? '—'} m). O el tanque
+              está rebosando, o ese máximo está mal.
+            </Text>
+          )}
         </>
       ) : (
         <Text style={styles.pctTextUnknown}>{hasLevel ? `${tank.levelM!.toFixed(2)} m` : '—'}</Text>
@@ -179,6 +193,13 @@ const styles = StyleSheet.create({
   chipLabel: { fontSize: 11, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.5 },
   chipValue: { fontSize: 12, fontWeight: '700', color: Colors.textPrimary },
   pctText: { fontSize: 34, fontWeight: '800', color: Colors.textPrimary, textAlign: 'center' },
+  excedido: {
+    fontSize: 12,
+    color: Colors.danger,
+    textAlign: 'center',
+    marginTop: 6,
+    paddingHorizontal: 8,
+  },
   pctTextUnknown: {
     fontSize: 20,
     fontWeight: '700',

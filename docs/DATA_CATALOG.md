@@ -107,7 +107,7 @@ Fuente: `REAL_IN_SOLEDAD` (Float[50], nsUri `AQUATECH`, `g=19181A21-F548-3D76-D6
 | 4 | `conductivity` | Conductividad de entrada | µS/cm | 0 a 10000 | 0.1 a 1000 | confirmed |
 | 5 | `inletPh` | pH de entrada | pH | 0 a 14 | 5.5 a 9 | confirmed |
 | 6 | `inletTemperature` | Temperatura de entrada | °C | 0 a 50 | 10 a 30 | confirmed |
-| 7 | `tank1Level` | Nivel tanque 1 | m | 0 a 5 | 0.75 a 2.8 | confirmed |
+| 7 | `tank1Level` | Nivel tanque 1 | m | 0 a 5 | 1 a 2.8 | confirmed |
 | 8 | `tank1Volume` | Volumen tanque 1 | m³ | 0 a 10000 | — | confirmed |
 | 9 | `outletFlow1` | Caudal de salida | l/s | 0 a 1000 | — | confirmed |
 | 11 | `outletTurbidity` | Turbiedad de salida | NTU | 0 a 1000 | 0.1 a 1 | confirmed |
@@ -180,7 +180,7 @@ Fuente: `DATOS_REAL_IN_MANGOS` (Float[50], nsUri `AQUATECH`, `g=ECA4ABBE-2E70-B8
 |---|---|---|---|---|---|---|
 | 0 | `valve1` | Válvula 1 | — | — | — | confirmed |
 | 0 | `inletFlow1` | Caudal de entrada | l/s | 0 a 1000 | — | confirmed |
-| 5 | `tank1Level` | Nivel tanque 1 | m | 0 a 5 | ≤ 2.5 | confirmed |
+| 5 | `tank1Level` | Nivel tanque 1 | m | 0 a 5 | 1 a 2.5 | confirmed |
 | 6 | `tank1Volume` | Volumen tanque 1 | m³ | 0 a 10000 | — | confirmed |
 | 7 | `outletFlow1` | Caudal de salida | l/s | 0 a 1000 | — | confirmed |
 | 12 | `inletPressure1` | Presión de entrada | psi | -15 a 232 | 1 a 3 | confirmed |
@@ -195,14 +195,14 @@ Fuente: `REAL_IN_CAMPOALEGRE` (Float[50], nsUri `AQUATECH`, `g=E1680D60-7BCD-C89
 |---|---|---|---|---|---|---|
 | 0 | `valve1` | Válvula 1 | — | — | — | confirmed |
 | 0 | `outletFlow1` | Caudal de salida 1 | l/s | 0 a 1000 | — | confirmed |
-| 5 | `tank1Level` | Nivel tanque 1 | m | 0 a 20 | — | confirmed |
+| 5 | `tank1Level` | Nivel tanque 1 | m | 0 a 20 | ≥ 1 | confirmed |
 | 6 | `tank1Volume` | Volumen tanque 1 | m³ | 0 a 10000 | — | confirmed |
 | 7 | `outletFlow2` | Caudal de salida 2 | l/s | 0 a 1000 | — | confirmed |
 | 12 | `outletPressure1` | Presión de salida 1 | psi | -15 a 232 | — | confirmed |
 | 13 | `outletPressure2` | Presión de salida 2 | psi | -15 a 232 | — | confirmed |
-| 14 | `tank2Level` | Nivel tanque 2 | m | 0 a 20 | — | confirmed |
+| 14 | `tank2Level` | Nivel tanque 2 | m | 0 a 20 | ≥ 1 | confirmed |
 | 15 | `tank2Volume` | Volumen tanque 2 | m³ | 0 a 10000 | — | confirmed |
-| 16 | `tank3Level` | Nivel tanque 3 | m | 0 a 20 | — | confirmed |
+| 16 | `tank3Level` | Nivel tanque 3 | m | 0 a 20 | ≥ 1 | confirmed |
 | 17 | `tank3Volume` | Volumen tanque 3 | m³ | 0 a 10000 | — | confirmed |
 
 ### Pichindé (`pichinde`) — 3 señales

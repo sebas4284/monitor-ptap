@@ -481,7 +481,7 @@
           "unit": "m",
           "min": 0,
           "max": 5,
-          "opMin": 0.75,
+          "opMin": 1,
           "opMax": 2.8,
           "mappingStatus": "mapped",
           "confidence": "confirmed",
@@ -1493,6 +1493,7 @@
           "unit": "m",
           "min": 0,
           "max": 5,
+          "opMin": 1,
           "opMax": 2.5,
           "mappingStatus": "mapped",
           "confidence": "confirmed",
@@ -1687,6 +1688,7 @@
           "unit": "m",
           "min": 0,
           "max": 20,
+          "opMin": 1,
           "mappingStatus": "mapped",
           "confidence": "confirmed",
           "writable": false
@@ -1747,6 +1749,7 @@
           "unit": "m",
           "min": 0,
           "max": 20,
+          "opMin": 1,
           "mappingStatus": "mapped",
           "confidence": "confirmed",
           "writable": false
@@ -1771,6 +1774,7 @@
           "unit": "m",
           "min": 0,
           "max": 20,
+          "opMin": 1,
           "mappingStatus": "mapped",
           "confidence": "confirmed",
           "writable": false

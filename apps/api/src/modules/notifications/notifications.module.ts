@@ -5,6 +5,7 @@ import { AuthModule } from '../auth/auth.module';
 import { NotificationRepository } from './notification.repository';
 import { NotificationsController } from './notifications.controller';
 import { StaleDataDetector } from './stale-data.detector';
+import { TankOverflowDetector } from './tank-overflow.detector';
 
 /**
  * Bandeja de notificaciones persistente + el detector que la alimenta.
@@ -16,7 +17,7 @@ import { StaleDataDetector } from './stale-data.detector';
 @Module({
   imports: [ConnectivityModule, DatabaseModule, AuthModule],
   controllers: [NotificationsController],
-  providers: [NotificationRepository, StaleDataDetector],
+  providers: [NotificationRepository, StaleDataDetector, TankOverflowDetector],
   exports: [NotificationRepository],
 })
 export class NotificationsModule {}

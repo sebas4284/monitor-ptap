@@ -61,27 +61,41 @@ export function isTankSignal(domainKey: string): boolean {
 }
 
 /**
- * Nivel de tanque LLENO (m), confirmado por el operador, por planta y número de tanque.
- * Solo con este dato se calcula % de llenado; sin entrada aquí, percentage queda null.
- * Confirmaciones del operador (2026-07-14/15): carbonero tanque 1 = 2.8 m;
- * alto-los-mangos tanque 1 = 2.5 m; soledad tanque 1 = 2.8 m; cascajal tanque 1 = 3 m;
- * sirena tanque 1 = 2.8 m y tanques 2/3/4 = 2.5 m; km18 tanques 1 y 2 = 2 m;
- * voragine tanque 1 = 1.97 m.
+ * El nivel de tanque LLENO ya NO vive aquí: viene del mapping en `opMax` de la señal de nivel.
+ *
+ * Había una tabla `FULL_LEVEL_M` escrita a mano en este archivo mientras la tarjeta mostraba el
+ * `MAX` que llegaba del backend. **Dos fuentes de verdad para el mismo número**, y coincidían por
+ * casualidad: bastaba corregir el máximo de una planta en el mapping para que el porcentaje
+ * siguiera calculándose contra el valor viejo horneado en la app, sin ningún síntoma.
+ *
+ * Ahora hay una sola: el mapping. Si una planta no declara `opMax`, no hay porcentaje (null) —
+ * inventarlo contra la cota de plausibilidad (20 m) engañaría al operador.
  */
-const FULL_LEVEL_M: Record<string, Record<number, number>> = {
-  carbonero: { 1: 2.8 },
-  'alto-los-mangos': { 1: 2.5 },
-  soledad: { 1: 2.8 },
-  cascajal: { 1: 3 },
-  sirena: { 1: 2.8, 2: 2.5, 3: 2.5, 4: 2.5 },
-  km18: { 1: 2, 2: 2 },
-  voragine: { 1: 1.97 },
-};
 
 // Política de datos (usuario, 2026-07-15): si hay valor numérico se muestra tal cual,
 // sin filtrar por usable/reason. La interpretación es del frontend con el cliente.
 function numericValue(signal: SignalDto | undefined): number | null {
   return signal && typeof signal.value === 'number' ? signal.value : null;
+}
+
+/**
+ * Porcentaje de llenado = nivel / máximo del tanque.
+ *
+ * **NO se descuenta el mínimo operativo** (regla del cliente, 2026-08-15). El `MIN` de 1 m que se
+ * muestra en la tarjeta es el umbral por debajo del cual la planta no consigue llevar agua a las
+ * casas — es un límite de SERVICIO, no el fondo del tanque, y el nivel puede bajar de ahí. La
+ * fórmula anterior de la app vieja, `(nivel−min)/(max−min)`, daba 0 % con el tanque a 1 m
+ * teniendo agua: para el mismo tanque a 1.52 m mostraba 29 % donde el llenado real es 54 %.
+ *
+ * **Tampoco se recorta a 100 %.** Un valor por encima significa una de dos cosas, y ninguna se
+ * arregla escondiéndola: o el agua se está rebosando, o el máximo configurado está por debajo del
+ * real. Ambas necesitan que alguien las vea (lo detecta `TankOverflowDetector` en el backend).
+ * Recortar en silencio era justo lo que hacía que un tanque marcara "lleno" mientras seguía
+ * subiendo sin derramar — medido el 2026-08-15: Carbonero 2.96 m contra un máximo de 2.80.
+ */
+function percentageOf(levelM: number | null, fullLevelM: number | null): number | null {
+  if (levelM === null || fullLevelM === null || fullLevelM <= 0) return null;
+  return (levelM / fullLevelM) * 100;
 }
 
 export function tanksFromSnapshot(snapshot: PlantSnapshotDto | undefined): TankView[] {
@@ -99,7 +113,9 @@ export function tanksFromSnapshot(snapshot: PlantSnapshotDto | undefined): TankV
     const volume = snapshot.signals[`tank${n}Volume`];
     const meta = level ?? volume; // metadatos de aviso: preferir el de nivel, si no el de volumen
     const levelM = numericValue(level);
-    const fullLevelM = FULL_LEVEL_M[snapshot.plantId]?.[n] ?? null;
+    // El máximo del tanque sale del mapping (única fuente). Ojo: se toma de la señal de NIVEL,
+    // no de `meta` — el opMax del volumen sería m³ y calcularía un porcentaje disparatado.
+    const fullLevelM = level?.opMax ?? null;
     found.push({
       n,
       tank: {
@@ -107,7 +123,7 @@ export function tanksFromSnapshot(snapshot: PlantSnapshotDto | undefined): TankV
         name: `Tanque ${n}`,
         levelM,
         volumeM3: numericValue(volume),
-        percentage: levelM !== null && fullLevelM !== null ? (levelM / fullLevelM) * 100 : null,
+        percentage: percentageOf(levelM, fullLevelM),
         levelOpMin: meta?.opMin ?? null,
         levelOpMax: meta?.opMax ?? null,
         ts: meta?.ts ?? null,
@@ -127,7 +143,7 @@ export function tanksFromSnapshot(snapshot: PlantSnapshotDto | undefined): TankV
       name: ext.name,
       levelM,
       volumeM3: numericValue(snapshot.signals[ext.volumeKey]),
-      percentage: levelM !== null ? (levelM / ext.fullLevelM) * 100 : null,
+      percentage: percentageOf(levelM, ext.fullLevelM),
       levelOpMin: level.opMin ?? null,
       levelOpMax: level.opMax ?? null,
       ts: level.ts,
