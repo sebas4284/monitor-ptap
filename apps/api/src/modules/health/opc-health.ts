@@ -5,6 +5,13 @@ export interface OpcHealthReport {
   bridgeStatus: AdapterDiagnostics['bridgeStatus'];
   subscriptionAlive: boolean;
   lastNotificationAt: string | null;
+  /**
+   * El OTRO extremo de la tubería. `lastNotificationAt` dice que el PLC nos habla;
+   * este dice que el dato llegó al dominio. Si el primero avanza y este se queda atrás, hay un
+   * atasco entre medias — el modo de fallo que congeló 41 h de datos el 2026-08-13 con TODO lo
+   * demás en verde. Van juntos aquí para que la comparación sea de un vistazo.
+   */
+  lastFrameEmittedAt: string | null;
   reconnectCount: number;
   notificationsTotal: number;
   droppedNotifications: number;
@@ -39,6 +46,7 @@ export function computeOpcHealth(diagnostics: AdapterDiagnostics, deadLetterTota
     bridgeStatus: diagnostics.bridgeStatus,
     subscriptionAlive: diagnostics.subscriptionCount > 0,
     lastNotificationAt: diagnostics.lastNotificationAt,
+    lastFrameEmittedAt: diagnostics.lastFrameEmittedAt ?? null,
     reconnectCount: diagnostics.reconnectCount,
     notificationsTotal: diagnostics.notificationsTotal,
     droppedNotifications: diagnostics.droppedNotificationsTotal,
