@@ -34,7 +34,15 @@ const CAMBIO_SIGNIFICATIVO_M = 0.01;
 /** Caudal por debajo del cual no se puede afirmar que "está entrando agua" (l/s). */
 const CAUDAL_MINIMO_LPS = 0.1;
 
-export type TankVerdict = 'rebosando' | 'maximo_mal' | 'indeterminado';
+export type TankVerdict =
+  | 'rebosando'
+  | 'maximo_mal'
+  | 'indeterminado'
+  // Extremo BAJO. El mínimo de 1 m no es el fondo del tanque: es el nivel por debajo del cual la
+  // planta **no consigue llevar agua a las casas** (regla del cliente, 2026-08-15). Que el tanque
+  // pueda bajar más no lo hace inofensivo — lo hace el aviso más accionable de la bandeja.
+  | 'bajo_minimo_cayendo'
+  | 'bajo_minimo_recuperando';
 
 export interface TankSample {
   levelM: number;
@@ -72,12 +80,44 @@ function inletFlow(signals: Record<string, SignalDto>): number | null {
   return null;
 }
 
+/**
+ * Distancia en cm, sin redondear a cero.
+ *
+ * `Math.round(0.007 * 100)` da 0, y en producción salió el aviso "El nivel está 0 cm por encima del
+ * máximo" (Vorágine, 2026-08-15: eran 7 mm). Un aviso que se contradice a sí mismo hace dudar de
+ * todos los demás.
+ */
 function cm(m: number): string {
-  return `${Math.round(m * 100)} cm`;
+  const abs = Math.abs(m);
+  if (abs < 0.01) return 'menos de 1 cm';
+  return `${Math.round(abs * 100)} cm`;
 }
 
 /**
- * Analiza los tanques de un snapshot y devuelve solo los que pasan de su máximo.
+ * Los datos que el cliente pidió que acompañaran a TODO aviso de tanque: nivel, máximo, volumen y
+ * caudal de entrada. Sin ellos el operador no puede decidir si el aviso merece un viaje a planta.
+ */
+function contextoDe(
+  snapshot: PlantSnapshotDto,
+  tankN: number,
+  levelM: number,
+  maxM: number | null,
+  caudal: number | null,
+): string {
+  const volumen = numeric(snapshot.signals[`tank${tankN}Volume`]);
+  return [
+    `nivel ${levelM.toFixed(2)} m`,
+    maxM !== null && maxM > 0 ? `máximo configurado ${maxM.toFixed(2)} m` : 'sin máximo declarado',
+    volumen !== null ? `volumen ${volumen.toFixed(1)} m³` : null,
+    caudal !== null ? `caudal de entrada ${caudal.toFixed(1)} l/s` : 'sin caudal de entrada mapeado',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+/**
+ * Analiza los tanques de un snapshot y devuelve los que se salen de su franja de operación, por
+ * arriba (rebose o máximo mal medido) o por abajo (mínimo de servicio).
  *
  * @param historial nivel anterior por tanque (clave `tank<N>`), para saber si sigue subiendo.
  */
@@ -96,14 +136,56 @@ export function analyzeTanks(
     const tankN = Number(m[1]);
     const levelM = numeric(signal);
     const maxM = signal.opMax ?? null;
-    // Sin nivel o sin máximo declarado no hay nada que afirmar. Campoalegre está aquí: sus tres
-    // tanques no tienen máximo, así que ni siquiera se les calcula porcentaje.
-    if (levelM === null || maxM === null || maxM <= 0) continue;
+    const minM = signal.opMin ?? null;
+    if (levelM === null) continue;
+
+    const previo = historial.get(`tank${tankN}`);
+    const trend = previo ? levelM - previo.levelM : null;
+
+    // ── Extremo BAJO: por debajo del mínimo de servicio ────────────────────────────────────
+    // Va ANTES del máximo porque no depende de `opMax`: Campoalegre no tiene máximo declarado y
+    // aun así su tanque 3 bajó del metro (0.986 m, 2026-08-15). Sin esta rama nadie se enteraba.
+    if (minM !== null && levelM < minM) {
+      // Un nivel negativo no es "muy bajo", es un sensor que miente: lo trata el aviso de rango
+      // físico, no este. Soledad reporta -1.51 m con timestamp fresco (signo invertido en el PLC).
+      if (levelM < 0) continue;
+
+      const cayendo = trend === null || trend < -CAMBIO_SIGNIFICATIVO_M;
+      const sinEntrada = caudal === null || caudal <= CAUDAL_MINIMO_LPS;
+      const verdict: TankVerdict = cayendo || sinEntrada ? 'bajo_minimo_cayendo' : 'bajo_minimo_recuperando';
+
+      const situacion =
+        verdict === 'bajo_minimo_cayendo'
+          ? `Está ${cm(minM - levelM)} por debajo y ${sinEntrada ? 'NO está entrando agua' : 'sigue bajando'}.`
+          : `Está ${cm(minM - levelM)} por debajo, pero recuperándose (+${cm(trend as number)} desde la última revisión).`;
+
+      out.push({
+        tankN,
+        label: signal.label ?? `Tanque ${tankN}`,
+        levelM,
+        maxM: maxM ?? 0,
+        excessPct: 0,
+        verdict,
+        volumeM3: numeric(snapshot.signals[`tank${tankN}Volume`]),
+        inletFlowLps: caudal,
+        trendM: trend,
+        suggestedMaxM: Math.max(maxObservado.get(`tank${tankN}`) ?? 0, levelM),
+        title: `${displayName}: el tanque ${tankN} está por debajo del mínimo de servicio`,
+        message:
+          `El nivel (${levelM.toFixed(2)} m) bajó del mínimo de servicio (${minM.toFixed(2)} m). ` +
+          'Por debajo de ese nivel la planta no consigue llevar agua a las casas. ' +
+          `${situacion} Datos: ${contextoDe(snapshot, tankN, levelM, maxM, caudal)}.`,
+      });
+      continue;
+    }
+
+    // ── Extremo ALTO ───────────────────────────────────────────────────────────────────────
+    // Sin máximo declarado no hay nada que afirmar arriba (los tres de Campoalegre).
+    if (maxM === null || maxM <= 0) continue;
     if (levelM <= maxM) continue;
 
     const excessPct = (levelM / maxM) * 100 - 100;
-    const previo = historial.get(`tank${tankN}`);
-    const trendM = previo ? levelM - previo.levelM : null;
+    const trendM = trend;
     const suggestedMaxM = Math.max(maxObservado.get(`tank${tankN}`) ?? 0, levelM);
 
     let verdict: TankVerdict;
@@ -141,16 +223,7 @@ export function analyzeTanks(
     }
 
     const pctTxt = `${(100 + excessPct).toFixed(1)} %`;
-    const contexto = [
-      `nivel ${levelM.toFixed(2)} m`,
-      `máximo configurado ${maxM.toFixed(2)} m`,
-      snapshot.signals[`tank${tankN}Volume`] !== undefined && numeric(snapshot.signals[`tank${tankN}Volume`]) !== null
-        ? `volumen ${numeric(snapshot.signals[`tank${tankN}Volume`])!.toFixed(1)} m³`
-        : null,
-      caudal !== null ? `caudal de entrada ${caudal.toFixed(1)} l/s` : 'sin caudal de entrada mapeado',
-    ]
-      .filter(Boolean)
-      .join(' · ');
+    const contexto = contextoDe(snapshot, tankN, levelM, maxM, caudal);
 
     out.push({
       tankN,

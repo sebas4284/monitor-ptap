@@ -95,6 +95,12 @@ function numericValue(signal: SignalDto | undefined): number | null {
  */
 function percentageOf(levelM: number | null, fullLevelM: number | null): number | null {
   if (levelM === null || fullLevelM === null || fullLevelM <= 0) return null;
+  // Un nivel NEGATIVO no es un tanque muy vacío: es un sensor que miente. Soledad reporta
+  // -1.51 m con timestamp fresco (la sección volumen/nivel da 59,6 m², idéntica a la de Sirena,
+  // así que el volumen se deriva bien y lo que está invertido es el signo). Calcular "-54 % de
+  // llenado" convierte un dato roto en un número que parece medido. El nivel crudo SÍ se sigue
+  // mostrando con su aviso rojo — los límites alertan, no ocultan.
+  if (levelM < 0) return null;
   return (levelM / fullLevelM) * 100;
 }
 

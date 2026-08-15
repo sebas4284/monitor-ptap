@@ -82,6 +82,13 @@ test('tanques: por encima del máximo se devuelve el % REAL, sin recortar a 100'
   assert.equal(Math.round(t.percentage as number), 106);
 });
 
+// Soledad reporta -1.512 m con timestamp FRESCO: no está congelada, manda un valor imposible.
+test('tanques: un nivel NEGATIVO no produce un porcentaje negativo', () => {
+  const t = tanksFromSnapshot(snap('soledad', { tank1Level: sig(-1.512, { opMin: 1, opMax: 2.8 }) }))[0];
+  assert.equal(t.percentage, null, 'un llenado no puede ser negativo: era -54 %');
+  assert.equal(t.levelM, -1.512, 'el nivel crudo SÍ se sigue mostrando, con su aviso');
+});
+
 test('tanques: el % del volumen no contamina el del nivel', () => {
   // El opMax del volumen está en m³. Si se tomara de ahí, el porcentaje sería disparatado.
   const t = tanksFromSnapshot(

@@ -18,7 +18,7 @@ import { analyzeTanks, type TankSample } from './tank-overflow.analyzer';
  */
 @Injectable()
 export class TankOverflowDetector implements OnModuleInit, OnModuleDestroy {
-  private readonly logger = new Logger('TankOverflow');
+  private readonly logger = new Logger('TankLevel');
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly sweepMs = Number(process.env.NOTIFY_SWEEP_MS ?? 10 * 60_000);
 
@@ -63,10 +63,14 @@ export class TankOverflowDetector implements OnModuleInit, OnModuleDestroy {
 
         for (const f of findings) {
           const n: NewNotification = {
-            kind: 'tank_over_max',
-            // Un rebose real está pasando AHORA y se pierde agua tratada; un máximo mal medido es
-            // un dato nuestro que corregir, no una urgencia de planta.
-            severity: f.verdict === 'rebosando' ? 'critical' : 'warning',
+            kind: 'tank_level',
+            // Crítico solo lo que está pasando AHORA y perjudica al servicio:
+            //  - `rebosando`: se está perdiendo agua tratada por el rebosadero.
+            //  - `bajo_minimo_cayendo`: el nivel no alcanza para llevar agua a las casas y va a peor.
+            // Lo demás es un dato nuestro que corregir (`maximo_mal`) o una situación que ya se
+            // está recuperando sola: importa, pero no saca a nadie de la cama.
+            severity:
+              f.verdict === 'rebosando' || f.verdict === 'bajo_minimo_cayendo' ? 'critical' : 'warning',
             plantId: snapshot.plantId,
             subject: `tank${f.tankN}`,
             title: f.title,
@@ -80,7 +84,7 @@ export class TankOverflowDetector implements OnModuleInit, OnModuleDestroy {
         // "anterior" del próximo barrido, y el máximo observado sirve aunque nunca pase del tope.
         this.recordLevels(snapshot.signals, hist, maxObs, now.getTime());
       }
-      if (created > 0) this.logger.warn(`${created} aviso(s) de tanque por encima del máximo`);
+      if (created > 0) this.logger.warn(`${created} aviso(s) de nivel de tanque fuera de la franja de operación`);
     } catch (err) {
       // Un fallo aquí no puede tumbar el backend ni la telemetría.
       this.logger.error(`barrido de tanques fallido: ${err instanceof Error ? err.message : err}`);

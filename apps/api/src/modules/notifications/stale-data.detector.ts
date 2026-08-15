@@ -27,6 +27,9 @@ import { NotificationRepository, type NewNotification } from './notification.rep
  * Cadencia: se revisa cada `SWEEP_MS`, pero el repositorio deduplica por día, así que un problema
  * que persiste genera **un aviso cada 24 h** — ni uno por ciclo, ni solo uno y nunca más.
  */
+/** Los niveles de tanque tienen su propio detector, que los interpreta en vez de solo medirlos. */
+const ES_NIVEL_DE_TANQUE = /^tank\d+Level$/;
+
 @Injectable()
 export class StaleDataDetector implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger('StaleDataDetector');
@@ -135,6 +138,11 @@ export class StaleDataDetector implements OnModuleInit, OnModuleDestroy {
     // Solo se juzga el rango de lo que SÍ está fresco: alarmar por un valor que ya sabemos viejo
     // es ruido, y además apunta a la causa equivocada.
     for (const [domainKey, signal] of frescas) {
+      // Los NIVELES de tanque los cubre `TankLevelDetector`, que no se limita a decir "fuera de
+      // rango": distingue un rebose real de un máximo mal medido y explica que por debajo del
+      // mínimo no llega agua a las casas. Dejarlos aquí también generaba DOS avisos del mismo
+      // hecho — visto en producción el 2026-08-15 con Carbonero y Vorágine.
+      if (ES_NIVEL_DE_TANQUE.test(domainKey)) continue;
       if (!hasRangeAnomaly(signal)) continue;
       const label = signal.label ?? domainKey;
       const critical = Boolean(signal.outOfRange);

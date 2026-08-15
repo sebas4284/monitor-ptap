@@ -134,6 +134,69 @@ test('tanque: varios tanques se evalúan por separado', () => {
   assert.equal(r[0].tankN, 1);
 });
 
+// ── Extremo BAJO: el mínimo de SERVICIO ──────────────────────────────────────
+// Regla del cliente: por debajo de 1 m la planta no consigue llevar agua a las casas. El tanque
+// puede bajar de ahí (no es el fondo), pero es el aviso más accionable de la bandeja.
+// Caso vivo el 2026-08-15: Campoalegre tanque 3 a 0.986 m.
+
+test('tanque: por debajo del mínimo de servicio avisa DICIENDO lo que significa', () => {
+  const r = analyzeTanks(tanque(0.986, 5), 'Campoalegre', historiaCon(0.99), new Map());
+  assert.equal(r.length, 1);
+  assert.match(r[0].message, /no consigue llevar agua a las casas/);
+  assert.match(r[0].title, /por debajo del mínimo de servicio/);
+});
+
+test('tanque: bajo el mínimo y BAJANDO es lo grave', () => {
+  const r = analyzeTanks(tanque(0.9, 5), 'Campoalegre', historiaCon(0.95), new Map());
+  assert.equal(r[0].verdict, 'bajo_minimo_cayendo');
+  assert.match(r[0].message, /sigue bajando/);
+});
+
+test('tanque: bajo el mínimo y SIN agua entrando también es grave, aunque no baje', () => {
+  const r = analyzeTanks(tanque(0.9, 0), 'Campoalegre', historiaCon(0.9), new Map());
+  assert.equal(r[0].verdict, 'bajo_minimo_cayendo');
+  assert.match(r[0].message, /NO está entrando agua/);
+});
+
+test('tanque: bajo el mínimo pero RECUPERÁNDOSE es aviso, no urgencia', () => {
+  const r = analyzeTanks(tanque(0.95, 12), 'Campoalegre', historiaCon(0.9), new Map());
+  assert.equal(r[0].verdict, 'bajo_minimo_recuperando');
+  assert.match(r[0].message, /recuperándose/);
+});
+
+test('tanque: el mínimo se evalúa aunque la planta NO tenga máximo declarado', () => {
+  // Es el caso de Campoalegre: sin opMax no hay porcentaje, pero el mínimo sí se puede juzgar.
+  const s = snap({ tank1Level: sig(0.9, { opMin: 1, label: 'Nivel tanque 1' }), inletFlow1: sig(5, { unit: 'l/s' }) });
+  const r = analyzeTanks(s, 'Campoalegre', historiaCon(0.95), new Map());
+  assert.equal(r.length, 1);
+  assert.equal(r[0].verdict, 'bajo_minimo_cayendo');
+  assert.match(r[0].message, /sin máximo declarado/);
+});
+
+test('tanque: un nivel NEGATIVO no es "muy bajo", es un sensor roto → no lo trata este aviso', () => {
+  // Soledad reporta -1.51 m con timestamp fresco. Decir "está por debajo del mínimo" seria dar
+  // por bueno el dato; eso lo cubre el aviso de rango físico.
+  const r = analyzeTanks(tanque(-1.51, 12), 'Soledad', historiaCon(-1.5), new Map());
+  assert.equal(r.length, 0);
+});
+
+test('tanque: dentro de la franja de operación no genera nada por ningún extremo', () => {
+  const r = analyzeTanks(tanque(1.8, 12), 'Carbonero', historiaCon(1.8), new Map());
+  assert.equal(r.length, 0);
+});
+
+// El aviso decía "El nivel está 0 cm por encima del máximo" (Vorágine: eran 7 mm).
+test('tanque: excesos por debajo del centímetro no se redondean a "0 cm"', () => {
+  // Vorágine real: nivel 1.9771 m contra un máximo de 1.97 → 7 mm de exceso.
+  const s = snap({
+    tank1Level: sig(1.9771, { opMin: 1, opMax: 1.97, label: 'Nivel tanque 1' }),
+    inletFlow1: sig(12, { unit: 'l/s' }),
+  });
+  const r = analyzeTanks(s, 'La Vorágine', historiaCon(1.9771), new Map());
+  assert.doesNotMatch(r[0].message, /\b0 cm\b/, 'un aviso que dice "0 cm" se contradice a sí mismo');
+  assert.match(r[0].message, /menos de 1 cm/);
+});
+
 test('tanque: un rebose real es crítico y un máximo mal medido no (severidad por caso)', () => {
   const rebose = analyzeTanks(tanque(2.82, 15), 'Carbonero', historiaCon(2.82), new Map())[0];
   const maxMal = analyzeTanks(tanque(2.96, 15), 'Carbonero', historiaCon(2.96), new Map())[0];

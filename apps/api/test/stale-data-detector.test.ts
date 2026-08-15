@@ -165,3 +165,40 @@ test('la clave de deduplicación ancla al día → un aviso por problema y por d
   assert.equal(hoy[0].day, '2026-08-05');
   assert.equal(manana[0].day, '2026-08-06', 'al día siguiente vuelve a avisar del mismo problema');
 });
+
+// Los NIVELES de tanque los interpreta TankLevelDetector (rebose vs máximo mal medido, y el
+// mínimo de servicio). Dejarlos también aquí generaba DOS avisos del mismo hecho: visto en
+// producción el 2026-08-15 con Carbonero y Vorágine, cada uno con `tank1` y `tank1Level`.
+test('CLAVE: un nivel de tanque fuera de rango NO genera además el aviso genérico', () => {
+  const d = detector();
+  const fuera = { value: 2.96, unit: 'm', opMin: 1, opMax: 2.8, label: 'Nivel tanque 1' };
+
+  const soloTanque = d.detect('Carbonero', snapshot({ tank1Level: signal(fuera) }, 'carbonero'), NOW);
+  assert.equal(soloTanque.length, 0, 'el detector de tanques ya lo explica mejor');
+
+  // Y la exclusión es SOLO para el nivel: el resto de señales sigue avisando igual.
+  const conPresion = d.detect(
+    'Carbonero',
+    snapshot(
+      {
+        tank1Level: signal(fuera),
+        outletPressure1: signal({ value: 300, unit: 'psi', opMin: 0, opMax: 232, label: 'Presión de salida' }),
+      },
+      'carbonero',
+    ),
+    NOW,
+  );
+  assert.equal(conPresion.length, 1);
+  assert.equal(conPresion[0].subject, 'outletPressure1');
+});
+
+test('el VOLUMEN de tanque sí sigue en el aviso genérico (solo se excluye el nivel)', () => {
+  const d = detector();
+  const out = d.detect(
+    'Carbonero',
+    snapshot({ tank1Volume: signal({ value: 99999, unit: 'm³', opMax: 500, label: 'Volumen tanque 1' }) }, 'carbonero'),
+    NOW,
+  );
+  assert.equal(out.length, 1);
+  assert.equal(out[0].subject, 'tank1Volume');
+});
