@@ -16,8 +16,14 @@ import { detectManual, interpretCommand, type CommandVerdict, type ValveState, t
  *     cambió — así el operador no se queda con un "listo" que no ocurrió.
  */
 
-/** Ventana tras una orden nuestra en la que un cambio NO se considera manual. */
-const COMMAND_WINDOW_MS = 15_000;
+/**
+ * Ventana tras una orden nuestra en la que un cambio NO se considera manual.
+ *
+ * 60 s, no los 15 s de antes: en La Vorágine la señal se SOSTIENE hasta que el PLC confirma, con un
+ * tope de 45 s. Con la ventana corta, una maniobra que tardara más de 15 s terminaba fuera de ella y
+ * la app avisaba de «válvula abierta manualmente» por una orden que había mandado ella misma.
+ */
+const COMMAND_WINDOW_MS = 60_000;
 
 export interface ValveEvent {
   id: string;

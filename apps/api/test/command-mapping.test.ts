@@ -151,7 +151,7 @@ interface ProdWrite {
   latched?: boolean;
   _riesgo?: string;
   mode?: string;
-  pulse?: { holdMs?: number };
+  pulse?: { holdMs?: number; until?: { channel?: string; sourceBuffer?: string; index?: number; equals?: number } };
   readBack?: { channel?: string; confirmsWrittenValue?: boolean };
 }
 
@@ -200,6 +200,26 @@ test('mapping de PRODUCCIÓN: CERRAR solo existe donde se verificó en campo', (
   assert.equal(voragine?.mode, 'bitmask', 'dos comandos en la misma palabra: absoluto pisaría el otro');
   assert.ok((voragine?.pulse?.holdMs ?? 0) > 0, 'sin pulso, abrir dejaría el bit puesto y cerrar no podría actuar');
   assert.ok(typeof voragine?._riesgo === 'string', 'un comando de cierre debe llevar al lado qué lo respalda');
+
+  // La señal es SOSTENIDA hasta que el PLC confirma. Se compara el VALOR ENTERO: INT_IN[1] vale
+  // 1025 = bits{0,10} en reposo, así que una condición por bit0 se cumpliría en el primer instante y
+  // cortaría la señal antes de que la válvula llegara a moverse.
+  assert.deepEqual(voragine?.pulse?.until, {
+    channel: 'intIn', sourceBuffer: 'INT_IN_VORAGINE', index: 1, equals: 1,
+  });
+
+  // El tope NO es libre: nginx y el fetch de iOS cortan alrededor de los 60 s, y una petición más
+  // larga deja al operador viendo un error de red con la orden viva en el PLC. 45 s + read-back cabe.
+  const tope = voragine?.pulse?.holdMs ?? 0;
+  assert.ok(tope <= 45_000, `el tope del sostenido (${tope} ms) debe caber en el presupuesto de la cadena front→nginx→API`);
+  assert.ok(tope >= 10_000, 'un tope demasiado corto cortaría la maniobra a mitad, que es el problema que esto arregla');
+});
+
+test('mapping de PRODUCCIÓN: ninguna otra planta sostiene la señal', () => {
+  // El sostenido nace de una válvula motorizada concreta. Replicarlo a ciegas dejaría bobinas
+  // energizadas hasta 45 s en sitios donde nadie ha comprobado que haga falta ni que sea seguro.
+  const conSostenido = valvulasDeProduccion().filter((v) => v.w?.pulse?.until).map((v) => v.plantId);
+  assert.deepEqual(conSostenido, ['voragine']);
 });
 
 test('mapping de PRODUCCIÓN: La Sirena manda una ORDEN COMPUESTA, y ninguna otra planta la copia', () => {

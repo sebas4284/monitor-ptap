@@ -157,11 +157,14 @@
           "confidence": "confirmed",
           "writable": true,
           "write": {
-            "_riesgo": "VERIFICADO EN CAMPO por el cliente (2026-08-15) y ya operando: abrir = 4096 (bit12) y cerrar = 8192 (bit13) en INT_OUT[0], como PULSOS sobre la misma palabra. Actua sobre el CAUDAL DE SALIDA. Lectura del PLC ese dia con la valvula pasando agua (outletFlow1 = 1,61 l/s, entrada 6,93 l/s): INT_OUT[0..19] todos a 0 (el canal de comando queda en reposo, coherente con el pulso) e INT_IN[0] = 7192 = bits{3,4,10,11,12}, INT_IN[1] = 1025 = bits{0,10}. HIPOTESIS, NO CONFIRMADA: el bit12 presente en INT_IN[0] es el mismo bit del comando de abrir, y el bit13 (cerrar) esta ausente — encajaria con que el estado refleje la ultima orden. Es UNA sola muestra y con la valvula en UNA sola posicion: no basta para declarar una codificacion, asi que el readBack sigue con stateVerified:false y el veredicto lo da el caudal de salida. Falta la lectura con la valvula cerrada; ValveStateObserver la captura sola en cuanto alguien la cierre.",
+            "_riesgo": "VERIFICADO EN CAMPO por el cliente (2026-08-15) y ya operando: abrir = 4096 (bit12) y cerrar = 8192 (bit13) en INT_OUT[0]. Actua sobre el CAUDAL DE SALIDA. LA SENAL ES SOSTENIDA, NO UN PULSO: se mantiene puesta hasta que INT_IN[1] vale 1, y solo entonces se suelta (pulse.until). Antes se soltaba a los 300 ms a ciegas, lo que en una valvula motorizada arranca el movimiento y lo corta a mitad. Se compara el VALOR ENTERO, no bits: INT_IN[1] valia 1025 = bits{0,10} el dia del cambio, asi que una condicion 'bit0 encendido' se habria cumplido en el primer instante y habria cortado la senal antes de que la valvula se moviera. TOPE DURO 45 s, no los 60 s que se plantearon: nginx (proxy_send_timeout/send_timeout sin declarar -> 60 s por defecto) y el fetch de iOS (~60 s) cortarian la peticion justo en ese limite y el operador veria un error de red con la orden viva en el PLC. Si vence el tope, el bit se limpia igual y el comando sale HOLD_FEEDBACK_TIMEOUT. Lectura del PLC ese dia con la valvula pasando agua (outletFlow1 = 1,61 l/s, entrada 6,93 l/s): INT_OUT[0..19] todos a 0 e INT_IN[0] = 7192 = bits{3,4,10,11,12}. HIPOTESIS, NO CONFIRMADA: el bit12 de INT_IN[0] es el mismo bit del comando de abrir y el bit13 (cerrar) esta ausente. Es UNA sola muestra con la valvula en UNA posicion, asi que readBack sigue con stateVerified:false y el veredicto lo da el caudal de salida. Revertir: pulse a { holdMs: 300 } sin until.",
             "target": { "channel": "intOut", "sourceBuffer": "INT_OUT_VORAGINE", "index": 0 },
             "commands": { "open": 4096, "close": 8192 },
             "mode": "bitmask",
-            "pulse": { "holdMs": 300 },
+            "pulse": {
+              "holdMs": 45000,
+              "until": { "channel": "intIn", "sourceBuffer": "INT_IN_VORAGINE", "index": 1, "equals": 1 }
+            },
             "readBack": {
               "channel": "intIn",
               "sourceBuffer": "INT_IN_VORAGINE",

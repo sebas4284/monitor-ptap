@@ -255,7 +255,19 @@
           "description": "Presente ⇒ el comando es un PULSO: se activa, se sostiene holdMs y se limpia SIEMPRE (confirme el estado o no). Sin esto, un comando confirmado dejaría el bit enclavado.",
           "required": ["holdMs"],
           "properties": {
-            "holdMs": { "type": "integer", "minimum": 1, "maximum": 60000, "description": "Duración del pulso en ms (típico 200–500 ms)." }
+            "holdMs": { "type": "integer", "minimum": 1, "maximum": 60000, "description": "Duración del pulso en ms (típico 200–500 ms). Con `until` presente deja de ser la duración y pasa a ser el TOPE DURO del sostenido." },
+            "until": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Realimentación que decide cuándo SOLTAR la señal: se sondea ese elemento y el bit se suelta en cuanto vale `equals`, que es como funciona un actuador motorizado (la señal se mantiene hasta que avisa el final de carrera). Si nunca coincide, al vencer holdMs el bit se limpia igualmente y el comando sale fallido con HOLD_FEEDBACK_TIMEOUT — nunca se sostiene indefinidamente, porque un sensor averiado dejaría la bobina energizada sin que nadie se entere. Se compara por VALOR COMPLETO, no por bits: en La Vorágine INT_IN[1] vale 1025 = bits{0,10}, así que una condición 'bit 0 encendido' ya se cumpliría con la válvula quieta y cortaría la señal antes de que se moviera.",
+              "required": ["channel", "index", "equals"],
+              "properties": {
+                "channel": { "$ref": "#/$defs/channel" },
+                "sourceBuffer": { "type": "string", "minLength": 1 },
+                "index": { "type": "integer", "minimum": 0 },
+                "equals": { "type": ["number", "boolean"] }
+              }
+            }
           }
         },
         "readBack": {

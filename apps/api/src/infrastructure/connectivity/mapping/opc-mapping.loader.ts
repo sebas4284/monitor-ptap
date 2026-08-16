@@ -37,6 +37,20 @@ export interface WriteStep {
   value: number | boolean;
 }
 
+/**
+ * Elemento de realimentación que dice cuándo soltar una señal sostenida (`pulse.until`).
+ *
+ * Se compara por VALOR COMPLETO, no por bits, y es una decisión deliberada: en La Vorágine
+ * `INT_IN[1]` vale 1025 = bits{0,10}, así que una condición "bit 0 encendido" ya se cumpliría con la
+ * válvula quieta y cortaría la señal antes de que llegara a moverse.
+ */
+export interface FeedbackRef {
+  channel: string;
+  sourceBuffer: string | null;
+  index: number;
+  equals: number | boolean;
+}
+
 /** Fase 5: traducción de comando de dominio a escritura de buffer/bit (vive en el mapping, regla 2). */
 export interface WriteSpec {
   target: BufferElementRef; // buffer de SALIDA donde se escribe
@@ -86,8 +100,15 @@ export interface WriteSpec {
    * Si está presente, el comando es un PULSO: se activa, se sostiene `holdMs` y se limpia
    * SIEMPRE (haya confirmado el estado o no). Sin esto, un comando `confirmed` dejaba el bit
    * ENCLAVADO para siempre, porque el rollback solo corría al fallar el read-back.
+   *
+   * Con `until`, el sostenido deja de ser a ciegas: se sondea ese elemento y el bit se suelta en
+   * cuanto vale `equals`, que es como funciona un actuador motorizado — la señal se mantiene hasta
+   * que el final de carrera avisa. Ahí `holdMs` pasa a ser el **tope duro**, no la duración: si la
+   * realimentación no llega nunca (sensor averiado, válvula atascada) el bit se limpia igualmente y
+   * el comando se reporta fallido. Nunca se sostiene indefinidamente, lo pida quien lo pida: dejar
+   * una bobina energizada sin que nadie se entere es peor que abortar la maniobra.
    */
-  pulse: { holdMs: number } | null;
+  pulse: { holdMs: number; until?: FeedbackRef } | null;
   readBack: {
     channel: string;
     sourceBuffer: string | null;
@@ -190,7 +211,7 @@ interface RawWriteSpec {
   sequences?: Record<string, Array<{ index?: unknown; value?: unknown }>>;
   latched?: unknown;
   mode?: string;
-  pulse?: { holdMs?: number };
+  pulse?: { holdMs?: number; until?: { channel?: unknown; sourceBuffer?: unknown; index?: unknown; equals?: unknown } };
   readBack?: {
     channel?: string;
     sourceBuffer?: string;
@@ -236,6 +257,19 @@ function parseStateEncoding(raw: RawSignal['stateEncoding']): SignalMapping['sta
   if (typeof raw.closed === 'number') enc.closed = raw.closed;
   if (typeof raw.open === 'number') enc.open = raw.open;
   return enc.closed === undefined && enc.open === undefined ? undefined : enc;
+}
+
+/** Normaliza `pulse.until`. Devuelve undefined si le falta algo: nunca se completa a medias. */
+function parseFeedback(raw: NonNullable<RawWriteSpec['pulse']>['until']): FeedbackRef | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  if (typeof raw.channel !== 'string' || typeof raw.index !== 'number') return undefined;
+  if (typeof raw.equals !== 'number' && typeof raw.equals !== 'boolean') return undefined;
+  return {
+    channel: raw.channel,
+    sourceBuffer: typeof raw.sourceBuffer === 'string' ? raw.sourceBuffer : null,
+    index: raw.index,
+    equals: raw.equals,
+  };
 }
 
 /** Un paso está "energizado" si su valor no es cero/false. La posición en reposo es el 0. */
@@ -328,8 +362,17 @@ function parseWriteSpec(raw: RawWriteSpec | undefined): WriteSpec | undefined {
   if (raw.rollbackValue === undefined) return undefined;
 
   const mode = raw.mode === 'bitmask' ? 'bitmask' : 'absolute';
-  const pulse = typeof raw.pulse?.holdMs === 'number' && raw.pulse.holdMs > 0 ? { holdMs: raw.pulse.holdMs } : null;
+  const pulse = typeof raw.pulse?.holdMs === 'number' && raw.pulse.holdMs > 0
+    ? { holdMs: raw.pulse.holdMs, ...(parseFeedback(raw.pulse.until) ? { until: parseFeedback(raw.pulse.until)! } : {}) }
+    : null;
   const latched = raw.latched === true;
+
+  // Un `until` mal escrito NO puede degradar en silencio a un sostenido a ciegas de 45 s: el bit se
+  // quedaría puesto tres cuartos de minuto sin que nadie lo hubiera pedido. Se descarta el spec.
+  if (raw.pulse?.until !== undefined && !pulse?.until) {
+    console.error(`[opc-mapping] write spec DESCARTADO en ${sourceBuffer}[${index}]: pulse.until incompleto (se esperan channel, index y equals)`);
+    return undefined;
+  }
 
   // Fallar CERRADO: un spec compuesto que no cumple las reglas eléctricas deja la señal como no
   // writable (el WriteService responderá TARGET_NOT_WRITABLE) en vez de accionar equipo con una
