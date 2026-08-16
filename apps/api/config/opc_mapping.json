@@ -2377,15 +2377,11 @@
           "confidence": "confirmed",
           "writable": true,
           "write": {
-            "_riesgo": "ORDEN COMPUESTA de campo pedida por el cliente (2026-08-15), SOLO en La Sirena. Abrir = canal 0 a 1 con el canal 1 a 0; cerrar = canal 0 a 0 con el canal 1 a 1. Sustituye al 4096/bit12 heredado de Voragine, que en este sitio no podia mover nada: la valvula la maneja un rele conmutador Relpol R2N-2012-23-1024-WTL en montaje de inversion de giro, asi que hace falta poner el SENTIDO en una posicion y quitarlo en la otra dentro de la misma orden. Escribir solo el canal 0 es lo que hizo que la prueba del 2026-08-03 concluyera 'canal sin actuador'. LO QUE NO ESTA VERIFICADO: el ladder del MicroLogix 1100 sigue sin leerse, asi que no consta que INT_OUT[1] sea la posicion del sentido (el operador describio el canal 2 el 2026-08-15 y luego pidio el 1 'por ahora'), ni si el actuador necesita la senal sostenida hasta el final de carrera. Por eso va 'latched': la orden se queda puesta y solo la deshace el verbo contrario. COMPROBACION REAL: outletFlow1, que es la salida donde esta la electrovalvula, no INT_IN[0] (stateTrusted:false, valia 17408 con 18 l/s saliendo). Revertir: commands {open:4096}, mode bitmask, pulse 300 ms, sin sequences ni latched.",
+            "_riesgo": "VERIFICADO EN CAMPO Y OFICIAL (cliente, 2026-08-15). Valvula de SALIDA de La Sirena, unico canal: INT_OUT[0]. Abrir = 1, cerrar = 2, y despues de cualquiera de los dos se vuelve a escribir 0 para limpiar (rollbackValue). El cliente fijo un minimo de 45 s sosteniendo el 2 antes de limpiar; se aplica el MISMO sostenido a abrir, porque es el mismo actuador y el mismo recorrido, y porque un 'abrir' que se soltara antes dejaria la maniobra a medias igual que la dejaba el pulso de 300 ms. TOPE: 45 s. No puede subir sin tocar el cliente: el fetch de la app no fija timeout y hereda el de la plataforma (~60 s en iOS); nginx no estorba (proxy_read_timeout 300s, verificado en la VM). ESTO SUSTITUYE a dos intentos anteriores del mismo dia que NUNCA llegaron a produccion: el 4096 heredado de Voragine y la orden compuesta c0/c1 con relE de inversion. La realidad es mas simple: un solo canal con tres valores. PENDIENTE de una futura actualizacion, dicho por el cliente: ligar la parada al CAUDAL en vez de al reloj. Cuando llegue, es pulse.until (ya existe, lo usa Voragine). El estado sigue sin decidirse por INT_IN[0] (stateTrusted:false, valia 17408 con 18 l/s saliendo): el veredicto lo da outletFlow1, que es evidencia fisica. Revertir no aplica: esta es la entrega oficial de esta valvula.",
             "target": { "channel": "intOut", "sourceBuffer": "INT_OUT_SIRENA", "index": 0 },
-            "commands": { "open": 1, "close": 0 },
-            "sequences": {
-              "open":  [ { "index": 1, "value": 0 }, { "index": 0, "value": 1 } ],
-              "close": [ { "index": 0, "value": 0 }, { "index": 1, "value": 1 } ]
-            },
-            "latched": true,
+            "commands": { "open": 1, "close": 2 },
             "mode": "absolute",
+            "pulse": { "holdMs": 45000 },
             "readBack": {
               "channel": "intIn",
               "sourceBuffer": "INT_IN_SIRENA",

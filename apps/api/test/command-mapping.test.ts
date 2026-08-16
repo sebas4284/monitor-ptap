@@ -190,7 +190,7 @@ test('mapping de PRODUCCIÓN: CERRAR solo existe donde se verificó en campo', (
     .filter((v) => v.w?.commands && 'close' in v.w.commands)
     .map((v) => `${v.plantId}=${v.w?.commands?.close}`)
     .sort();
-  assert.deepEqual(conCierre, ['sirena=0', 'voragine=8192']);
+  assert.deepEqual(conCierre, ['sirena=2', 'voragine=8192']);
 
   const voragine = valvulasDeProduccion().find((v) => v.plantId === 'voragine')?.w;
   // 4096 = bit12 y 8192 = bit13: dos bits distintos de la MISMA palabra, cada uno como pulso. Que
@@ -224,46 +224,29 @@ test('mapping de PRODUCCIÓN: ninguna otra planta sostiene la señal', () => {
   assert.deepEqual(conSostenido, ['voragine']);
 });
 
-test('mapping de PRODUCCIÓN: La Sirena manda una ORDEN COMPUESTA, y ninguna otra planta la copia', () => {
-  // EXCEPCIÓN DELIBERADA (cliente, 2026-08-15). El 4096/bit12 heredado de Vorágine no podía mover
-  // nada en este sitio: la válvula la maneja un relé conmutador en montaje de inversión de giro, así
-  // que hay que poner el SENTIDO en una posición y quitarlo en la otra dentro de la misma orden.
-  //
-  // Se aísla en su propio test en vez de relajar la regla para todos, porque el resto sigue con la
-  // forma verificada y esto es lo único que impide que una prueba de campo se propague sin querer:
-  // el ladder del MicroLogix sigue sin leerse, así que ni el índice del sentido ni la necesidad de
-  // señal sostenida están confirmados.
+test('mapping de PRODUCCIÓN: La Sirena — 1 abre, 2 cierra, 0 limpia (entrega oficial)', () => {
+  // VERIFICADO EN CAMPO Y CERRADO por el cliente el 2026-08-15. Un solo canal, `INT_OUT[0]`, con
+  // tres valores. Esta forma sustituye a dos intentos del mismo día que nunca llegaron a producción
+  // —el 4096/bit12 heredado de Vorágine y una orden compuesta c0/c1 con relé de inversión—, y por
+  // eso el test los nombra: si alguien vuelve a ver esas formas en el mapping, es una regresión, no
+  // una evolución.
   const sirena = valvulasDeProduccion().find((v) => v.plantId === 'sirena')?.w;
 
-  assert.deepEqual(sirena?.commands, { open: 1, close: 0 });
-  assert.deepEqual(sirena?.sequences, {
-    open: [{ index: 1, value: 0 }, { index: 0, value: 1 }],
-    close: [{ index: 0, value: 0 }, { index: 1, value: 1 }],
-  });
+  assert.deepEqual(sirena?.commands, { open: 1, close: 2 });
+  assert.equal(sirena?.target?.index, 0);
+  assert.equal(sirena?.mode, 'absolute', '1, 2 y 0 son valores del canal, no bits de una máscara');
+  assert.equal(sirena?.sequences, undefined, 'la orden compuesta quedó descartada por la lectura de campo');
+  assert.equal(sirena?.latched, undefined, 'ya no es sostenida indefinida: se limpia con 0');
 
-  // LO QUE DE VERDAD PROTEGE ESTE TEST: el orden. Energizar antes de soltar la dirección contraria
-  // abre una ventana con las dos activas a la vez — el fallo que el protocolo declara ERROR.
-  for (const [verb, pasos] of Object.entries(sirena?.sequences ?? {})) {
-    const primerEnergizado = pasos.findIndex((s) => s.value !== 0);
-    assert.ok(
-      primerEnergizado === -1 || !pasos.slice(primerEnergizado + 1).some((s) => s.value === 0),
-      `sirena/${verb}: se desenergiza DESPUÉS de energizar`,
-    );
-    assert.ok(pasos.filter((s) => s.value !== 0).length <= 1, `sirena/${verb}: dos direcciones energizadas a la vez`);
-  }
+  // Lo que el cliente fijó explícitamente: el 2 se sostiene 45 s antes de limpiar. Un pulso corto
+  // dejaría la maniobra a medias, que es exactamente lo que hacía el de 300 ms.
+  assert.equal(sirena?.pulse?.holdMs, 45_000);
+  assert.equal(sirena?.pulse?.until, undefined, 'la parada por caudal es una actualización futura, no está aquí');
 
-  // Sostenida y sin pulso: cada verbo define un estado eléctrico completo, y su opuesto es el otro
-  // verbo. Limpiar a 0/0 dejaría el actuador sin dirección, ni abierto ni cerrado.
-  assert.equal(sirena?.latched, true);
-  assert.equal(sirena?.pulse, undefined, 'un pulso borraría la orden a los 300 ms');
-  assert.equal(sirena?.mode, 'absolute', 'la posición del array es el canal, no un bit de una palabra');
-  assert.ok(
-    typeof sirena?._riesgo === 'string' && sirena._riesgo.length > 200,
-    'una orden no verificada en el ladder DEBE llevar al lado qué se sabe, qué no y cómo revertirla',
-  );
-
-  const otrasConSecuencia = valvulasDeProduccion().filter((v) => v.plantId !== 'sirena' && v.w?.sequences);
-  assert.deepEqual(otrasConSecuencia.map((v) => v.plantId), [], 'el cableado de Sirena no se replica sin verificarlo en cada sitio');
+  // El 0 no es decorativo: es el valor con el que `clearPulse` limpia el canal en modo absoluto.
+  // Si alguien lo cambiara, la válvula se quedaría con el 1 o el 2 puesto para siempre.
+  assert.equal(sirena?.rollbackValue, 0, 'tras 1 o 2 SIEMPRE se vuelve a escribir 0');
+  assert.ok(typeof sirena?._riesgo === 'string' && sirena._riesgo.length > 200);
 });
 
 // Las reglas ELÉCTRICAS de una orden compuesta se comprueban al CARGAR, no al accionar: una
