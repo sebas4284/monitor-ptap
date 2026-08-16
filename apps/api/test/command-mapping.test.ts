@@ -208,8 +208,10 @@ test('mapping de PRODUCCIÓN: CERRAR solo existe donde se verificó en campo', (
     channel: 'intIn', sourceBuffer: 'INT_IN_VORAGINE', index: 1, equals: 1,
   });
 
-  // El tope NO es libre: nginx y el fetch de iOS cortan alrededor de los 60 s, y una petición más
-  // larga deja al operador viendo un error de red con la orden viva en el PLC. 45 s + read-back cabe.
+  // El tope NO es libre. nginx no es el problema (proxy_read_timeout 300s, verificado en la VM el
+  // 2026-08-15): lo es el cliente, cuyo `fetch` no fija timeout y hereda el de la plataforma (~60 s
+  // en iOS). Pasarse deja al operador viendo un error de red con la orden viva en el PLC, que es lo
+  // que invita a pulsar otra vez. 45 s + read-back cabe con margen.
   const tope = voragine?.pulse?.holdMs ?? 0;
   assert.ok(tope <= 45_000, `el tope del sostenido (${tope} ms) debe caber en el presupuesto de la cadena front→nginx→API`);
   assert.ok(tope >= 10_000, 'un tope demasiado corto cortaría la maniobra a mitad, que es el problema que esto arregla');
