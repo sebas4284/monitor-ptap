@@ -32,6 +32,7 @@
     "db:seed-admin": "tsx scripts/seed-admin-user.ts",
     "db:seed-users": "tsx scripts/seed-users.ts",
     "db:migrate-users": "tsx scripts/migrate-users.ts",
+    "db:credenciales": "tsx scripts/asignar-credenciales.ts",
     "db:disable-demo-users": "tsx scripts/disable-demo-users.ts",
     "test:replay": "set \"TSX_TSCONFIG_PATH=tsconfig.test.json\"&& node --import tsx --test test/plc-replay.test.ts"
   },
