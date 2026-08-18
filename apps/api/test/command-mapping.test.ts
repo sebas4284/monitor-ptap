@@ -107,6 +107,47 @@ test('mapping de PRODUCCIÓN: la válvula 1 está en las 10 plantas CON canal de
   }
 });
 
+test('mapping de PRODUCCIÓN: La Vorágine tiene DOS válvulas y solo la de salida se acciona', () => {
+  // El cliente confirmó el 2026-08-15 que La Vorágine tiene válvula de entrada Y de salida. De la
+  // de entrada no se conoce su frecuencia de bits, así que existe para mostrarse pero NO para
+  // mandarse.
+  //
+  // Este test hace falta porque la regla de «una valve1 por planta» filtra por `writable === true`:
+  // una segunda válvula NO writable se colaría sin que ningún test se enterara, y con ella la
+  // tentación de irle poniendo un write spec «provisional».
+  const prod = loadJson(join(__dirname, '..', 'config', 'opc_mapping.json')) as {
+    plants: Array<{
+      plantId: string;
+      signals?: Array<{ domainKey?: string; label?: string; writable?: boolean; write?: unknown; flowDomainKey?: string; _nota?: string }>;
+    }>;
+  };
+
+  const conValve2 = prod.plants.filter((p) => (p.signals ?? []).some((s) => s.domainKey === 'valve2')).map((p) => p.plantId);
+  assert.deepEqual(conValve2, ['voragine'], 'una segunda válvula exige confirmarla en campo, planta por planta');
+
+  const voragine = prod.plants.find((p) => p.plantId === 'voragine');
+  const entrada = (voragine?.signals ?? []).find((s) => s.domainKey === 'valve2');
+  const salida = (voragine?.signals ?? []).find((s) => s.domainKey === 'valve1');
+
+  // LO QUE DE VERDAD PROTEGE: que nadie le ponga mando a la de entrada sin dato de campo.
+  assert.equal(entrada?.writable, false, 'la de entrada NO se acciona: no se conoce su frecuencia de bits');
+  assert.equal(entrada?.write, undefined, 'sin write spec: inventarlo sería accionar equipo a ciegas');
+  assert.ok(typeof entrada?._nota === 'string' && entrada._nota.length > 200, 'su índice es un ancla y eso debe estar escrito al lado');
+
+  // Cada una con SU caudal, y declarado. Sin declararlo, el orden por defecto del front prefiere la
+  // salida: la de ENTRADA se juzgaría con el caudal de salida y diría "abierta" con la entrada
+  // cerrada y el tanque vaciándose aguas abajo.
+  assert.equal(entrada?.flowDomainKey, 'inletFlow1');
+  assert.equal(salida?.flowDomainKey, 'outletFlow1');
+  for (const key of ['inletFlow1', 'outletFlow1']) {
+    assert.ok((voragine?.signals ?? []).some((s) => s.domainKey === key), `${key} debe existir en la planta`);
+  }
+
+  // Anónimas no: con dos válvulas, "Válvula 1" y "Válvula 2" no le dicen nada a quien las opera.
+  assert.match(String(salida?.label), /salida/i);
+  assert.match(String(entrada?.label), /entrada/i);
+});
+
 // Hallazgo de campo 2026-07-30: replicar `valve1State` (intIn[0]) a ciegas publicaba un estado
 // INVENTADO. Leyendo INT_IN[0] real: solo sirena tiene el patrón limpio 16384 (bit14); montebello
 // (30250) y km18 (30101) tienen bit14 encendido por casualidad y habrían afirmado CERRADA/ABIERTA en

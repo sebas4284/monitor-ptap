@@ -183,6 +183,24 @@ export interface SignalDto {
    * Borrarlo dejaba al sistema ciego justo donde falta conocimiento.
    */
   stateTrusted?: boolean;
+  /**
+   * Solo en señales de VÁLVULA: `false` = la válvula existe y se muestra, pero NO se puede accionar
+   * desde la app porque no tiene canal de comando en el mapping.
+   *
+   * **Ausente significa que sí se acciona**, que es el caso de las diez válvulas de hoy: así el
+   * campo no cambia el comportamiento de nada existente ni de un front antiguo que lo ignore.
+   *
+   * Existe porque el front pintaba el botón de abrir/cerrar para TODA válvula del snapshot, sin más
+   * condición que el permiso del rol. Con una válvula sin mando —la de ENTRADA de La Vorágine, cuya
+   * frecuencia de bits aún no conocemos— el operador confirmaba la maniobra en un diálogo y solo
+   * después recibía el 404 del backend. Hacerle confirmar una orden que jamás podía salir es peor
+   * que no ofrecerle el botón.
+   *
+   * Se llama `commandable` y no `writable` a propósito: en un DTO que habla de OPC UA, "writable"
+   * se confundiría con el AccessLevel del nodo, que es otra cosa —y que en ese buffer vale
+   * `CurrentWrite` aunque la válvula no tenga comando definido.
+   */
+  commandable?: boolean;
 }
 
 /**

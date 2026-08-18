@@ -196,7 +196,9 @@ export default function ElectrovalvulasScreen() {
               frozen={frozen}
               busy={busy === valve.id}
               compact={compact}
-              onToggle={canControl ? onToggle : undefined}
+              // Sin canal de comando no hay botón: hacer confirmar una maniobra que solo puede
+              // acabar en 404 es peor que no ofrecerla. ValveItem pone la nota en su lugar.
+              onToggle={canControl && valve.commandable ? onToggle : undefined}
             />
           ))
         )}

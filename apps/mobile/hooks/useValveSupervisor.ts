@@ -75,14 +75,20 @@ export function useValveSupervisor(plantId: string, valves: ValveView[]) {
       if (manual) {
         const nuevo: ValveState = manual === 'opened' ? 'open' : 'closed';
         setOverrides((o) => ({ ...o, [v.id]: nuevo }));
-        pushEvent({
-          valveId: v.id,
-          kind: 'manual',
-          title: manual === 'opened' ? 'Válvula abierta manualmente' : 'Válvula cerrada manualmente',
-          message:
-            `${v.name}: el caudal indica que ahora está ${nuevo === 'open' ? 'ABIERTA' : 'CERRADA'}, ` +
-            `pero el PLC no reportó ninguna maniobra eléctrica. Se asume operación MANUAL y se actualiza el estado.`,
-        });
+        // En una válvula SIN canal de mando, que la manejen a mano no es una anomalía: es la única
+        // forma que hay de manejarla. El aviso existe para delatar maniobras que la app no ordenó
+        // en válvulas que la app SÍ podría ordenar; aquí solo sería ruido cada vez que el caudal
+        // cruza el umbral. El estado mostrado sí se actualiza, que es lo que interesa.
+        if (v.commandable) {
+          pushEvent({
+            valveId: v.id,
+            kind: 'manual',
+            title: manual === 'opened' ? 'Válvula abierta manualmente' : 'Válvula cerrada manualmente',
+            message:
+              `${v.name}: el caudal indica que ahora está ${nuevo === 'open' ? 'ABIERTA' : 'CERRADA'}, ` +
+              `pero el PLC no reportó ninguna maniobra eléctrica. Se asume operación MANUAL y se actualiza el estado.`,
+          });
+        }
       } else if (v.byState !== null && overrides[v.id] && v.byState === overrides[v.id]) {
         // La lectura eléctrica ya coincide con el override: se deja de forzar.
         setOverrides((o) => {

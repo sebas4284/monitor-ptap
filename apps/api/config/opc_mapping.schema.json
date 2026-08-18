@@ -123,6 +123,10 @@
         "index": { "type": "integer", "minimum": 0 },
         "domainKey": { "type": "string", "minLength": 1, "pattern": "^[a-zA-Z][a-zA-Z0-9_.]*$" },
         "label": { "type": "string" },
+        "_nota": {
+          "type": "string",
+          "description": "Advertencia o contexto pegado a la señal, para lo que el resto de campos no puede expresar. Equivale a `_riesgo` del writeSpec, pero para señales de solo lectura — que hasta ahora no tenían dónde dejar constancia de nada. El caso que lo motivó: una válvula que existe físicamente pero cuyo canal de comando se desconoce, así que su índice es un ANCLA (toda señal debe colgar de un elemento monitorizado real o el pipeline emite dead-letters) y no una afirmación sobre dónde se manda. Sin esta nota, el próximo que lea el mapping deduciría del índice algo que nadie verificó. JSON no admite comentarios y una nota en otro archivo no se lee cuando toca."
+        },
         "unit": { "type": "string" },
         "min": { "type": "number" },
         "max": { "type": "number" },

@@ -151,7 +151,7 @@
           "sourceBuffer": "INT_OUT_VORAGINE",
           "index": 0,
           "domainKey": "valve1",
-          "label": "Válvula 1",
+          "label": "Válvula de salida",
           "flowDomainKey": "outletFlow1",
           "mappingStatus": "mapped",
           "confidence": "confirmed",
@@ -177,6 +177,18 @@
             "rollbackValue": 0,
             "permission": "control_valves"
           }
+        },
+        {
+          "buffer": "intOut",
+          "sourceBuffer": "INT_OUT_VORAGINE",
+          "index": 1,
+          "domainKey": "valve2",
+          "label": "Válvula de entrada",
+          "flowDomainKey": "inletFlow1",
+          "_nota": "SIN CANAL DE COMANDO CONOCIDO. Esta valvula existe fisicamente (el cliente confirmo el 2026-08-15 que La Voragine tiene dos: entrada y salida), pero no se sabe con que frecuencia de bits se mueve ni tiene palabra de estado. Por eso writable:false y sin write spec: la app la muestra pero NO la acciona. EL INDICE ES UN ANCLA, NO UNA AFIRMACION. Toda senal debe colgar de un elemento real de un buffer monitorizado o el MappingEngine la marca rota y emite un dead-letter en cada barrido; realIn[0] no servia porque chocaria con inletFlow1 (validate-mapping rechaza dos senales en el mismo canal[indice]). Se eligio INT_OUT_VORAGINE[1] por estar libre y ser el canal donde vivira su comando cuando lo haya, pero NADIE ha verificado que la entrada se mande por esa posicion. No deducir de aqui el indice del comando. SU ESTADO SALE DEL CAUDAL DE ENTRADA (flowDomainKey: inletFlow1), que es evidencia fisica: por encima de 0,1 l/s esta abierta. Cuando el cliente entregue las frecuencias de bits: anadir el write spec, poner writable:true, confidence:confirmed y corregir el indice al que diga el campo.",
+          "mappingStatus": "mapped",
+          "confidence": "estimated",
+          "writable": false
         },
         {
           "buffer": "realIn",

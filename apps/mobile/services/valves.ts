@@ -43,6 +43,13 @@ export interface ValveView {
   flowLabel: string | null;
   /** Los dos métodos dan resultados distintos → avisar, no elegir en silencio. */
   disagreement: boolean;
+  /**
+   * ¿Se puede accionar desde la app? `false` = la válvula existe y su estado se muestra, pero no
+   * tiene canal de comando en el mapping (la de ENTRADA de La Vorágine, cuya frecuencia de bits aún
+   * no conocemos). Sin esto se le ofrecía al operador un botón que, tras confirmar la maniobra en un
+   * diálogo, solo podía devolver un 404.
+   */
+  commandable: boolean;
   /** Valor crudo de la palabra de estado (diagnóstico). */
   rawState: number | null;
   ts: string | null;
@@ -153,6 +160,9 @@ export function valvesFromSnapshot(snapshot: PlantSnapshotDto | undefined): Valv
       flowUnit: flow.unit,
       flowLabel: flow.label,
       disagreement: byState !== null && byFlow !== null && byState !== byFlow,
+      // Ausente ⇒ accionable: el backend solo manda el campo cuando vale false, y así una válvula
+      // de las de siempre se comporta igual que antes de que este campo existiera.
+      commandable: cmd?.commandable !== false,
       rawState,
       ts: stateSig?.ts ?? cmd?.ts ?? null,
     });

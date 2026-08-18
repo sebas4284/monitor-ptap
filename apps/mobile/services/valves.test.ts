@@ -308,3 +308,46 @@ test('valves: sin stateTrusted la palabra sigue mandando (las demás plantas no 
   assert.equal(v.byState, 'closed');
   assert.equal(v.source, 'estado');
 });
+
+// ── Dos válvulas en una planta (La Vorágine, 2026-08-15) ────────────────────────────────────
+//
+// Salida accionable con su caudal de salida; entrada sin canal de mando, juzgada por el de entrada.
+// El caso que estos tests protegen es el de los caudales cruzados: si cada válvula no declara el
+// suyo, el orden por defecto prefiere la salida y las DOS se juzgarían con el mismo dato.
+
+const DOS_VALVULAS = {
+  valve1: sig(0, { label: 'Válvula de salida', flowDomainKey: 'outletFlow1' }),
+  valve2: sig(0, { label: 'Válvula de entrada', flowDomainKey: 'inletFlow1', commandable: false }),
+  outletFlow1: sig(1.61),
+  inletFlow1: sig(6.93),
+};
+
+test('valves: una planta con dos válvulas devuelve las dos, ordenadas y con su nombre', () => {
+  const v = valvesFromSnapshot(snap(DOS_VALVULAS));
+  assert.equal(v.length, 2);
+  assert.deepEqual(v.map((x) => x.id), ['valve1', 'valve2']);
+  assert.deepEqual(v.map((x) => x.name), ['Válvula de salida', 'Válvula de entrada']);
+});
+
+test('valves: cada válvula se juzga con SU caudal, no con el de la otra', () => {
+  const [salida, entrada] = valvesFromSnapshot(snap(DOS_VALVULAS));
+  assert.equal(salida.flowValue, 1.61);
+  assert.equal(entrada.flowValue, 6.93);
+  assert.equal(salida.source, 'caudal');
+  assert.equal(entrada.source, 'caudal');
+});
+
+// Lo que de verdad importa de este caso: una válvula de ENTRADA cerrada mientras el tanque se vacía
+// aguas abajo. Hay caudal en el lado que no manda, y sin `flowDomainKey` se afirmaría "abierta".
+test('valves: la de entrada CERRADA no se contagia del caudal de salida', () => {
+  const [, entrada] = valvesFromSnapshot(
+    snap({ ...DOS_VALVULAS, inletFlow1: sig(0), outletFlow1: sig(12.4) }),
+  );
+  assert.equal(entrada.state, 'closed', 'su caudal es 0: está cerrada aunque salga agua del tanque');
+});
+
+test('valves: commandable false solo en la que no tiene mando; ausente = accionable', () => {
+  const [salida, entrada] = valvesFromSnapshot(snap(DOS_VALVULAS));
+  assert.equal(salida.commandable, true, 'sin el campo, la válvula se acciona como siempre');
+  assert.equal(entrada.commandable, false);
+});

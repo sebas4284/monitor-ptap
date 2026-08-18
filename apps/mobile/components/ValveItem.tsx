@@ -113,6 +113,13 @@ function ValveItemBase({ valve, onToggle, frozen = false, busy = false, compact 
             </Text>
           </TouchableOpacity>
         )}
+        {/* Válvula sin canal de mando: se dice por qué no hay botón. Un hueco mudo haría pensar en
+            un fallo de la app o en un permiso que falta, y no es ninguna de las dos cosas. */}
+        {!valve.commandable && (
+          <Text style={styles.sinMando} numberOfLines={2}>
+            Sin canal de comando
+          </Text>
+        )}
       </View>
     </View>
   );
@@ -178,4 +185,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   toggleText: { fontSize: 12, fontWeight: '700' },
+  // Discreta a propósito: informa de una limitación, no de un problema. Compite con el badge de
+  // estado, que es lo que el operador viene a mirar.
+  sinMando: { fontSize: 10, color: Colors.textSecondary, marginTop: 6, textAlign: 'right' },
 });

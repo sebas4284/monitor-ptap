@@ -55,6 +55,10 @@ export function buildSnapshot(input: SnapshotInput): PlantSnapshotDto {
     if (ex.stateEncoding) dto.stateEncoding = ex.stateEncoding;
     if (ex.flowDomainKey) dto.flowDomainKey = ex.flowDomainKey;
     if (typeof ex.stateTrusted === 'boolean') dto.stateTrusted = ex.stateTrusted;
+    // Solo se emite cuando es FALSE, y solo para válvulas: el DTO viaja por WebSocket en cada
+    // barrido, así que un `commandable: true` en las decenas de señales que no son válvulas serían
+    // bytes repetidos sin significado. Ausente = accionable, que es el caso de todas las de hoy.
+    if (!ex.commandable && /^valve\d+$/.test(ex.domainKey)) dto.commandable = false;
     signals[ex.domainKey] = dto;
   }
 
