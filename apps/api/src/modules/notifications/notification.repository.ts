@@ -13,6 +13,17 @@ export interface NewNotification {
   subject: string | null;
   title: string;
   message: string;
+  /**
+   * QUÉ HACER, en una frase. Se pinta aparte y destacado, no enterrado en el párrafo.
+   *
+   * Existe porque ningún aviso lo decía: describían el síntoma y, con suerte, el diagnóstico. El
+   * único que justifica salir corriendo —el rebose real— cerraba con «Revisar la planta: se está
+   * perdiendo agua tratada», sin decir qué válvula tocar ni a quién llamar.
+   *
+   * `null` cuando no hay una acción clara. Inventarse una es peor que no ponerla: enseña al
+   * operario a ignorar este campo.
+   */
+  action?: string | null;
   /** Día al que se ancla la deduplicación (YYYY-MM-DD). */
   day: string;
 }
@@ -25,15 +36,29 @@ export interface StoredNotification {
   subject: string | null;
   title: string;
   message: string;
+  /** Qué hacer, en una frase. `null` si no hay una acción clara. Ver `NewNotification.action`. */
+  action: string | null;
   createdAt: string;
   seen: boolean;
 }
 
 const DUP_ENTRY = 'ER_DUP_ENTRY';
 
-/** `<kind>:<plantId>[:<subject>]:<YYYY-MM-DD>` — un aviso por problema y por día. */
+/**
+ * `<kind>:<plantId>[:<subject>]:<severity>:<YYYY-MM-DD>` — un aviso por problema, GRAVEDAD y día.
+ *
+ * **La severidad entra en la clave, y esa es la parte que importa.** Sin ella, un tanque que a las
+ * 19:05 estaba `indeterminado` (warning) y a las 21:00 pasa a `rebosando` (critical) NO generaba
+ * aviso: mismo tipo, misma planta, mismo sujeto, mismo día. El empeoramiento se tragaba en silencio,
+ * que es exactamente lo contrario de lo que un sistema de avisos debe hacer.
+ *
+ * Sigue callando la repetición idéntica —el mismo problema con la misma gravedad no vuelve a avisar
+ * hasta el día siguiente—, que es para lo que se creó la deduplicación. Lo único que cambia es que
+ * *empeorar* cuenta como noticia nueva. Mejorar también: un `critical` que baja a `warning` avisa, y
+ * eso es información útil («va a mejor») que antes tampoco llegaba.
+ */
 function dedupeKeyOf(n: NewNotification): string {
-  return [n.kind, n.plantId, n.subject ?? '-', n.day].join(':');
+  return [n.kind, n.plantId, n.subject ?? '-', n.severity, n.day].join(':');
 }
 
 /**
@@ -70,9 +95,9 @@ export class NotificationRepository {
   async create(input: NewNotification): Promise<boolean> {
     try {
       await this.pool.query<ResultSetHeader>(
-        `INSERT INTO notification (dedupe_key, kind, severity, plant_id, subject, title, message)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [dedupeKeyOf(input), input.kind, input.severity, input.plantId, input.subject, input.title, input.message],
+        `INSERT INTO notification (dedupe_key, kind, severity, plant_id, subject, title, message, action)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [dedupeKeyOf(input), input.kind, input.severity, input.plantId, input.subject, input.title, input.message, input.action ?? null],
       );
       return true;
     } catch (err) {
@@ -94,7 +119,7 @@ export class NotificationRepository {
   ): Promise<StoredNotification[]> {
     const planta = plantFilter(plantScope);
     const [rows] = await this.pool.query<RowDataPacket[]>(
-      `SELECT n.id, n.kind, n.severity, n.plant_id, n.subject, n.title, n.message, n.created_at,
+      `SELECT n.id, n.kind, n.severity, n.plant_id, n.subject, n.title, n.message, n.action, n.created_at,
               (s.user_id IS NOT NULL) AS seen
          FROM notification n
          LEFT JOIN notification_seen s ON s.notification_id = n.id AND s.user_id = ?
@@ -111,6 +136,7 @@ export class NotificationRepository {
       subject: (r.subject as string | null) ?? null,
       title: r.title as string,
       message: r.message as string,
+      action: (r.action as string | null) ?? null,
       createdAt: new Date(r.created_at as Date).toISOString(),
       seen: Boolean(r.seen),
     }));

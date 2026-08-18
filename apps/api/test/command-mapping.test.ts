@@ -62,7 +62,7 @@ test('mapping: señal writable SIN write spec es rechazada por el schema', () =>
 test('mapping: señal writable confirmed + write spec válido es aceptada', () => {
   const result = validateMapping(schema, mappingWithSignal({
     buffer: 'intOut', index: 3, domainKey: 'valveEV01',
-    mappingStatus: 'mapped', confidence: 'confirmed', writable: true, write: VALID_WRITE,
+    label: 'Válvula EV01', mappingStatus: 'mapped', confidence: 'confirmed', writable: true, write: VALID_WRITE,
   }));
   assert.equal(result.ok, true, `errores: ${result.errors.join(' | ')}`);
 });

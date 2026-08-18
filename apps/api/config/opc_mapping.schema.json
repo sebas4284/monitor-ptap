@@ -173,6 +173,11 @@
           "description": "El write spec solo puede existir en una señal writable (⇒ confirmed por la regla de arriba).",
           "if": { "required": ["write"] },
           "then": { "properties": { "writable": { "const": true } }, "required": ["writable"] }
+        },
+        {
+          "description": "Una señal MAPEADA debe tener etiqueta legible. Sin ella, los avisos enseñaban el domainKey crudo al operario ('Soledad: outletFlow2 fuera de rango') o, si se prefiere callar, se perdía el aviso entero. Ninguna de las dos es aceptable, así que el hueco se caza aquí: al validar el mapping, no de madrugada en el móvil de alguien.",
+          "if": { "properties": { "mappingStatus": { "const": "mapped" } }, "required": ["mappingStatus"] },
+          "then": { "required": ["label"], "properties": { "label": { "type": "string", "minLength": 1 } } }
         }
       ]
     },

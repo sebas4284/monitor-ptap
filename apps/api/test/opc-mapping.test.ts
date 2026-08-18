@@ -72,7 +72,7 @@ test('rechaza domainKey duplicado en una planta', () => {
 test('rechaza writable:true con confidence != confirmed (regla de schema)', () => {
   const plant = basePlant();
   plant.signals = [
-    { buffer: 'intOut', index: 0, domainKey: 'openValve', mappingStatus: 'mapped', confidence: 'inferred', writable: true },
+    { buffer: 'intOut', index: 0, domainKey: 'openValve', label: 'Señal de prueba', mappingStatus: 'mapped', confidence: 'inferred', writable: true },
   ];
   const result = validateMapping(schema, wrap(plant));
   assert.equal(result.ok, false);
@@ -82,7 +82,7 @@ test('rechaza writable:true con confidence != confirmed (regla de schema)', () =
 test('rechaza writable:true sin write spec (Fase 5: regla de schema)', () => {
   const plant = basePlant();
   plant.signals = [
-    { buffer: 'intOut', index: 0, domainKey: 'openValve', mappingStatus: 'mapped', confidence: 'confirmed', writable: true },
+    { buffer: 'intOut', index: 0, domainKey: 'openValve', label: 'Señal de prueba', mappingStatus: 'mapped', confidence: 'confirmed', writable: true },
   ];
   const result = validateMapping(schema, wrap(plant));
   assert.equal(result.ok, false);
@@ -96,7 +96,7 @@ test('acepta writable:true con confidence confirmed + write spec válido', () =>
   ];
   plant.signals = [
     {
-      buffer: 'intOut', index: 0, domainKey: 'valveEV01', mappingStatus: 'mapped', confidence: 'confirmed', writable: true,
+      buffer: 'intOut', index: 0, domainKey: 'valveEV01', label: 'Señal de prueba', mappingStatus: 'mapped', confidence: 'confirmed', writable: true,
       write: {
         target: { channel: 'intOut', sourceBuffer: 'INT_OUT_VORAGINE', index: 0 },
         commands: { openValve: 1, closeValve: 0 },

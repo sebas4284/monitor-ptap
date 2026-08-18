@@ -2,6 +2,7 @@ import { Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@ne
 import { hasRangeAnomaly, isOutOfOperatingRange, type PlantSnapshotDto } from '@ptap/shared';
 import { PlantCache } from '../../infrastructure/connectivity/pipeline/plant-cache';
 import { PlantPipelineService } from '../../infrastructure/connectivity/pipeline/plant-pipeline.service';
+import { dedupeDay } from './notification-day';
 import { NotificationRepository, type NewNotification } from './notification.repository';
 
 /**
@@ -93,7 +94,7 @@ export class StaleDataDetector implements OnModuleInit, OnModuleDestroy {
    * que decir.
    */
   detect(displayName: string, snapshot: PlantSnapshotDto, now: Date): NewNotification[] {
-    const day = now.toISOString().slice(0, 10);
+    const day = dedupeDay(now);
     const out: NewNotification[] = [];
     const base = { plantId: snapshot.plantId, day };
 
@@ -122,16 +123,27 @@ export class StaleDataDetector implements OnModuleInit, OnModuleDestroy {
       out.push({
         ...base,
         kind: 'sensor_stale',
-        severity: 'critical',
-        // Con una sola señal afectada se puede señalar el item exacto; con varias, la planta.
-        subject: stale.length === 1 ? stale[0].key : null,
+        // La gravedad la da la ANTIGÜEDAD, no el hecho de estar parado. Antes era `critical` por
+        // decreto: un sensor con una hora de retraso pintaba el mismo rojo que una planta muerta
+        // hace 25 días, y con seis plantas congeladas la bandeja era rojo permanente — que es la
+        // forma más rápida de que el rojo deje de significar nada. El dato para graduarlo ya se
+        // calculaba dos líneas más arriba y no se usaba.
+        severity: peor >= 24 ? 'critical' : 'warning',
+        // SIEMPRE la planta, nunca la señal suelta. Con `stale.length === 1 ? key : null` la clave
+        // de deduplicación cambiaba al pasar de una señal caída a dos, así que el MISMO problema
+        // se insertaba dos veces el mismo día.
+        subject: null,
+        // El título lleva la consecuencia y cabe en los ~40 caracteres que Android muestra. Antes
+        // estaba invertido: la planta COMPLETAMENTE ciega decía "sensor sin refrescar" —singular,
+        // sin número— y sonaba MENOS grave que "1 sensor sin refrescar".
         title: todas
-          ? `${displayName}: sensor sin refrescar`
-          : `${displayName}: ${stale.length} sensor${stale.length === 1 ? '' : 'es'} sin refrescar`,
+          ? 'Planta ciega: ningún dato se actualiza'
+          : `${stale.length} de ${entries.length} sensores sin refrescar`,
         message:
           `${quienes}. La lectura más vieja tiene ${humanAge(peor)}. El equipo responde, pero esos ` +
           `valores no cambian: lo más probable es que el sensor o su enlace de comunicación estén ` +
           `averiados. Lo que se ve en pantalla para esas señales no representa la situación actual.`,
+        action: 'No te fíes de esos valores en pantalla. Avisa al administrador para que revisen el sensor o su enlace.',
       });
     }
 
@@ -144,8 +156,15 @@ export class StaleDataDetector implements OnModuleInit, OnModuleDestroy {
       // hecho — visto en producción el 2026-08-15 con Carbonero y Vorágine.
       if (ES_NIVEL_DE_TANQUE.test(domainKey)) continue;
       if (!hasRangeAnomaly(signal)) continue;
-      const label = signal.label ?? domainKey;
-      const critical = Boolean(signal.outOfRange);
+      // Sin etiqueta NO se publica. `signal.label ?? domainKey` acababa enseñándole al operario
+      // "Soledad: outletFlow2 fuera de rango" — un identificador interno en inglés y camelCase.
+      // Callar es mejor que publicar jerga: el hueco se ve en `validate:mapping`, el aviso no.
+      const label = signal.label;
+      if (!label) {
+        this.logger.warn(`${snapshot.plantId}/${domainKey} está fuera de rango pero no tiene label: no se avisa`);
+        continue;
+      }
+      const fueraDeRangoFisico = Boolean(signal.outOfRange);
       const limite = isOutOfOperatingRange(signal)
         ? typeof signal.opMin === 'number' && (signal.value as number) < signal.opMin
           ? `por debajo del mínimo operativo (${signal.opMin}${signal.unit ? ' ' + signal.unit : ''})`
@@ -154,10 +173,21 @@ export class StaleDataDetector implements OnModuleInit, OnModuleDestroy {
       out.push({
         ...base,
         kind: 'signal_out_of_range',
-        severity: critical ? 'critical' : 'warning',
+        // LA SEVERIDAD ESTABA AL REVÉS. `outOfRange` significa fuera del rango FÍSICO, o sea que el
+        // instrumento miente: el nivel de −1,51 m de Soledad, que es un signo invertido en el PLC y
+        // no un problema de la planta, salía CRÍTICO todos los días y para siempre. Mientras tanto
+        // una turbiedad al doble del máximo normativo —agua que está saliendo así hacia las casas
+        // ahora mismo— salía en ámbar. Un instrumento roto es un aviso; el proceso fuera de su
+        // rango operativo es el que puede hacer daño.
+        severity: fueraDeRangoFisico ? 'warning' : 'critical',
         subject: domainKey,
-        title: `${displayName}: ${label} fuera de rango`,
-        message: `${label} marca ${signal.value}${signal.unit ? ' ' + signal.unit : ''}, ${limite}.`,
+        title: fueraDeRangoFisico ? `${label}: lectura imposible` : `${label} fuera de rango`,
+        // `.toFixed(2)` porque el valor es un flotante del PLC: sin formatear salía
+        // "pH marca 7.319999999999999". Todos los demás textos del sistema ya lo hacían.
+        message: `${label} marca ${formatValor(signal.value)}${signal.unit ? ' ' + signal.unit : ''}, ${limite}.`,
+        action: fueraDeRangoFisico
+          ? 'Ese valor no es físicamente posible: el instrumento o su configuración están mal. Avisa al administrador.'
+          : null,
       });
     }
     return out;
@@ -176,8 +206,23 @@ function signalAgeHours(signal: { ts: string | null }, now: Date): number | null
   return (now.getTime() - t) / 3_600_000;
 }
 
+/** Plural correcto. Sin esto, el primer aviso que alguien lee dice «tiene 1 horas». */
+function plural(n: number, singular: string, plural_: string): string {
+  return `${n} ${n === 1 ? singular : plural_}`;
+}
+
 function humanAge(hours: number): string {
-  if (hours < 1) return `${Math.round(hours * 60)} minutos`;
-  if (hours < 48) return `${Math.round(hours)} horas`;
-  return `${Math.floor(hours / 24)} días`;
+  if (hours < 1) return plural(Math.round(hours * 60), 'minuto', 'minutos');
+  if (hours < 48) return plural(Math.round(hours), 'hora', 'horas');
+  return plural(Math.floor(hours / 24), 'día', 'días');
+}
+
+/**
+ * Valor de una señal para mostrar. Los flotantes del PLC arrastran ruido binario y se imprimían
+ * crudos: «pH marca 7.319999999999999». Se recortan los decimales sin dejar ceros de adorno, para
+ * que un caudal de 23 no salga como «23.00».
+ */
+function formatValor(value: number | boolean | null): string {
+  if (typeof value !== 'number') return String(value);
+  return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(2)));
 }

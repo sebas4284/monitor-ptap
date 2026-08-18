@@ -20,7 +20,9 @@ function signal(over: Partial<SignalDto> = {}): SignalDto {
     usable: true,
     mappingStatus: 'mapped',
     confidence: 'inferred',
-    label: null,
+    // Etiqueta por defecto: el schema la exige en toda senal mapeada, y el detector NO publica
+    // un aviso sin ella (antes ensenaba el domainKey crudo: «Soledad: outletFlow2 fuera de rango»).
+    label: 'Caudal de entrada',
     ts: NOW.toISOString(),
     ...over,
   } as SignalDto;
@@ -55,8 +57,28 @@ test('CLAVE: dato de hace 17 h → avisa de sensor sin refrescar', () => {
   const out = detector().detect('Montebello', snapshot({ inletFlow1: signal({ ts: hoursAgo(17) }) }), NOW);
   assert.equal(out.length, 1);
   assert.equal(out[0].kind, 'sensor_stale');
-  assert.equal(out[0].severity, 'critical');
   assert.match(out[0].message, /17 horas/);
+});
+
+// La gravedad la da la ANTIGÜEDAD. Antes era `critical` por decreto para todo, así que un sensor
+// con una hora de retraso pintaba el mismo rojo que una planta muerta hace 25 días — y con seis
+// plantas congeladas a la vez la bandeja quedaba en rojo permanente, que es la forma más rápida de
+// que el rojo deje de significar algo.
+test('CLAVE: la severidad del sensor parado escala con la antigüedad', () => {
+  const reciente = detector().detect('Montebello', snapshot({ f: signal({ ts: hoursAgo(2) }) }), NOW);
+  assert.equal(reciente[0].severity, 'warning', 'dos horas no es una emergencia');
+
+  const viejo = detector().detect('Montebello', snapshot({ f: signal({ ts: hoursAgo(25) }) }), NOW);
+  assert.equal(viejo[0].severity, 'critical', 'pasado un día sí');
+
+  // Que el salto de gravedad pueda avisar aunque ya se avisara ese día depende de que la clave de
+  // deduplicación incluya la severidad (ver notification.repository).
+  assert.notEqual(reciente[0].severity, viejo[0].severity);
+});
+
+test('el plural es correcto: 1 hora, no 1 horas', () => {
+  const out = detector().detect('Montebello', snapshot({ f: signal({ ts: hoursAgo(1) }) }), NOW);
+  assert.match(out[0].message, /tiene 1 hora\./, out[0].message);
 });
 
 test('CLAVE: dato de hace 15 días → lo dice en días, no en horas', () => {
@@ -85,7 +107,7 @@ test('CLAVE: la frescura se evalúa POR SEÑAL, no por planta', () => {
   );
   assert.equal(out.length, 1);
   assert.equal(out[0].kind, 'sensor_stale');
-  assert.match(out[0].title, /2 sensores sin refrescar/);
+  assert.match(out[0].title, /2 de 3 sensores sin refrescar/);
   assert.match(out[0].message, /2 de 3 señales/);
   assert.match(out[0].message, /Cloro de salida/);
 });
@@ -96,18 +118,27 @@ test('si TODAS las señales están congeladas, el título habla de la planta ent
     snapshot({ a: signal({ ts: hoursAgo(367) }), b: signal({ ts: hoursAgo(367) }) }),
     NOW,
   );
-  assert.equal(out[0].title, 'KM18: sensor sin refrescar');
+  // El título estaba INVERTIDO: la planta completamente ciega decía «sensor sin refrescar»
+  // —singular, sin número— y sonaba MENOS grave que «1 sensor sin refrescar» de una planta sana con
+  // un sensor tonto caído. Fuera también el prefijo con el nombre de la planta, que se comía la
+  // mitad de los ~40 caracteres que Android muestra de un título.
+  assert.equal(out[0].title, 'Planta ciega: ningún dato se actualiza');
   assert.match(out[0].message, /Ninguna señal de esta planta/);
   assert.equal(out[0].subject, null);
 });
 
-test('una sola señal congelada apunta al item exacto', () => {
-  const out = detector().detect(
+// El `subject` es SIEMPRE la planta, nunca la señal suelta. Cuando dependía de cuántas señales
+// estuvieran caídas (`stale.length === 1 ? key : null`), la clave de deduplicación cambiaba al pasar
+// de una congelada a dos, y el MISMO problema se insertaba dos veces el mismo día.
+test('CLAVE: el sujeto del aviso de sensores no depende de cuántos caigan', () => {
+  const una = detector().detect('Sirena', snapshot({ ok: signal(), inletPh: signal({ ts: hoursAgo(30) }) }), NOW);
+  const dos = detector().detect(
     'Sirena',
-    snapshot({ ok: signal(), inletPh: signal({ ts: hoursAgo(30) }) }),
+    snapshot({ ok: signal(), inletPh: signal({ ts: hoursAgo(30) }), otra: signal({ ts: hoursAgo(30) }) }),
     NOW,
   );
-  assert.equal(out[0].subject, 'inletPh', 'con una sola afectada se puede navegar a ella');
+  assert.equal(una[0].subject, null);
+  assert.equal(dos[0].subject, null, 'si cambiara, el mismo problema se avisaría dos veces el mismo día');
 });
 
 test('una señal congelada NO se juzga además por rango (apuntaría a la causa equivocada)', () => {
@@ -132,21 +163,42 @@ test('conviven: una congelada y otra fresca fuera de rango generan DOS avisos di
   assert.deepEqual(out.map((n) => n.kind).sort(), ['sensor_stale', 'signal_out_of_range']);
 });
 
-test('señal fuera del rango FÍSICO → aviso crítico', () => {
+// LA SEVERIDAD ESTABA AL REVÉS, y estos dos tests son los que lo fijan. `outOfRange` significa
+// fuera del rango FÍSICO, o sea que el instrumento miente: el nivel de -1,51 m de Soledad es un
+// signo invertido en el PLC, no un problema de la planta, y salía CRÍTICO todos los días para
+// siempre. Mientras tanto una turbiedad al doble del máximo normativo —agua que está saliendo así
+// hacia las casas ahora mismo— salía en ámbar.
+test('señal fuera del rango FÍSICO → instrumento roto, no emergencia', () => {
   const out = detector().detect('Sirena', snapshot({ inletPh: signal({ outOfRange: true }) }), NOW);
   assert.equal(out.length, 1);
   assert.equal(out[0].kind, 'signal_out_of_range');
-  assert.equal(out[0].severity, 'critical');
+  assert.equal(out[0].severity, 'warning');
   assert.equal(out[0].subject, 'inletPh');
+  assert.match(out[0].title, /lectura imposible/);
+  assert.match(String(out[0].action), /instrumento/i, 'y dice a quién le toca arreglarlo');
 });
 
-test('señal fuera del rango OPERATIVO → advertencia, y dice qué límite se cruzó', () => {
+test('señal fuera del rango OPERATIVO → CRÍTICO: el proceso es lo que hace daño', () => {
   const bajo = detector().detect('Sirena', snapshot({ inletPh: signal({ value: 2, opMin: 6.5 }) }), NOW);
-  assert.equal(bajo[0].severity, 'warning');
+  assert.equal(bajo[0].severity, 'critical');
   assert.match(bajo[0].message, /por debajo del mínimo/);
 
   const alto = detector().detect('Sirena', snapshot({ inletPh: signal({ value: 12, opMax: 8.5 }) }), NOW);
   assert.match(alto[0].message, /por encima del máximo/);
+});
+
+test('el valor se formatea: nada de flotantes crudos del PLC en pantalla', () => {
+  const out = detector().detect(
+    'Sirena',
+    snapshot({ ph: signal({ value: 7.319999999999999, opMax: 7, label: 'pH' }) }),
+    NOW,
+  );
+  assert.match(out[0].message, /pH marca 7\.32 /, out[0].message);
+});
+
+test('una señal sin etiqueta NO se publica: callar es mejor que enseñar un domainKey', () => {
+  const out = detector().detect('Sirena', snapshot({ outletFlow2: signal({ outOfRange: true, label: null }) }), NOW);
+  assert.equal(out.length, 0, 'el schema ya exige label; esto es la red por si se cuela');
 });
 
 test('sin ningún timestamp no se inventa antigüedad', () => {

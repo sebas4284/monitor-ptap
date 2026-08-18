@@ -81,6 +81,12 @@ export interface TankFinding {
   suggestedMaxM: number;
   title: string;
   message: string;
+  /**
+   * Qué hacer, en una frase. `null` cuando la respuesta no le corresponde al operario: los dos
+   * casos de `maximo_mal` son tickets de calidad de datos para quien edita la configuración, y se
+   * le venían mandando a diario, indefinidamente, a gente que no puede arreglarlos.
+   */
+  action: string | null;
 }
 
 function numeric(sig: SignalDto | undefined): number | null {
@@ -171,14 +177,29 @@ export function analyzeTanks(
       // físico, no este. Soledad reporta -1.51 m con timestamp fresco (signo invertido en el PLC).
       if (levelM < 0) continue;
 
-      const cayendo = trend === null || trend < -CAMBIO_SIGNIFICATIVO_M;
+      // Solo se declara RECUPERÁNDOSE con evidencia de que sube. Antes, `cayendo` era
+      // `trend === null || trend < -CAMBIO_SIGNIFICATIVO_M`, así que un descenso pequeño —un
+      // `trend` de −0,005— caía en la rama de recuperación: imprimía «recuperándose (+menos de
+      // 1 cm)», con signo positivo sobre un cambio NEGATIVO, y encima degradaba la severidad de
+      // crítico a ámbar. Un tanque bajo mínimo que sigue bajando despacio salía en amarillo
+      // diciendo que iba a mejor.
+      const subiendo = trend !== null && trend > CAMBIO_SIGNIFICATIVO_M;
       const sinEntrada = caudal === null || caudal <= CAUDAL_MINIMO_LPS;
-      const verdict: TankVerdict = cayendo || sinEntrada ? 'bajo_minimo_cayendo' : 'bajo_minimo_recuperando';
+      const verdict: TankVerdict = subiendo && !sinEntrada ? 'bajo_minimo_recuperando' : 'bajo_minimo_cayendo';
 
-      const situacion =
-        verdict === 'bajo_minimo_cayendo'
-          ? `Está ${cm(minM - levelM)} por debajo y ${sinEntrada ? 'NO está entrando agua' : 'sigue bajando'}.`
-          : `Está ${cm(minM - levelM)} por debajo, pero recuperándose (+${cm(trend as number)} desde la última revisión).`;
+      // Y sin historial no se afirma la tendencia. Con `trend === null` (primer barrido tras
+      // reiniciar el backend) se decía «sigue bajando» sin nada con que saberlo — justo lo que la
+      // rama del extremo alto sí hace bien y lo que la cabecera de este archivo declara como
+      // doctrina.
+      const comoVa =
+        verdict === 'bajo_minimo_recuperando'
+          ? `pero recuperándose (+${cm(trend as number)} desde la última revisión)`
+          : sinEntrada
+            ? 'y NO está entrando agua'
+            : trend === null
+              ? 'y aún no hay historial para saber si sube o baja'
+              : 'y sigue bajando';
+      const situacion = `Está ${cm(minM - levelM)} por debajo ${comoVa}.`;
 
       out.push({
         tankN,
@@ -191,11 +212,18 @@ export function analyzeTanks(
         inletFlowLps: caudal,
         trendM: trend,
         suggestedMaxM: Math.max(maxObservado.get(`tank${tankN}`) ?? 0, levelM),
-        title: `${displayName}: el tanque ${tankN} está por debajo del mínimo de servicio`,
+        // El nombre que el operario conoce, no el índice. `label` se venía calculando aquí mismo
+        // (línea de arriba) y se tiraba: en planta se dice «Tanque de contacto», no «el tanque 3».
+        // Y sin el prefijo de la planta, que ya viaja aparte en `plantId` y se comía la mitad de
+        // los ~40 caracteres que Android muestra de un título.
+        title: `${signal.label ?? `Tanque ${tankN}`}: por debajo del mínimo de servicio`,
         message:
           `El nivel (${levelM.toFixed(2)} m) bajó del mínimo de servicio (${minM.toFixed(2)} m). ` +
           'Por debajo de ese nivel la planta no consigue llevar agua a las casas. ' +
           `${situacion} Datos: ${contextoDe(snapshot, tankN, levelM, maxM, caudal)}.`,
+        action: sinEntrada
+          ? 'No está entrando agua al tanque: revisa la válvula de entrada y la bomba.'
+          : 'Reduce la salida o aumenta la entrada hasta recuperar el nivel mínimo.',
       });
       continue;
     }
@@ -212,6 +240,14 @@ export function analyzeTanks(
     let verdict: TankVerdict;
     let porque: string;
     let recomendacion: string;
+    /**
+     * Qué hacer. `null` cuando la respuesta no es del operario sino de quien edita la
+     * configuración: los dos casos de `maximo_mal` son tickets de calidad de datos, y hasta ahora
+     * se le mandaban a diario y para siempre al móvil de alguien que no puede arreglarlos —
+     * Carbonero y Vorágine llevan meses generándolos. Sin acción, el front los pinta como
+     * informativos en vez de exigirle algo a quien no puede hacerlo.
+     */
+    let accion: string | null;
 
     if (excessPct > TOLERANCIA_REBOSE_PCT) {
       verdict = 'maximo_mal';
@@ -219,10 +255,12 @@ export function analyzeTanks(
         `El nivel está ${cm(levelM - maxM)} por encima del máximo configurado. Un tanque que rebosa ` +
         'no puede subir tanto sobre su rebosadero: el agua sobrante se va sola.';
       recomendacion = `Lo más probable es que el máximo esté mal medido. Los datos respaldan al menos ${suggestedMaxM.toFixed(2)} m.`;
+      accion = null;
     } else if (trendM !== null && trendM > CAMBIO_SIGNIFICATIVO_M) {
       verdict = 'maximo_mal';
       porque = `El nivel SIGUE SUBIENDO (+${cm(trendM)} desde la última revisión) estando ya por encima del máximo.`;
       recomendacion = `Si estuviera rebosando no podría seguir subiendo. Revisar el máximo: los datos respaldan al menos ${suggestedMaxM.toFixed(2)} m.`;
+      accion = null;
     } else if (
       trendM !== null &&
       Math.abs(trendM) <= CAMBIO_SIGNIFICATIVO_M &&
@@ -234,6 +272,7 @@ export function analyzeTanks(
         `Entran ${caudal.toFixed(1)} l/s y el nivel NO sube (${cm(Math.abs(trendM))} de cambio). ` +
         'Si entra agua y el nivel se mantiene, el agua se está yendo por el rebosadero.';
       recomendacion = 'Revisar la planta: se está perdiendo agua tratada.';
+      accion = 'Cierra la entrada al tanque o aumenta la salida: mientras tanto se pierde agua ya tratada por el rebosadero.';
     } else {
       verdict = 'indeterminado';
       porque =
@@ -241,6 +280,7 @@ export function analyzeTanks(
         (trendM === null ? ', y aún no hay historial suficiente para saber si sube o se mantiene.' : ` y ${trendM < 0 ? 'está bajando' : 'se mantiene'}.`) +
         (caudal === null ? ' Esta planta no tiene caudal de entrada mapeado, así que no se puede confirmar un rebose.' : '');
       recomendacion = `Vigilar. Si se repite sin llegar a derramar, el máximo configurado (${maxM.toFixed(2)} m) está corto.`;
+      accion = null;
     }
 
     const pctTxt = `${(100 + excessPct).toFixed(1)} %`;
@@ -257,11 +297,15 @@ export function analyzeTanks(
       inletFlowLps: caudal,
       trendM,
       suggestedMaxM,
+      // Nombre real del tanque y sin prefijo de planta, por lo mismo que en la rama del mínimo:
+      // el operario conoce «Tanque de contacto», no «el tanque 3», y Android corta el título a
+      // unos 40 caracteres — con el prefijo se perdía justo la parte que informa.
       title:
         verdict === 'rebosando'
-          ? `${displayName}: el tanque ${tankN} se está rebosando`
-          : `${displayName}: el tanque ${tankN} pasa del máximo (${pctTxt})`,
+          ? `${signal.label ?? `Tanque ${tankN}`}: se está rebosando`
+          : `${signal.label ?? `Tanque ${tankN}`}: pasa del máximo (${pctTxt})`,
       message: `${porque} ${recomendacion} Datos: ${contexto}.`,
+      action: accion,
     });
   }
 

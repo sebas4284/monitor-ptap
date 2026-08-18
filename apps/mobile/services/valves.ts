@@ -182,8 +182,20 @@ export interface CommandVerdict {
   ok: boolean;
   /** La orden salió al PLC (el bit se escribió), aunque el equipo no haya respondido. */
   signalSent: boolean;
+  /**
+   * Cómo se pinta el resultado. Tres estados, no dos, y esa es la corrección que importa.
+   *
+   * Con un booleano, el desenlace «la señal salió pero nadie puede confirmar que la válvula se
+   * movió» devolvía `ok: true` y el diálogo lo pintaba **verde con un tick**, sobre un texto que
+   * decía «Verifique en sitio». El semáforo afirmaba éxito y la letra pequeña pedía ir a mirar:
+   * nadie va a mirar. Ahora ese caso es ÁMBAR, que es lo que significa de verdad — ni éxito ni
+   * fallo, sino incertidumbre que alguien tiene que resolver con los ojos.
+   */
+  tone: 'success' | 'warning' | 'danger';
   title: string;
   message: string;
+  /** Códigos internos y valores crudos: útiles para reportar, nunca dentro de la frase. */
+  technical?: string | null;
 }
 
 /**
@@ -200,22 +212,27 @@ export function interpretCommand(r: ValveCommandResult, verb: 'open' | 'close', 
     return {
       ok: true,
       signalSent: true,
+      tone: 'success',
       title: `Orden confirmada`,
       message: `${valveName}: el equipo confirmó el cambio. Ahora está ${nuevoEstado}.`,
     };
   }
 
   // La orden salió y el eco la verificó, pero el canal de estado de este sitio no está verificado
-  // en campo: no hay con qué afirmar NI negar que la válvula se movió. Se informa exactamente eso.
+  // en campo: no hay con qué afirmar NI negar que la válvula se movió. Se informa exactamente eso —
+  // y en ÁMBAR, porque pintarlo de verde convertía «ve a comprobarlo» en «listo, ya está».
   if (r.status === 'sent') {
     return {
       ok: true,
       signalSent: true,
-      title: 'Orden enviada al equipo',
+      tone: 'warning',
+      title: 'Verifique en la planta: no se pudo confirmar',
       message:
-        `${valveName}: la señal de ${accion} se escribió en el PLC y quedó verificada en el canal ` +
-        `(bit ${r.writtenValue}). Esta planta no reporta un estado eléctrico verificado, así que el ` +
-        `sistema no puede confirmar por sí solo que la válvula se movió. Verifique en sitio.`,
+        `${valveName}: la orden de ${accion} salió y quedó registrada. Esta planta no informa del ` +
+        `estado real de la válvula, así que el sistema no puede saber si se movió. Compruébelo en sitio.`,
+      // El valor crudo del bit fuera de la frase: no significa nada para quien opera y rompía la
+      // lectura. Sigue disponible para reportar una incidencia.
+      technical: `valor escrito: ${r.writtenValue}`,
     };
   }
 
@@ -223,10 +240,11 @@ export function interpretCommand(r: ValveCommandResult, verb: 'open' | 'close', 
     return {
       ok: false,
       signalSent: false,
+      tone: 'danger',
       title: 'No se pudo enviar la señal',
       message:
-        `${valveName}: el PLC RECHAZÓ la escritura, así que la orden de ${accion} no salió. ` +
-        `Revisa la conexión con el equipo y vuelve a intentar.`,
+        `${valveName}: el equipo RECHAZÓ la orden de ${accion}, así que no salió. ` +
+        `Revisa la conexión con la planta y vuelve a intentarlo.`,
     };
   }
 
@@ -236,12 +254,13 @@ export function interpretCommand(r: ValveCommandResult, verb: 'open' | 'close', 
     return {
       ok: false,
       signalSent: eco,
-      title: eco ? 'La señal salió, el equipo no respondió' : 'La orden no se pudo confirmar',
+      tone: 'danger',
+      title: eco ? 'La válvula no respondió' : 'La orden no se pudo confirmar',
       message: eco
-        ? `${valveName}: la señal de ${accion} SÍ se escribió en el PLC (bit ${r.writtenValue} verificado), ` +
-          `pero el equipo no reportó el cambio de estado. Es probable que exista una FALLA FÍSICA que impida ` +
-          `accionar la válvula. La app mantiene el último estado real leído.`
+        ? `${valveName}: la orden de ${accion} salió correctamente, pero la válvula no cambió de estado. ` +
+          `Lo más probable es que esté trabada o sin energía. Revísala en sitio.`
         : `${valveName}: no se pudo verificar que la orden de ${accion} llegara al equipo. No se asume ningún cambio.`,
+      technical: eco ? `valor escrito: ${r.writtenValue}, verificado` : null,
     };
   }
 
@@ -251,19 +270,22 @@ export function interpretCommand(r: ValveCommandResult, verb: 'open' | 'close', 
     return {
       ok: false,
       signalSent: false,
-      title: 'No se envió: enclavamiento',
+      tone: 'danger',
+      title: 'No se envió: falta dato fresco',
       message:
-        `${valveName}: por seguridad no se acciona sin datos frescos del sitio. ` +
-        `Espera a que la planta vuelva a reportar y reintenta. (${reason})`,
+        `${valveName}: por seguridad no se acciona una válvula sin lecturas recientes de la planta. ` +
+        `Espera a que vuelva a reportar y reinténtalo.`,
+      technical: reason,
     };
   }
   if (reason === 'FORBIDDEN') {
-    return { ok: false, signalSent: false, title: 'Sin permiso', message: `Tu rol no puede operar válvulas.` };
+    return { ok: false, signalSent: false, tone: 'danger', title: 'Sin permiso', message: `Tu rol no puede operar válvulas.` };
   }
   if (reason === 'WRITES_DISABLED_INSECURE_SESSION') {
     return {
       ok: false,
       signalSent: false,
+      tone: 'danger',
       title: 'Escritura deshabilitada',
       message: `El servidor tiene el canal de escritura bloqueado por configuración. Avisa al administrador.`,
     };
@@ -272,6 +294,7 @@ export function interpretCommand(r: ValveCommandResult, verb: 'open' | 'close', 
     return {
       ok: false,
       signalSent: false,
+      tone: 'danger',
       title: `Comando no disponible`,
       message: `${valveName}: la orden de ${accion} no está definida para esta válvula.`,
     };
@@ -280,25 +303,36 @@ export function interpretCommand(r: ValveCommandResult, verb: 'open' | 'close', 
     return {
       ok: false,
       signalSent: false,
+      tone: 'danger',
       title: 'Válvula no operable',
       message: `${valveName} no tiene canal de mando configurado.`,
     };
   }
   if (reason === 'IN_PROGRESS') {
-    return { ok: false, signalSent: false, title: 'Orden en curso', message: `${valveName}: ya hay una orden ejecutándose. Espera el resultado.` };
+    return { ok: false, signalSent: false, tone: 'warning', title: 'Orden en curso', message: `${valveName}: ya hay una orden ejecutándose. Espera el resultado.` };
   }
   if (reason === 'SESSION_EXPIRED') {
-    return { ok: false, signalSent: false, title: 'Sesión vencida', message: 'Vuelve a iniciar sesión.' };
+    return { ok: false, signalSent: false, tone: 'danger', title: 'Sesión vencida', message: 'Vuelve a iniciar sesión.' };
   }
   if (reason === 'NETWORK') {
     return {
       ok: false,
       signalSent: false,
+      tone: 'danger',
       title: 'Sin conexión con el servidor',
       message: `No se pudo enviar la orden de ${accion}. No se sabe si salió: verifica el estado antes de reintentar.`,
     };
   }
-  return { ok: false, signalSent: false, title: 'La orden no se ejecutó', message: `${valveName}: ${reason || 'motivo desconocido'}.` };
+  // El fallback NO vuelca el código del backend como si fuese español: se leía
+  // "Válvula de salida: RATE_LIMITED." El código va aparte, para poder reportarlo.
+  return {
+    ok: false,
+    signalSent: false,
+    tone: 'danger',
+    title: 'La orden no se ejecutó',
+    message: `${valveName}: el servidor rechazó la orden y no llegó a la planta.`,
+    technical: reason || 'motivo desconocido',
+  };
 }
 
 // ── Detección de operación MANUAL ─────────────────────────────────────────────────────────────

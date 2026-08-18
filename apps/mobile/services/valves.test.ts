@@ -178,8 +178,10 @@ test('interpretCommand: 502 con eco verificado → la señal SÍ salió, avisa d
     'Válvula 1',
   );
   assert.equal(v.ok, false, 'no se puede afirmar que la válvula se movió');
-  assert.equal(v.signalSent, true, 'pero el bit se escribió: eso NO es un fallo del canal');
-  assert.match(v.message, /FALLA FÍSICA/);
+  assert.equal(v.signalSent, true, 'pero la orden salió: eso NO es un fallo del canal');
+  assert.match(v.message, /trabada o sin energía/, 'se dice la causa probable en cristiano');
+  assert.equal(v.tone, 'danger');
+  assert.match(String(v.technical), /verificado/, 'el detalle técnico existe, pero fuera de la frase');
 });
 
 test('interpretCommand: WRITE_REJECTED → la señal NO salió', () => {
@@ -191,7 +193,9 @@ test('interpretCommand: WRITE_REJECTED → la señal NO salió', () => {
 test('interpretCommand: interlock y permisos se explican sin culpar al equipo', () => {
   const il = interpretCommand(res({ http: 409, status: 'rejected', reason: 'INTERLOCK_FAILED: snapshot frozen' }), 'open', 'V1');
   assert.equal(il.signalSent, false);
-  assert.match(il.title, /enclavamiento/i);
+  assert.match(il.title, /dato fresco/i, 'sin la palabra «enclavamiento», que no está en el vocabulario de nadie');
+  assert.equal(il.technical, 'INTERLOCK_FAILED: snapshot frozen', 'el código va aparte, para reportarlo');
+  assert.doesNotMatch(il.message, /INTERLOCK_FAILED/, 'y NUNCA dentro de la frase');
   const fb = interpretCommand(res({ http: 403, status: 'rejected', reason: 'FORBIDDEN' }), 'open', 'V1');
   assert.match(fb.title, /permiso/i);
 });
@@ -350,4 +354,36 @@ test('valves: commandable false solo en la que no tiene mando; ausente = acciona
   const [salida, entrada] = valvesFromSnapshot(snap(DOS_VALVULAS));
   assert.equal(salida.commandable, true, 'sin el campo, la válvula se acciona como siempre');
   assert.equal(entrada.commandable, false);
+});
+
+// El operario no tiene por qué saber qué es un bit, un PLC ni un enclavamiento. Este test recorre
+// TODOS los desenlaces y bloquea la jerga en el texto visible; los códigos siguen disponibles en
+// `technical`, que es donde sirven para reportar una incidencia por teléfono.
+test('interpretCommand: ningún desenlace suelta jerga en el texto que se lee', () => {
+  const casos: ValveCommandResult[] = [
+    res({ http: 200, status: 'confirmed', confirmedValue: 16385 }),
+    res({ http: 202, status: 'sent', writeVerified: true, writtenValue: 4096 }),
+    res({ http: 502, status: 'failed', reason: 'WRITE_REJECTED' }),
+    res({ http: 502, status: 'failed', reason: 'READBACK_UNCONFIRMED', writeVerified: true }),
+    res({ http: 409, status: 'rejected', reason: 'INTERLOCK_FAILED: snapshot frozen' }),
+    res({ http: 429, status: 'rejected', reason: 'RATE_LIMITED' }),
+    res({ http: 0, status: 'error', reason: 'NETWORK' }),
+  ];
+  const prohibido = /bit|PLC|enclavamiento|read-?back|snapshot|[A-Z]{4,}_[A-Z_]+/;
+  for (const r of casos) {
+    const v = interpretCommand(r, 'open', 'Válvula 1');
+    assert.doesNotMatch(v.title, prohibido, `título con jerga: ${v.title}`);
+    assert.doesNotMatch(v.message, prohibido, `mensaje con jerga: ${v.message}`);
+    assert.ok(['success', 'warning', 'danger'].includes(v.tone));
+  }
+});
+
+// El desenlace que motivó el tercer color: la orden salió y nadie puede confirmar que la válvula se
+// movió. Con `ok` booleano se pintaba VERDE con un tick sobre un texto que pedía ir a comprobarlo en
+// planta. El semáforo ganaba y nadie iba.
+test('interpretCommand: «no se pudo confirmar» es ÁMBAR, nunca verde', () => {
+  const v = interpretCommand(res({ http: 202, status: 'sent', writeVerified: true, writtenValue: 4096 }), 'open', 'V1');
+  assert.equal(v.tone, 'warning');
+  assert.notEqual(v.tone, 'success', 'un tick verde convierte «ve a mirar» en «ya está»');
+  assert.match(v.title, /[Vv]erifique/);
 });

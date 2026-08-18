@@ -1,6 +1,7 @@
 import { Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
 import { PlantCache } from '../../infrastructure/connectivity/pipeline/plant-cache';
 import { PlantPipelineService } from '../../infrastructure/connectivity/pipeline/plant-pipeline.service';
+import { dedupeDay } from './notification-day';
 import { NotificationRepository, type NewNotification } from './notification.repository';
 import { analyzeTanks, type TankSample } from './tank-overflow.analyzer';
 
@@ -75,7 +76,8 @@ export class TankOverflowDetector implements OnModuleInit, OnModuleDestroy {
             subject: `tank${f.tankN}`,
             title: f.title,
             message: f.message,
-            day: now.toISOString().slice(0, 10),
+            action: f.action,
+            day: dedupeDay(now),
           };
           if (await this.repo.create(n)) created++;
         }

@@ -17,6 +17,13 @@ import type { CommandVerdict } from '../services/valves';
  * pestaña, distingue visualmente éxito de fallo, y es legible por un lector de pantalla. Lo que
  * conserva a propósito es la parte que importa — que no desaparece hasta que alguien lo cierra.
  */
+/** Tres desenlaces, tres colores. El ámbar es el que faltaba: «salió, pero nadie lo confirma». */
+const TONO: Record<CommandVerdict['tone'], { color: string; icon: keyof typeof Ionicons.glyphMap }> = {
+  success: { color: Colors.success, icon: 'checkmark-circle' },
+  warning: { color: Colors.warning, icon: 'help-circle' },
+  danger: { color: Colors.danger, icon: 'alert-circle' },
+};
+
 interface Props {
   /** Veredicto a mostrar; `null` cierra el diálogo. */
   verdict: (CommandVerdict & { valveName: string }) | null;
@@ -29,9 +36,11 @@ export function ValveResultDialog({ verdict, onClose }: Props) {
 
   if (!verdict) return null;
 
-  const ok = verdict.ok;
-  const color = ok ? Colors.success : Colors.danger;
-  const icon = ok ? 'checkmark-circle' : 'alert-circle';
+  // El color sale de `tone`, NO de `ok`. Con el booleano, el desenlace «la orden salió pero nadie
+  // puede confirmar que la válvula se movió» era `ok: true` y se pintaba verde con un tick, encima
+  // de un texto que pedía ir a comprobarlo en planta. El semáforo decía «hecho» y la letra pequeña
+  // decía «ve a mirar»: gana el semáforo, y nadie va.
+  const { color, icon } = TONO[verdict.tone];
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
@@ -54,6 +63,9 @@ export function ValveResultDialog({ verdict, onClose }: Props) {
 
           <ScrollView style={styles.messageWrap} contentContainerStyle={{ paddingRight: 4 }}>
             <Text style={styles.message}>{verdict.message}</Text>
+            {/* Códigos y valores crudos, fuera de la frase y en pequeño: no significan nada para
+                quien opera, pero son lo que hace falta para reportar la incidencia por teléfono. */}
+            {verdict.technical ? <Text style={styles.technical}>{verdict.technical}</Text> : null}
           </ScrollView>
 
           <TouchableOpacity
@@ -103,7 +115,8 @@ const styles = StyleSheet.create({
   title: { fontSize: 16, fontWeight: '800', color: Colors.textPrimary, lineHeight: 21 },
   valve: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
   messageWrap: { maxHeight: 260 },
-  message: { fontSize: 13, lineHeight: 19, color: Colors.textSecondary },
+  message: { fontSize: 14, lineHeight: 20, color: Colors.textSecondary },
+  technical: { fontSize: 11, lineHeight: 15, color: Colors.textSecondary, opacity: 0.7, marginTop: 8 },
   btn: { alignItems: 'center', justifyContent: 'center', paddingVertical: 12, borderRadius: 10 },
   btnText: { fontSize: 14, fontWeight: '800', color: Colors.bg },
 });
