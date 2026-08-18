@@ -179,6 +179,72 @@ Rechazos (`REJECT`) y fallos (`FAIL`) del `WriteService`. Todos quedan auditados
 | **SRV-05** | Token de métricas inválido | `/metrics` protegido por Bearer y el token no coincide (o falta) | 401 en el scrape | [metrics-auth.guard.ts](../apps/api/src/infrastructure/metrics/metrics-auth.guard.ts) |
 | **SRV-06** | Fallo de BD durante un comando | La BD no responde al reservar/finalizar en `command_log` (Fase 5) | Error del comando | [command-log.repository.ts](../apps/api/src/modules/commands/command-log.repository.ts) |
 | **SRV-07** | El servidor sin salida a internet | La sonda servidor→internet (8.8.8.8:53) falla: el problema es la red/proveedor del **servidor de monitoreo**, no la planta | Prueba de ruta (admin) | [route-check.service.ts](../apps/api/src/infrastructure/connectivity/route-check.service.ts) |
+| **SRV-08** | 🔴 **Arranca, vive, y nunca escucha** | El proceso queda vivo consumiendo memoria pero jamás abre el `:4000` **y no emite un solo log**. `pm2` lo reporta `online`; todos los endpoints dan `000`. **Dos causas distintas con el mismo síntoma** — ver abajo | `ss -tln \| grep 4000` vacío con el proceso corriendo | [main.ts](../apps/api/src/main.ts) |
+
+### SRV-08 — el modo de fallo más engañoso del proyecto
+
+Lo engañoso es que **`pm2 status` dice `online`**: no hay bucle de reinicios, no hay traza, no hay
+nada que mirar en los logs. Se ha producido por dos causas sin relación entre sí:
+
+| Causa | Cuándo | Cura |
+|---|---|---|
+| `pm2 restart --update-env` desde SSH no interactivo: pm2 reemplaza el entorno del proceso por el del shell, que es mínimo | 2026-07-31, ~3 min de caída | `pm2 restart ptap-api` **a secas**. La bandera ya se quitó de `deploy.sh` |
+| **`dist/` obsoleto**: `tsc` compila lo que existe pero **no borra las salidas de fuentes eliminadas**. Un despliegue que borra archivos deja huérfanos que envenenan el build | 2026-08-11, ~10 min de caída (quedó `dist/modules/hmi/` tras el commit `622ecaf`) | `pm2 stop ptap-api && rm -rf apps/api/dist packages/shared/dist && npm run build && pm2 start ptap-api` |
+
+> **Regla:** si el despliegue **elimina** archivos fuente, borrar `dist/` a mano. `deploy.sh` no lo
+> hace. Diagnóstico rápido para distinguirlas: `ls apps/api/dist/modules/` — si aparece un módulo
+> que ya no existe en `src/`, es la segunda.
+
+### SRV-09 — el puente entrega CERO datos y se reporta sano (2026-08-13, 41 h)
+
+Peor que SRV-08: allí al menos todo devolvía `000`. Aquí **todo respondía 200** y la aplicación
+mostraba números plausibles… de hacía dos días.
+
+**Qué pasó.** El PLC maestro se cayó, volvió, y el puente reconectó correctamente (`stop()` →
+backoff → `Connected`, 41/41 MonitoredItems). Pero `FrameCoalescer.stop()` marca `stopped = true` y
+**no existía `start()`**: los adaptadores reutilizan la instancia, así que desde esa primera
+reconexión `add()` fue un no-op permanente. El PLC hablaba, nosotros contábamos sus notificaciones,
+y tirábamos todos los frames a la basura.
+
+**Por qué nadie lo vio.** TODOS los indicadores se miden **aguas arriba** del coalescer:
+
+| Indicador | Decía | Realidad |
+|---|---|---|
+| `notificationsTotal` | 679.620 → 679.708 en 20 s | cierto, pero no llegaban al dominio |
+| `lastNotificationAt` | de hace segundos | cierto |
+| `bridgeStatus` / `buffersActive` | `Connected` / 41-0 | cierto |
+| `reconnectCount` | **0** | había reconectado dos veces |
+| snapshot de las 12 plantas | — | **41 h sin cambiar** |
+
+**Cómo se diagnostica en 30 s.** `curl /api/health/opc` y comparar los DOS extremos: si
+`lastNotificationAt` avanza y `lastFrameEmittedAt` se queda atrás, es esto. Se añadió esa métrica
+justo por este incidente.
+
+**Cura inmediata:** `pm2 restart ptap-api` (instancias nuevas). **Arreglo:** `FrameCoalescer.start()`
+llamado desde el `start()` de ambos adaptadores, + detección activa que recicla la sesión si entran
+notificaciones y no sale ningún frame, + `reconnectCount` contando también las recuperaciones que
+pasan por `Faulted`.
+
+> **La lección que vale más que el bug:** vigilar solo la ENTRADA de una tubería no dice nada sobre
+> si algo sale por el otro lado. Todo indicador de salud debe medirse lo más cerca posible del
+> resultado que le importa al usuario, no de la primera etapa.
+
+### DAT-09 — `stable` sin cota superior ocultaba plantas muertas (2026-08-15)
+
+`LivenessTracker` tenía tres estados y una omisión: `windowSec` se configuraba, se exponía en el
+DTO y **no se consultaba en ninguna parte**. Con el puente `Connected`, el veredicto era
+`ageSec <= liveSec ? 'live' : 'stable'` — sin límite por arriba. Una planta con datos de **25 días**
+devolvía `stable` y `usable: true`, indistinguible de un tanque quieto 30 segundos.
+
+Nació de una corrección legítima (antes marcaba `stale` a plantas en régimen estable, que es un
+falso positivo) que se pasó de largo: quitó el criterio de reloj **entero** en vez de alargarlo.
+
+Ahora: dentro de `windowSec` es `stable` (operación normal); pasada la ventana es `frozen`, y la
+señal pasa a `usable: false` con motivo `BRIDGE_STALE`. Verificado en KM18: antes `stable` con
+25 días y dato usable; ahora `FROZEN` e inutilizable.
+
+> **Regla:** un estado que significa "todo bien" no puede ser también el destino de todo lo que no
+> encaja en los demás. Si `stable` es el `else`, tarde o temprano esconde una avería.
 
 ---
 
@@ -209,7 +275,7 @@ RBAC, PlantScopeGuard, SRV-04, revocación por relectura en BD); estos son del l
 ## CFG — Configuración / arranque
 
 Errores de puesta en marcha; no pasan por la UI, se ven en el arranque. Detalle en `docs/SETUP.md` y
-`docs/SETUP_AGENT.md`.
+`docs/SETUP.md`.
 
 | Código | Título | Síntoma | Solución | Ruta |
 |---|---|---|---|---|

@@ -6,7 +6,7 @@ sistema operativo, hardware, software a instalar, red/puertos, accesos/credencia
 
 - **Qué se monta:** el **backend** del proyecto (`@ptap/api`) — API REST + WebSocket en tiempo real
   + puente OPC UA al PLC. El móvil es un cliente aparte (APK).
-- **Runbook de instalación paso a paso (comandos):** [DEPLOY_VPS.md](DEPLOY_VPS.md).
+- **Runbook de instalación paso a paso (comandos):** [RUNBOOK_PRODUCCION.md](RUNBOOK_PRODUCCION.md).
 
 ---
 
@@ -78,7 +78,7 @@ Desglose del disco: SO (~8–10 GB) + `node_modules` del proyecto (~1.5–2 GB, 
 ## 5. Accesos y credenciales a conseguir (antes de montar)
 
 - [ ] **Acceso SSH** a la VM (usuario + clave; IP pública fija IPv4).
-- [ ] **Dominio + DNS:** `ptaps.telcobras.com` con permiso para crear un registro **A** apuntando a
+- [ ] **Dominio + DNS:** `aquora.xpertic.co` con permiso para crear un registro **A** apuntando a
       la IP de la VM (necesario para el certificado TLS).
 - [ ] **Repositorio GitHub** (privado): acceso de **lectura** para la VM — vía *deploy key* SSH
       (recomendado) o un *Personal Access Token*. Ver §6.
@@ -86,7 +86,7 @@ Desglose del disco: SO (~8–10 GB) + `node_modules` del proyecto (~1.5–2 GB, 
       en la VM.
 - [ ] **Ruta al PLC** resuelta (IP/host alcanzable + puerto OPC UA).
 - [ ] **Secretos a generar en la VM** (no se piden a nadie): `JWT_SECRET` y
-      `PASSWORD_PEPPER_V1_BASE64` (64 bytes) — comandos en [DEPLOY_VPS.md](DEPLOY_VPS.md) §5.
+      `PASSWORD_PEPPER_V1_BASE64` (64 bytes) — comandos en [RUNBOOK_PRODUCCION.md](RUNBOOK_PRODUCCION.md) §5.
 
 ---
 
@@ -141,10 +141,10 @@ añadir un workflow de *deploy* que, al hacer *push* a `yosh`, entre por SSH a l
    con root/sudo real**, no un hosting compartido "jaulado". Verificar con `sudo -v` y `node -v`.
 2. **La VM alcanza el PLC** (§4). Es el punto que decide si llega la telemetría.
 
-### Cómo se arranca (detalle en DEPLOY_VPS.md)
-Se ejecuta con **`tsx src/main.ts`** bajo PM2 (no `node dist/main.js`): el paquete compartido
-`@ptap/shared` expone su `main` como TypeScript y Node no lo ejecuta directo. Funciona sin tocar
-código; el ajuste "correcto" a futuro es compilar ese paquete a JS.
+### Cómo se arranca (detalle en RUNBOOK_PRODUCCION.md §11.4)
+Se ejecuta con **`node dist/main.js`** bajo PM2 (`ecosystem.config.js`). `npm run build` compila
+primero `@ptap/shared` a JS y luego el API, así que ya no hace falta el workaround de `tsx` que se
+usaba cuando el paquete compartido solo existía como TypeScript.
 
 ---
 

@@ -7,24 +7,17 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  Alert,
   ActivityIndicator,
   StyleSheet,
   Image,
 } from 'react-native';
-
-function alertWeb(title: string, message: string) {
-  if (Platform.OS === 'web') {
-    window.alert(`${title}\n${message}`);
-  } else {
-    Alert.alert(title, message);
-  }
-}
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import { AppUpdateBanner } from '../../components/AppUpdateBanner';
 import { useAuth } from '../../context/AuthContext';
 import { apiLogin } from '../../services/auth';
+import { toast } from '../../services/toast-store';
 import Colors from '../../constants/colors';
 
 export default function LoginScreen() {
@@ -36,11 +29,11 @@ export default function LoginScreen() {
 
   async function handleLogin() {
     if (!email.trim() || !password.trim()) {
-      alertWeb('Campos requeridos', 'Por favor completa todos los campos.');
+      toast.error('Campos requeridos', 'Por favor completa todos los campos.');
       return;
     }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
-      alertWeb('Correo inválido', 'Escribe un correo con formato válido.');
+      toast.error('Correo inválido', 'Escribe un correo con formato válido.');
       return;
     }
     setIsLoading(true);
@@ -51,7 +44,7 @@ export default function LoginScreen() {
     } catch (err) {
       // Mostrar el motivo REAL: un servidor caído o un rate-limit no son una contraseña mala.
       // Decir siempre "credenciales inválidas" manda a la gente a revisar lo que no falla.
-      alertWeb('Error de acceso', err instanceof Error ? err.message : 'No se pudo iniciar sesión.');
+      toast.error('Error de acceso', err instanceof Error ? err.message : 'No se pudo iniciar sesión.');
     } finally {
       setIsLoading(false);
     }
@@ -109,7 +102,12 @@ export default function LoginScreen() {
               autoCapitalize="none"
               maxLength={200}
             />
-            <TouchableOpacity onPress={() => setShowPassword(v => !v)} hitSlop={8}>
+            <TouchableOpacity
+              onPress={() => setShowPassword(v => !v)}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel={showPassword ? 'Ocultar la contraseña' : 'Mostrar la contraseña'}
+            >
               <Ionicons
                 name={showPassword ? 'eye-off-outline' : 'eye-outline'}
                 size={20}
@@ -141,6 +139,12 @@ export default function LoginScreen() {
             <Text style={styles.btnOutlineText}>Crear cuenta nueva</Text>
           </TouchableOpacity>
           <Text style={styles.hint}>Las cuentas nuevas se crean como Civil (solo consulta).</Text>
+
+          {/* En WEB ofrece descargar la app (mismo gesto que "crear cuenta nueva"); en la APK avisa
+              si la instalada se quedó atrás. El propio componente decide cuál aplica y si mostrarse
+              — aquí no hace falta ramificar por plataforma. */}
+          <AppUpdateBanner modo="descarga" />
+          <AppUpdateBanner modo="actualizacion" />
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>

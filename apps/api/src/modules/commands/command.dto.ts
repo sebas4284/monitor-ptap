@@ -42,6 +42,16 @@ export const FAIL = {
    * (hallazgo de campo 2026-07-30).
    */
   WRITE_REJECTED: 'WRITE_REJECTED',
+  /**
+   * La señal se sostuvo hasta el tope y la REALIMENTACIÓN nunca llegó (`pulse.until`): el final de
+   * carrera no avisó de que la válvula terminara su recorrido. El bit se soltó igualmente.
+   *
+   * Es un motivo aparte de READBACK_UNCONFIRMED por lo que significa cada uno: aquí el equipo no
+   * dijo "he llegado", allí dijo algo que no cuadra con lo esperado. Un final de carrera averiado y
+   * una palabra de estado mal interpretada son averías distintas, y un solo motivo para las dos
+   * borra justo el dato que sirve para distinguirlas.
+   */
+  HOLD_FEEDBACK_TIMEOUT: 'HOLD_FEEDBACK_TIMEOUT',
 } as const;
 
 /** Motivos de desenlace `sent`: se escribió y se verificó, pero no hay con qué confirmar el estado. */

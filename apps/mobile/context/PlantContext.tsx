@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useAuth } from './AuthContext';
 
 /** Las 12 plantas canónicas (slug = identidad única del sistema; ver opc_mapping.json). */
@@ -61,16 +61,22 @@ export function PlantProvider({ children }: { children: React.ReactNode }) {
     setSelectedPlant(plantOf(user?.plant));
   }, [user?.plant]);
 
-  function selectPlant(plant: PlantOption) {
-    if (!canSwitchPlant) return; // el selector ni siquiera se muestra; esto es la red de seguridad
-    setSelectedPlant(plant);
-  }
-
-  return (
-    <PlantContext.Provider value={{ selectedPlant, setSelectedPlant: selectPlant, canSwitchPlant }}>
-      {children}
-    </PlantContext.Provider>
+  const selectPlant = useCallback(
+    (plant: PlantOption) => {
+      if (!canSwitchPlant) return; // el selector ni siquiera se muestra; esto es la red de seguridad
+      setSelectedPlant(plant);
+    },
+    [canSwitchPlant],
   );
+
+  // Memoizado por la misma razón que AuthContext: envuelve toda la app, y un objeto literal nuevo
+  // en cada render obligaba a re-renderizar a todos los consumidores de `usePlant()`.
+  const value = useMemo(
+    () => ({ selectedPlant, setSelectedPlant: selectPlant, canSwitchPlant }),
+    [selectedPlant, selectPlant, canSwitchPlant],
+  );
+
+  return <PlantContext.Provider value={value}>{children}</PlantContext.Provider>;
 }
 
 export function usePlant() {

@@ -10,6 +10,14 @@ export interface ExtractedSignal {
   max: number | null;
   opMin: number | null;
   opMax: number | null;
+  /** Convención literal de la palabra de estado de válvula, si el sitio no usa la de bits. */
+  stateEncoding?: { closed?: number; open?: number };
+  /** Solo en válvulas: el caudal que corresponde a ESA válvula. */
+  flowDomainKey?: string;
+  /** Solo en palabras de estado: si es false no decide el veredicto. */
+  stateTrusted?: boolean;
+  /** ¿La señal tiene canal de comando? Viaja al front para no ofrecer un botón que no puede salir. */
+  commandable: boolean;
   mappingStatus: 'mapped' | 'unmapped';
   confidence: 'confirmed' | 'inferred' | 'estimated';
   value: number | boolean | null; // crudo; puede ser no-finito (lo evalúa QualityService)
@@ -66,6 +74,10 @@ export class MappingEngine {
       max: sig.max,
       opMin: sig.opMin ?? null,
       opMax: sig.opMax ?? null,
+      stateEncoding: sig.stateEncoding,
+      flowDomainKey: sig.flowDomainKey,
+      stateTrusted: sig.stateTrusted,
+      commandable: sig.writable,
       mappingStatus: sig.mappingStatus,
       confidence: sig.confidence,
     };

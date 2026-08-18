@@ -3,7 +3,7 @@ import { hasPermission, type Permission, type Role } from '@ptap/shared';
 import { AuditLogService } from '../../infrastructure/audit/audit-log.service';
 import { CONNECTIVITY_ADAPTER, CONNECTIVITY_CONFIG } from '../../infrastructure/connectivity/connectivity.tokens';
 import type { ConnectivityConfig } from '../../infrastructure/connectivity/connectivity.config';
-import type { WriteSpec } from '../../infrastructure/connectivity/mapping/opc-mapping.loader';
+import { motivoSecuenciaInvalida, type WriteSpec, type WriteStep } from '../../infrastructure/connectivity/mapping/opc-mapping.loader';
 import { PlantCache } from '../../infrastructure/connectivity/pipeline/plant-cache';
 import type { BufferElementTarget, ConnectivityAdapter } from '../../infrastructure/connectivity/ports/connectivity-adapter.port';
 import { CommandLogRepository, type CommandValue, type StoredCommand } from './command-log.repository';
@@ -29,6 +29,14 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 const UNVERIFIED_READBACK_MS = 600;
 
 /**
+ * Cada cuánto se consulta la realimentación durante un sostenido (`pulse.until`).
+ *
+ * 500 ms: lo bastante fino para no alargar la maniobra de forma perceptible y lo bastante grueso
+ * para no castigar al servidor OPC UA con 45 s de lecturas seguidas.
+ */
+const HOLD_POLL_MS = 500;
+
+/**
  * WriteService (Fase 5): único punto que ejecuta comandos de escritura al PLC.
  *
  * PRECONDICIÓN DURA (regla 9): rechaza TODO si OPCUA_WRITES_ENABLED=false o si la sesión
@@ -50,7 +58,45 @@ export class WriteService {
     @Inject(AuditLogService) private readonly auditLog: AuditLogService,
   ) {}
 
+  /**
+   * Válvulas con una orden EN CURSO (`plantId/target`).
+   *
+   * Mientras el pulso duró 300 ms esto no hacía falta. Con una señal sostenida hasta la
+   * realimentación la ventana pasa a ser de decenas de segundos, y en ese hueco caben dos órdenes
+   * opuestas: `bitmask` haría `actual | 8192` sobre una palabra que todavía tiene el `4096` puesto y
+   * dejaría **las dos direcciones energizadas a la vez**, que es el fallo que el protocolo declara
+   * ERROR. La guarda de secuencias solo cubre el interior de UNA orden; esto cubre el solape entre
+   * dos.
+   *
+   * No sustituye a la idempotencia de `command-log.repository`, que protege del reenvío de la MISMA
+   * orden — y que además hoy no se dispara desde el móvil, porque el front no manda `idempotencyKey`.
+   */
+  private readonly enCurso = new Set<string>();
+
   async execute(plantId: string, req: CommandRequest, actor: CommandActor): Promise<CommandResult> {
+    const cerrojo = `${plantId}/${req.target}`;
+    if (this.enCurso.has(cerrojo)) {
+      const motivo = `${REJECT.INTERLOCK_FAILED}: ya hay un comando en curso sobre esta válvula`;
+      this.logger.warn(`comando ${req.command}/${req.target} de ${plantId} rechazado: ${motivo}`);
+      return this.audit(actor, req, {
+        plantId, target: req.target, command: req.command,
+        previousValue: null, writtenValue: null, confirmedValue: null,
+        writeEcho: null, writeVerified: null, interlockSequence: null,
+        idempotent: false, at: new Date().toISOString(),
+        status: 'rejected', reason: motivo,
+      });
+    }
+    this.enCurso.add(cerrojo);
+    try {
+      return await this.ejecutar(plantId, req, actor);
+    } finally {
+      // En `finally` a propósito: si `ejecutar` revienta, dejar la clave puesta bloquearía esa
+      // válvula para siempre hasta reiniciar el proceso.
+      this.enCurso.delete(cerrojo);
+    }
+  }
+
+  private async ejecutar(plantId: string, req: CommandRequest, actor: CommandActor): Promise<CommandResult> {
     const base = {
       plantId,
       target: req.target,
@@ -74,6 +120,18 @@ export class WriteService {
     // 2) El verbo debe existir en el mapping.
     if (!(req.command in write.commands)) {
       return this.audit(actor, req, await this.finalizeNoReserve(reject(REJECT.UNKNOWN_COMMAND)));
+    }
+
+    // 2-bis) GUARDA ELÉCTRICA de la orden compuesta, antes de reservar y de tocar nada. El loader ya
+    // la aplicó al arrancar; se repite aquí porque es barata y lo que hay al otro lado del cable es
+    // una válvula: energizar dos direcciones opuestas a la vez es el fallo que el protocolo prohíbe.
+    const secuencia = write.sequences?.[req.command] ?? null;
+    if (secuencia) {
+      const motivo = motivoSecuenciaInvalida(req.command, secuencia, write);
+      if (motivo) {
+        this.logger.error(`secuencia inválida en ${plantId}/${req.target}: ${motivo}`);
+        return this.audit(actor, req, await this.finalizeNoReserve({ ...reject(REJECT.INTERLOCK_FAILED), reason: `${REJECT.INTERLOCK_FAILED}: ${motivo}` }));
+      }
     }
 
     // 3) PRECONDICIÓN DURA: writes habilitados Y sesión segura (autenticada+cifrada).
@@ -111,12 +169,17 @@ export class WriteService {
 
     // 7) Ejecutar: leer valor previo → escribir → read-back con timeout.
     const writtenValue = write.commands[req.command];
-    const targetEl: BufferElementTarget = {
+    const el = (index: number): BufferElementTarget => ({
       plantId,
       channel: write.target.channel,
       sourceBuffer: write.target.sourceBuffer,
-      index: write.target.index,
-    };
+      index,
+    });
+    const targetEl = el(write.target.index);
+    // Una orden simple es el caso particular de un solo paso sobre el canal primario.
+    const pasos: WriteStep[] = secuencia ?? [{ index: write.target.index, value: writtenValue }];
+    /** Lo que REALMENTE quedó escrito, en orden: es la base del eco, del cierre de pulso y del rollback. */
+    const escritos: WriteStep[] = [];
 
     let result: CommandResult;
     try {
@@ -125,10 +188,15 @@ export class WriteService {
       try {
         const prev = await this.adapter.readBufferElement(targetEl);
         base.previousValue = prev.value;
-        // `bitmask`: activar el bit SIN pisar los demás de la palabra (read-modify-write).
-        const toWrite = this.applyValue(write, prev.value, writtenValue);
-        await this.adapter.writeBufferElement(targetEl, toWrite);
-        base.writtenValue = toWrite;
+        for (const paso of pasos) {
+          // Los pasos de una SECUENCIA se escriben en absoluto: ahí la posición del array ES el
+          // canal físico, no un bit dentro de una palabra compartida. En una orden simple se
+          // conserva la semántica de `mode` (bitmask = activar sin pisar los bits ajenos).
+          const toWrite = secuencia ? paso.value : this.applyValue(write, prev.value, paso.value);
+          await this.adapter.writeBufferElement(el(paso.index), toWrite);
+          escritos.push({ index: paso.index, value: toWrite });
+        }
+        base.writtenValue = escritos.find((e) => e.index === write.target.index)?.value ?? null;
       } catch (err) {
         this.logger.error(`write de ${req.command}/${req.target} RECHAZADO: ${err instanceof Error ? err.message : err}`);
         const rejected: CommandResult = { ...base, status: 'failed', reason: FAIL.WRITE_REJECTED };
@@ -142,21 +210,52 @@ export class WriteService {
 
       // 7b) ECO INSTANTÁNEO del canal de comando: prueba, en el momento, que el valor SÍ quedó
       // escrito — independiente del canal de estado (que necesita al equipo respondiendo).
+      // En una orden compuesta se comprueban TODOS los pasos: si el sentido no quedó puesto, el
+      // equipo no se va a mover por mucho que la habilitación sí esté, y decir "verificado" con
+      // medio comando escrito sería exactamente el engaño que este eco existe para evitar.
       try {
-        const echo = await this.adapter.readBufferElement(targetEl);
-        base.writeEcho = echo.value;
-        base.writeVerified = echo.value === base.writtenValue;
+        let todosOk = true;
+        for (const e of escritos) {
+          const echo = await this.adapter.readBufferElement(el(e.index));
+          if (e.index === write.target.index) base.writeEcho = echo.value;
+          if (echo.value !== e.value) todosOk = false;
+        }
+        base.writeVerified = todosOk;
       } catch {
         base.writeEcho = null;
         base.writeVerified = null; // no se pudo comprobar; no se afirma nada
       }
 
-      // 7b-bis) PULSO: sostener y LIMPIAR SIEMPRE. Un comando de pulso que confirmara el estado
-      // dejaba antes el bit ENCLAVADO (el rollback solo corría al fallar) — con la válvula operativa
-      // eso habría dejado la orden puesta indefinidamente.
+      // 7b-bis) PULSO: sostener y LIMPIAR SIEMPRE, en orden inverso al de escritura. Un comando de
+      // pulso que confirmara el estado dejaba antes el bit ENCLAVADO (el rollback solo corría al
+      // fallar) — con la válvula operativa eso habría dejado la orden puesta indefinidamente.
+      let realimentacion = true;
       if (write.pulse) {
-        await sleep(write.pulse.holdMs);
-        await this.clearPulse(targetEl, write, writtenValue);
+        try {
+          realimentacion = await this.sostener(plantId, write);
+        } finally {
+          // El `finally` es la parte que importa: pase lo que pase durante el sostenido —timeout,
+          // caída de la sesión, excepción— el bit se suelta. Dejarlo puesto mantiene la bobina
+          // energizada, y eso no puede depender de que todo lo demás haya ido bien.
+          //
+          // Se limpia con el valor DECLARADO del comando, no con el que se escribió: en `bitmask` lo
+          // escrito es la palabra completa (`actual | máscara`), y usar eso para limpiar apagaría
+          // también los bits ajenos que se acababa de tener el cuidado de conservar.
+          for (const paso of [...pasos].reverse()) await this.clearPulse(el(paso.index), write, paso.value);
+        }
+      }
+
+      // La realimentación no llegó dentro del tope: se dice ESO, no que el estado no confirmara.
+      // Un final de carrera que no responde y una palabra de estado que no cuadra son averías
+      // distintas, y mezclarlas en un solo motivo borra el diagnóstico.
+      if (!realimentacion) {
+        result = { ...base, status: 'failed', reason: FAIL.HOLD_FEEDBACK_TIMEOUT };
+        await this.repo.finalize(reservation.id, {
+          status: 'failed', reason: result.reason, previousValue: result.previousValue,
+          writtenValue: result.writtenValue, confirmedValue: result.confirmedValue,
+          interlockSequence: result.interlockSequence,
+        });
+        return this.audit(actor, req, result, escritos);
       }
 
       // 7c) Confirmación por el canal de ESTADO (que el equipo se movió).
@@ -170,11 +269,11 @@ export class WriteService {
         // esperado es una inferencia. Con el eco probando que la escritura quedó en el canal, no
         // hay base para declarar un fallo del equipo — pero tampoco para afirmar que se movió.
         // Ver CommandOutcome.'sent'. Un pulso ya se limpió en 7b-bis; no se hace rollback.
-        if (!write.pulse) await this.rollback(targetEl, write);
+        await this.rollbackSteps(el, write, escritos);
         result = { ...base, status: 'sent', reason: SENT.SENT_STATE_UNVERIFIED };
       } else {
         // Un pulso ya se limpió en 7b-bis: no volver a escribir (sería un segundo pulso espurio).
-        if (!write.pulse) await this.rollback(targetEl, write); // best-effort
+        await this.rollbackSteps(el, write, escritos); // best-effort
         result = { ...base, status: 'failed', reason: FAIL.READBACK_UNCONFIRMED };
       }
     } catch (err) {
@@ -192,7 +291,7 @@ export class WriteService {
       interlockSequence: result.interlockSequence,
     });
 
-    return this.audit(actor, req, result);
+    return this.audit(actor, req, result, escritos);
   }
 
   /** Interlock: BridgeStatus Connected + snapshot fresco (liveness live) + connection OK si está mapeada. */
@@ -282,6 +381,56 @@ export class WriteService {
   }
 
   /**
+   * Sostiene la señal y decide cuándo soltarla. Devuelve `true` si el sostenido terminó como debía.
+   *
+   *  - **Sin `until`**: se duerme `holdMs` y ya. Es el pulso de siempre.
+   *  - **Con `until`**: se sondea el elemento de realimentación y se vuelve en cuanto vale lo
+   *    esperado — que es como funciona un actuador motorizado: la señal se mantiene hasta que el
+   *    final de carrera avisa. `holdMs` deja de ser la duración y pasa a ser el TOPE DURO.
+   *
+   * Si vence el tope sin que llegue la realimentación devuelve `false`, y el llamante limpia el bit
+   * igualmente. Sostener "hasta que llegue" sin límite es lo único que no se contempla: con un
+   * sensor averiado eso deja la bobina energizada para siempre y sin que nadie se entere.
+   */
+  private async sostener(plantId: string, write: WriteSpec): Promise<boolean> {
+    const pulse = write.pulse;
+    if (!pulse) return true;
+    if (!pulse.until) {
+      await sleep(pulse.holdMs);
+      return true;
+    }
+
+    const target: BufferElementTarget = {
+      plantId,
+      channel: pulse.until.channel,
+      // El buffer de realimentación suele ser el mismo del read-back (el canal de ESTADO). Caer al
+      // buffer del target sería caer al de SALIDA, que es justo el que nosotros escribimos.
+      sourceBuffer: pulse.until.sourceBuffer ?? write.readBack.sourceBuffer ?? write.target.sourceBuffer,
+      index: pulse.until.index,
+    };
+    const deadline = Date.now() + pulse.holdMs;
+    let ultimo: CommandValue = null;
+
+    while (Date.now() < deadline) {
+      try {
+        const lectura = await this.adapter.readBufferElement(target);
+        ultimo = lectura.value;
+        if (lectura.value === pulse.until.equals) return true;
+      } catch (err) {
+        // Un fallo de lectura NO cancela el sostenido: la señal ya está puesta y el equipo puede
+        // estar moviéndose. Se reintenta hasta el tope, que es quien pone el límite.
+        this.logger.warn(`no se pudo leer la realimentación de ${plantId}: ${err instanceof Error ? err.message : err}`);
+      }
+      await sleep(HOLD_POLL_MS);
+    }
+
+    this.logger.error(
+      `sostenido de ${plantId} agotado tras ${pulse.holdMs} ms: ${target.sourceBuffer}[${target.index}] esperaba ${String(pulse.until.equals)} y vale ${String(ultimo)}. Se suelta la señal.`,
+    );
+    return false;
+  }
+
+  /**
    * Cierra el pulso: en `bitmask` limpia SOLO los bits del comando (`actual & ~valor`), releyendo el
    * valor por si otro proceso tocó la palabra durante el pulso; en `absolute` escribe `rollbackValue`.
    * Best-effort: si falla, se registra — dejar un bit puesto es peor que un log ruidoso.
@@ -310,6 +459,33 @@ export class WriteService {
     }
   }
 
+  /**
+   * Deshace lo escrito, en ORDEN INVERSO: si una orden compuesta falló a medias, hay que soltar todo
+   * lo que se energizó, y soltar primero lo último puesto evita pasar por un estado con dos
+   * direcciones activas.
+   *
+   * Dos casos NO se deshacen, a propósito:
+   *  - `pulse`: ya se limpió en 7b-bis; repetirlo sería un segundo pulso espurio.
+   *  - `latched`: la orden es SOSTENIDA y cada verbo define un estado eléctrico completo. Volver a
+   *    `rollbackValue` dejaría la válvula en 0/0 — ni abierta ni cerrada, un estado que nadie pidió
+   *    y del que el operador no se enteraría. Ahí lo correcto es dejar la orden puesta y que sea una
+   *    persona quien mande el verbo contrario.
+   */
+  private async rollbackSteps(
+    el: (index: number) => BufferElementTarget,
+    write: WriteSpec,
+    escritos: WriteStep[],
+  ): Promise<void> {
+    if (write.pulse) return;
+    if (write.latched) {
+      this.logger.warn(
+        `orden SOSTENIDA sin confirmar en ${write.target.sourceBuffer}: se deja puesta (${escritos.map((e) => `[${e.index}]=${String(e.value)}`).join(' ')}). Deshacerla dejaría el actuador sin dirección; mandar el verbo contrario si procede.`,
+      );
+      return;
+    }
+    for (const e of [...escritos].reverse()) await this.rollback(el(e.index), write);
+  }
+
   /** Reconstruye el resultado desde una fila previa (respuesta idempotente). */
   private replay(base: Omit<CommandResult, 'status' | 'reason'>, existing: StoredCommand): CommandResult {
     if (existing.status === 'pending') {
@@ -333,7 +509,12 @@ export class WriteService {
   }
 
   /** Audit log SIEMPRE (regla 12 + criterio de aceptación): todo intento queda registrado. */
-  private async audit(actor: CommandActor, req: CommandRequest, result: CommandResult): Promise<CommandResult> {
+  private async audit(
+    actor: CommandActor,
+    req: CommandRequest,
+    result: CommandResult,
+    escritos?: WriteStep[],
+  ): Promise<CommandResult> {
     await this.auditLog.record({
       eventType: 'command.execute',
       userId: actor.userId,
@@ -351,6 +532,10 @@ export class WriteService {
         previousValue: result.previousValue,
         writtenValue: result.writtenValue,
         confirmedValue: result.confirmedValue,
+        // TODAS las posiciones escritas, en orden. `writtenValue` solo cuenta la del canal
+        // primario: en una orden compuesta, eso deja fuera el paso que da el SENTIDO, que es
+        // justamente el que hay que poder revisar cuando la válvula no se mueva.
+        steps: escritos && escritos.length > 0 ? escritos.map((e) => ({ index: e.index, value: e.value })) : undefined,
         // Eco del canal de comando: distingue "no se escribió" de "se escribió y no confirmó".
         writeEcho: result.writeEcho,
         writeVerified: result.writeVerified,

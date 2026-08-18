@@ -11,8 +11,14 @@
 //     - ProGuard/R8 + shrinkResources → APK más pequeño y ofuscado.
 //     - min/target SDK explícitos.
 //
-//  3. android.permissions acotado a INTERNET — el único permiso que la app necesita (la telemetría
-//     viaja por HTTPS/WebSocket; no se usa ubicación, cámara, almacenamiento, etc.).
+//  3. android.permissions acotado al mínimo. Desde el 2026-08 se añaden dos, y solo dos, por los
+//     avisos de sensor averiado en el panel de notificaciones:
+//       - POST_NOTIFICATIONS: obligatorio desde Android 13 (API 33) para poder mostrar cualquier
+//         notificación. Sin él el sistema las descarta en silencio.
+//       - VIBRATE: estaba BLOQUEADO explícitamente; se desbloquea porque una notificación sin
+//         vibración pasa desapercibida justo en el caso que importa (una planta caída).
+//     RECEIVE_BOOT_COMPLETED lo añade `expo-background-task` por su cuenta: es lo que permite que
+//     la tarea periódica siga programada tras reiniciar el teléfono.
 module.exports = ({ config }) => ({
   ...config,
   extra: {
@@ -21,19 +27,19 @@ module.exports = ({ config }) => ({
   },
   android: {
     ...config.android,
-    permissions: ['INTERNET'],
-    // La plantilla base de Expo agrega estos 4 permisos "opcionales" al manifest y
-    // `permissions` solo AGREGA, nunca los quita — hay que bloquearlos explícitamente
-    // (tools:node="remove") para que el APK final pida únicamente INTERNET.
+    permissions: ['INTERNET', 'POST_NOTIFICATIONS', 'VIBRATE'],
+    // La plantilla base de Expo agrega permisos "opcionales" al manifest y `permissions` solo
+    // AGREGA, nunca los quita — hay que bloquearlos explícitamente (tools:node="remove").
     blockedPermissions: [
       'android.permission.SYSTEM_ALERT_WINDOW',
-      'android.permission.VIBRATE',
       'android.permission.READ_EXTERNAL_STORAGE',
       'android.permission.WRITE_EXTERNAL_STORAGE',
     ],
   },
   plugins: [
     ...(config.plugins ?? []),
+    'expo-notifications',
+    'expo-background-task',
     [
       'expo-build-properties',
       {

@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { View, Text, ScrollView, RefreshControl, StyleSheet, Platform, Alert, TouchableOpacity } from 'react-native';
+import { useCallback, useMemo, useState } from 'react';
+import { View, Text, ScrollView, RefreshControl, StyleSheet, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useSnapshot } from '../../hooks/useSnapshot';
@@ -7,11 +7,15 @@ import { usePlant } from '../../context/PlantContext';
 import { useAuth } from '../../context/AuthContext';
 import { ValveItem } from '../../components/ValveItem';
 import { ValveConfirmDialog } from '../../components/ValveConfirmDialog';
+import { ValveResultDialog } from '../../components/ValveResultDialog';
 import { PlantSelector } from '../../components/PlantSelector';
 import { ConnectionBanner } from '../../components/ConnectionBanner';
 import { LiveBadge } from '../../components/LiveBadge';
-import { valvesFromSnapshot } from '../../services/valves';
+import { ListSkeleton } from '../../components/Skeleton';
+import { OfflineNotice } from '../../components/OfflineNotice';
+import { valvesFromSnapshot, type CommandVerdict } from '../../services/valves';
 import { useValveSupervisor, type SupervisedValve } from '../../hooks/useValveSupervisor';
+import { useDashboardPrefs } from '../../services/dashboard-prefs';
 import Colors from '../../constants/colors';
 
 /**
@@ -23,11 +27,6 @@ import Colors from '../../constants/colors';
  * solo toque. El resto de las defensas del backend siguen intactas — RBAC, interlock, idempotencia,
  * read-back y auditoría; ninguna se relajó aquí.
  */
-
-function aviso(title: string, message: string) {
-  if (Platform.OS === 'web') window.alert(`${title}\n\n${message}`);
-  else Alert.alert(title, message);
-}
 
 /** Maniobra a la espera de que el operador confirme en el diálogo. */
 interface Pendiente {
@@ -45,17 +44,40 @@ export default function ElectrovalvulasScreen() {
   const rawValves = useMemo(() => valvesFromSnapshot(snapshot), [snapshot]);
   const { valves, events, send, busy, dismiss } = useValveSupervisor(selectedPlant.id, rawValves);
   const [pendiente, setPendiente] = useState<Pendiente | null>(null);
+  /** Veredicto de la última orden, a la espera de acuse de recibo. NUNCA es un toast: ver
+   *  `ValveResultDialog`. */
+  const [resultado, setResultado] = useState<(CommandVerdict & { valveName: string }) | null>(null);
   const livenessState = snapshot?.liveness.state ?? 'frozen';
   const frozen = livenessState === 'frozen';
   const apiReachable = !isError || (!!snapshot && !snapshot.pending);
+  const showError = isError && !snapshot;
   const plantName = snapshot?.displayName ?? selectedPlant.name;
 
-  const openCount = valves.filter((v) => v.effectiveState === 'open').length;
-  const closedCount = valves.filter((v) => v.effectiveState === 'closed').length;
-  // Sin señal de estado eléctrico el read-back no puede confirmar la maniobra: hay que avisarlo.
-  const conLecturaDeEstado = valves.some((v) => v.byState !== null);
+  // El hook hidrata además del almacenamiento: antes solo el tablero lo hacía, así que entrar
+  // directo a esta pantalla (recarga web en /electrovalvulas) ignoraba la preferencia guardada.
+  const { compact } = useDashboardPrefs();
 
-  // Guard de rol de pantalla (coherente con tablero/reportes). Va tras TODOS los hooks.
+  // Memoizados: eran tres recorridos completos del array en CADA render.
+  const { openCount, closedCount, conLecturaDeEstado } = useMemo(
+    () => ({
+      openCount: valves.filter((v) => v.effectiveState === 'open').length,
+      closedCount: valves.filter((v) => v.effectiveState === 'closed').length,
+      // Sin señal de estado eléctrico el read-back no puede confirmar la maniobra: hay que avisarlo.
+      conLecturaDeEstado: valves.some((v) => v.byState !== null),
+    }),
+    [valves],
+  );
+
+  /** El toque en la lista ya NO ejecuta: solo propone la maniobra y abre la confirmación.
+   *  Estable (`useCallback`) para que las N filas compartan la MISMA función y su memo funcione. */
+  const onToggle = useCallback((valve: SupervisedValve) => {
+    // Si el estado es desconocido no se adivina: se ofrece explícitamente qué mandar.
+    const verb: 'open' | 'close' = valve.effectiveState === 'open' ? 'close' : 'open';
+    setPendiente({ valve, verb });
+  }, []);
+
+  // Guard de rol de pantalla (coherente con tablero/reportes). Va tras TODOS los hooks: si a
+  // alguien le retiran el permiso con la pantalla abierta, el número de hooks no puede cambiar.
   if (!canView) {
     return (
       <SafeAreaView style={styles.safe} edges={['bottom']}>
@@ -68,20 +90,15 @@ export default function ElectrovalvulasScreen() {
     );
   }
 
-  /** El toque en la lista ya NO ejecuta: solo propone la maniobra y abre la confirmación. */
-  function onToggle(valve: SupervisedValve) {
-    // Si el estado es desconocido no se adivina: se ofrece explícitamente qué mandar.
-    const verb: 'open' | 'close' = valve.effectiveState === 'open' ? 'close' : 'open';
-    setPendiente({ valve, verb });
-  }
-
   /** Segundo paso: el operador aceptó en el diálogo. Recién aquí sale la orden al PLC. */
   async function onConfirmar() {
     if (!pendiente) return;
     const { valve, verb } = pendiente;
     setPendiente(null);
     const verdict = await send(valve, verb);
-    aviso(verdict.title, verdict.message);
+    // A un diálogo con acuse de recibo, NO a un toast: aquí se movió un actuador físico y el
+    // veredicto puede ser "enviado pero sin confirmar", que el operador debe leer sí o sí.
+    setResultado({ ...verdict, valveName: valve.name });
   }
 
   return (
@@ -137,6 +154,8 @@ export default function ElectrovalvulasScreen() {
             style={[styles.event, e.kind === 'manual' ? styles.eventManual : styles.eventCmd]}
             onPress={() => dismiss(e.id)}
             activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel={`${e.title}. ${e.message} Toca para descartar este aviso.`}
           >
             <Ionicons
               name={e.kind === 'manual' ? 'hand-left-outline' : 'send-outline'}
@@ -152,9 +171,14 @@ export default function ElectrovalvulasScreen() {
         ))}
 
         {isLoading && !snapshot ? (
-          <View style={styles.loadingWrap}>
-            <Text style={styles.loadingText}>Cargando electroválvulas…</Text>
-          </View>
+          <ListSkeleton rows={3} label="Cargando las electroválvulas" />
+        ) : showError ? (
+          <OfflineNotice
+            title="No se pudieron cargar las electroválvulas."
+            detail="No hay conexión con el servidor y este dispositivo no tiene ninguna lectura guardada de esta planta. Sin estado real no se debe operar una válvula."
+            onRetry={() => void refetch()}
+            retryLabel="Reintentar la carga de las electroválvulas"
+          />
         ) : valves.length === 0 ? (
           <View style={styles.loadingWrap}>
             <Ionicons name="git-branch-outline" size={34} color={Colors.textSecondary} />
@@ -171,7 +195,10 @@ export default function ElectrovalvulasScreen() {
               valve={valve}
               frozen={frozen}
               busy={busy === valve.id}
-              onToggle={canControl ? () => onToggle(valve) : undefined}
+              compact={compact}
+              // Sin canal de comando no hay botón: hacer confirmar una maniobra que solo puede
+              // acabar en 404 es peor que no ofrecerla. ValveItem pone la nota en su lugar.
+              onToggle={canControl && valve.commandable ? onToggle : undefined}
             />
           ))
         )}
@@ -190,6 +217,8 @@ export default function ElectrovalvulasScreen() {
         onConfirm={() => void onConfirmar()}
         onCancel={() => setPendiente(null)}
       />
+
+      <ValveResultDialog verdict={resultado} onClose={() => setResultado(null)} />
 
       <LiveBadge state={livenessState} loading={isLoading && !snapshot} />
     </SafeAreaView>

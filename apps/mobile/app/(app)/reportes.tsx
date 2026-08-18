@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { View, Text, ScrollView, RefreshControl, StyleSheet, TouchableOpacity, Alert, Platform, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, RefreshControl, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
@@ -7,12 +7,8 @@ import { fetchReports, generateReport, downloadReport, type ReportInfo } from '.
 import { usePlant } from '../../context/PlantContext';
 import { useAuth } from '../../context/AuthContext';
 import { PlantSelector } from '../../components/PlantSelector';
+import { toast } from '../../services/toast-store';
 import Colors from '../../constants/colors';
-
-function alertWeb(title: string, message: string) {
-  if (Platform.OS === 'web') window.alert(`${title}\n${message}`);
-  else Alert.alert(title, message);
-}
 
 function fechaHora(iso: string | null): string {
   if (!iso) return '';
@@ -59,8 +55,9 @@ export default function ReportesScreen() {
     try {
       await generateReport(selectedPlant.id, r.metric);
       await queryClient.invalidateQueries({ queryKey: ['reports', selectedPlant.id] });
+      toast.success('Informe en preparación', `${r.metric} · ${selectedPlant.name}`);
     } catch (err) {
-      alertWeb('No se pudo generar', err instanceof Error ? err.message : 'Intenta de nuevo.');
+      toast.error('No se pudo generar', err instanceof Error ? err.message : 'Intenta de nuevo.');
     } finally {
       setBusy(null);
     }
@@ -70,10 +67,10 @@ export default function ReportesScreen() {
     setBusy(r.metric);
     try {
       const ok = await downloadReport(selectedPlant.id, r.metric);
-      if (!ok) alertWeb('No se pudo descargar', 'El informe aún no está disponible.');
+      if (!ok) toast.error('No se pudo descargar', 'El informe aún no está disponible.');
     } catch (err) {
       // Sin este catch, un fallo de red dejaba un rechazo silencioso (a diferencia de Generar).
-      alertWeb('No se pudo descargar', err instanceof Error ? err.message : 'Revisa tu conexión e intenta de nuevo.');
+      toast.error('No se pudo descargar', err instanceof Error ? err.message : 'Revisa tu conexión e intenta de nuevo.');
     } finally {
       setBusy(null);
     }

@@ -142,6 +142,85 @@ export interface SignalDto {
   /** Rango operativo/normativo entregado por el operador; el front lo muestra junto al valor. */
   opMin?: number;
   opMax?: number;
+  /**
+   * Convención de la palabra de estado de una válvula, cuando la planta NO usa la máscara de bits
+   * (bit14 = estado válido, bit0 = abierta) de Vorágine/Sirena.
+   *
+   * Nace de Cascajal: el operador verificó en campo que `INT_IN[1]` vale `251` con la válvula
+   * cerrada. Ese valor no tiene el bit14, así que el decodificador de bits lo descartaba como
+   * "el PLC no reporta estado válido" y la planta se quedaba sin estado. Declarando aquí los
+   * valores literales, cada sitio puede traer su propia convención sin que el front adivine.
+   *
+   * Ausente ⇒ se aplica la regla de bits de siempre. Un valor que no coincida con ninguno de los
+   * declarados NO se interpreta: se prefiere no afirmar nada antes que inventar un estado.
+   */
+  stateEncoding?: { closed?: number; open?: number };
+  /**
+   * Solo en señales de VÁLVULA: qué caudal corresponde a ESA válvula, para inferir su estado.
+   *
+   * Sin esto, el front aplica una preferencia fija (salida y luego entrada) que es una SUPOSICIÓN:
+   * acierta o falla según dónde esté físicamente cada válvula, y el código no tenía forma de
+   * saberlo. Declararlo convierte un dato de campo en configuración.
+   *
+   * Y la diferencia no es cosmética. Elegir el caudal equivocado miente justo en el caso que
+   * importa: una válvula de SALIDA cerrada con la entrada llenando el tanque, o una de ENTRADA
+   * cerrada con el tanque vaciándose aguas abajo. En ambos hay caudal en el lado que no manda, y
+   * la app diría "abierta" con la válvula cerrada.
+   *
+   * La Sirena declara `outletFlow1`: su única válvula es la de salida (operador, 2026-08-15).
+   */
+  flowDomainKey?: string;
+  /**
+   * Solo en palabras de ESTADO de válvula: ¿se puede derivar el estado de este registro?
+   *
+   * `false` = el registro se sigue leyendo y mostrando como DIAGNÓSTICO, pero no se usa para
+   * decidir si la válvula está abierta. La Sirena está así desde el 2026-08-15: su `INT_IN[0]`
+   * pasó de 16384 a 17408 mientras entraban 23,33 l/s, y ninguna de las convenciones conocidas lo
+   * explica (bit10 está encendido en casi todas las plantas, con caudal y sin él).
+   *
+   * Se conserva mapeado a propósito en vez de borrarlo: es lo que permite que
+   * `ValveStateObserver` siga acumulando evidencia y algún día se pueda decodificar de verdad.
+   * Borrarlo dejaba al sistema ciego justo donde falta conocimiento.
+   */
+  stateTrusted?: boolean;
+  /**
+   * Solo en señales de VÁLVULA: `false` = la válvula existe y se muestra, pero NO se puede accionar
+   * desde la app porque no tiene canal de comando en el mapping.
+   *
+   * **Ausente significa que sí se acciona**, que es el caso de las diez válvulas de hoy: así el
+   * campo no cambia el comportamiento de nada existente ni de un front antiguo que lo ignore.
+   *
+   * Existe porque el front pintaba el botón de abrir/cerrar para TODA válvula del snapshot, sin más
+   * condición que el permiso del rol. Con una válvula sin mando —la de ENTRADA de La Vorágine, cuya
+   * frecuencia de bits aún no conocemos— el operador confirmaba la maniobra en un diálogo y solo
+   * después recibía el 404 del backend. Hacerle confirmar una orden que jamás podía salir es peor
+   * que no ofrecerle el botón.
+   *
+   * Se llama `commandable` y no `writable` a propósito: en un DTO que habla de OPC UA, "writable"
+   * se confundiría con el AccessLevel del nodo, que es otra cosa —y que en ese buffer vale
+   * `CurrentWrite` aunque la válvula no tenga comando definido.
+   */
+  commandable?: boolean;
+}
+
+/**
+ * ¿El valor viola el rango OPERATIVO entregado por el operador (`opMin`/`opMax`)?
+ *
+ * Vive en `@ptap/shared` y no en cada lado a propósito. Cuando el tablero tenía su propio criterio
+ * y la campana otro, una señal por debajo de su mínimo generaba alerta pero su grupo del tablero
+ * se dejaba plegar — el tablero escondía algo de lo que la campana ya avisaba. Una sola definición
+ * evita esa clase de contradicción entre pantallas, y ahora también entre backend y front.
+ */
+export function isOutOfOperatingRange(s: SignalDto): boolean {
+  if (typeof s.value !== 'number') return false;
+  const below = typeof s.opMin === 'number' && s.value < s.opMin;
+  const above = typeof s.opMax === 'number' && s.value > s.opMax;
+  return below || above;
+}
+
+/** ¿Esta señal generaría alguna alerta de rango (física u operativa)? */
+export function hasRangeAnomaly(s: SignalDto): boolean {
+  return Boolean(s.outOfRange) || isOutOfOperatingRange(s);
 }
 
 export interface LivenessDto {

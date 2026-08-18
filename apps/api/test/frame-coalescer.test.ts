@@ -85,3 +85,34 @@ test('coalescer: add() tras stop() es no-op', () => {
   coalescer.add('montebello', sample('A'));
   assert.equal(frames.length, 0);
 });
+
+/**
+ * EL test que faltaba. Los adaptadores REUTILIZAN la misma instancia y hacen stop()+start() en
+ * cada reconexión; sin revivirla, `add()` quedaba mudo para siempre y el puente entregaba cero
+ * frames al dominio mientras se reportaba `Connected`. Costó 41 h de datos congelados en
+ * producción (2026-08-13) con todos los indicadores en verde.
+ */
+test('coalescer: start() tras stop() vuelve a emitir (el ciclo de reconexión)', async () => {
+  const frames: RawPlantFrame[] = [];
+  const coalescer = new FrameCoalescer(10, (f) => frames.push(f));
+
+  coalescer.stop();
+  coalescer.add('montebello', sample('A'));
+  assert.equal(frames.length, 0, 'parado sigue siendo no-op');
+
+  coalescer.start();
+  coalescer.add('montebello', sample('A'));
+  await delay(30);
+  assert.equal(frames.length, 1, 'tras start() los datos DEBEN volver a fluir');
+  assert.equal(frames[0].plantId, 'montebello');
+});
+
+test('coalescer: start() es idempotente y no duplica frames', async () => {
+  const frames: RawPlantFrame[] = [];
+  const coalescer = new FrameCoalescer(10, (f) => frames.push(f));
+  coalescer.start();
+  coalescer.start();
+  coalescer.add('montebello', sample('A'));
+  await delay(30);
+  assert.equal(frames.length, 1);
+});

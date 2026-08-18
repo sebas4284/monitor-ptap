@@ -5,6 +5,8 @@ interface PlantLiveness {
   lastKnown: Map<string, string>; // browseName → firma de valores (para detectar CAMBIO real)
   lastChangeAt: string | null; // sourceTimestamp del último CAMBIO observado; null = nunca
   windowSec: number;
+  /** Cuándo empezamos a observar esta planta. Acota el "aún no vi ningún cambio" del arranque. */
+  firstSeenAt: number;
 }
 
 /**
@@ -12,15 +14,28 @@ interface PlantLiveness {
  * cuánto hace que un valor cambió Y si la sesión con el PLC sigue sana.
  *
  *   live   → hubo un cambio en los últimos liveSec (con la sesión sana).
- *   stable → sesión sana, pero los valores no se mueven. Es OPERACIÓN NORMAL: un tanque a
- *            nivel constante o una presión sostenida no son una avería, y sus datos VALEN.
- *   frozen → la sesión NO está sana: perdimos la fuente y no sabemos qué pasa en la planta.
+ *   stable → sesión sana y los valores no se mueven, pero DENTRO de la ventana `windowSec`. Es
+ *            OPERACIÓN NORMAL: un tanque a nivel constante o una presión sostenida no son una
+ *            avería, y sus datos VALEN.
+ *   frozen → o la sesión NO está sana (perdimos la fuente), o lleva MÁS de `windowSec` sin que
+ *            cambie un solo valor. En ambos casos lo que se muestra ya no representa la planta.
  *
  * Por qué se puede afirmar "stable" sin mentir: el puente mantiene un heartbeat y la
  * suscripción OPC UA su keepalive. Si el puente sigue `Connected`, la sesión respondió hace
  * segundos — luego la ausencia de cambios es del PROCESO, no del enlace. Sin ese cruce, la
  * versión anterior marcaba `stale` por reloj y además invalidaba las señales, de modo que una
  * planta en régimen estable aparecía "congelada" y "sin dato" estando perfectamente bien.
+ *
+ * ⚠️ **Pero ese arreglo se pasó de largo y dejó un agujero** (detectado el 2026-08-15): al quitar
+ * el criterio de reloj se quitó TODA cota superior. `windowSec` se configuraba, se exponía en el
+ * DTO y no se consultaba en ninguna parte, así que con el puente `Connected` una planta con datos
+ * de **24 días** devolvía `stable`, indistinguible de un tanque quieto durante 30 segundos. Así
+ * pasaron inadvertidas tres plantas muertas en campo y 41 h en las que NOSOTROS dejamos de
+ * entregar frames.
+ *
+ * El equilibrio correcto no es "sin cota" ni "cota de segundos", sino la cota LARGA que ya existía
+ * declarada: `windowSec` (5 min por defecto). Una planta en régimen estable sigue viéndose
+ * `stable`; una que lleva días sin moverse se ve `frozen`, que es la verdad.
  *
  * Un CAMBIO = el valor de algún buffer difiere del anterior conocido. La PRIMERA vez que vemos
  * un buffer NO es un cambio (no hay delta): con la sesión sana eso es `stable`, no un error.
@@ -74,15 +89,26 @@ export class LivenessTracker {
     // Sin sesión sana no se puede afirmar nada de la planta: da igual lo reciente que sea el
     // último cambio, el dato que tenemos ya no está respaldado por nadie.
     if (!sourceHealthy) return 'frozen';
-    if (!entry.lastChangeAt) return 'stable'; // conectados, aún sin ver movimiento
+
+    // Conectados pero aún sin haber visto un solo cambio. Es el estado del arranque (la primera
+    // muestra de cada buffer no cuenta como cambio: no hay delta contra el que comparar), así que
+    // se concede el beneficio de la duda DURANTE la ventana. Pasada la ventana sin ver moverse
+    // nada, ya no es "acabamos de arrancar": es que no llega nada.
+    if (!entry.lastChangeAt) {
+      const esperandoSec = (now - entry.firstSeenAt) / 1000;
+      return esperandoSec > entry.windowSec ? 'frozen' : 'stable';
+    }
+
     const ageSec = (now - new Date(entry.lastChangeAt).getTime()) / 1000;
-    return ageSec <= this.liveSec ? 'live' : 'stable';
+    if (ageSec <= this.liveSec) return 'live';
+    // La cota larga. Es lo que distingue "el proceso está quieto" de "esto no se actualiza".
+    return ageSec > entry.windowSec ? 'frozen' : 'stable';
   }
 
   private ensure(plantId: string): PlantLiveness {
     let entry = this.plants.get(plantId);
     if (!entry) {
-      entry = { lastKnown: new Map(), lastChangeAt: null, windowSec: this.defaultWindowSec };
+      entry = { lastKnown: new Map(), lastChangeAt: null, windowSec: this.defaultWindowSec, firstSeenAt: Date.now() };
       this.plants.set(plantId, entry);
     }
     return entry;

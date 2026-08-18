@@ -5,8 +5,10 @@ import type { PlantSnapshotDto, SignalDto, ValveCommandResult } from './api';
  * Ya no hay mocks: si la planta no tiene válvula mapeada, la lista queda vacía y la pantalla lo dice.
  *
  * ESTADO de la válvula — dos métodos, por instrucción del operador (2026-07-30):
- *   1. `valve1State` (lectura directa de intIn[0]): máscara de bits del PLC → bit0 = abierta(1) /
- *      cerrada(0), con bit14 = estado válido. Es decir 16384 = CERRADA, 16385 = ABIERTA.
+ *   1. `valve1State` (lectura directa de intIn): máscara de bits del PLC → bit0 = abierta(1) /
+ *      cerrada(0), con bit14 = estado válido. Es decir 16384 = CERRADA, 16385 = ABIERTA. Los
+ *      sitios que no siguen esa máscara declaran sus valores literales en `stateEncoding`
+ *      (Cascajal: 251 = CERRADA) — ver `stateFromWord`.
  *   2. Caudal: si el caudal es <= 0.1 la válvula está CERRADA; por encima, ABIERTA.
  *
  * Se muestran AMBOS y se cruzan: el método 1 manda (es la lectura del propio equipo) y el 2 corrobora.
@@ -41,6 +43,13 @@ export interface ValveView {
   flowLabel: string | null;
   /** Los dos métodos dan resultados distintos → avisar, no elegir en silencio. */
   disagreement: boolean;
+  /**
+   * ¿Se puede accionar desde la app? `false` = la válvula existe y su estado se muestra, pero no
+   * tiene canal de comando en el mapping (la de ENTRADA de La Vorágine, cuya frecuencia de bits aún
+   * no conocemos). Sin esto se le ofrecía al operador un botón que, tras confirmar la maniobra en un
+   * diálogo, solo podía devolver un 404.
+   */
+  commandable: boolean;
   /** Valor crudo de la palabra de estado (diagnóstico). */
   rawState: number | null;
   ts: string | null;
@@ -50,9 +59,39 @@ function numeric(signal: SignalDto | undefined): number | null {
   return signal && typeof signal.value === 'number' && signal.usable ? signal.value : null;
 }
 
-/** Método 1: decodifica la palabra de estado del PLC. */
-function stateFromWord(word: number | null): ValveState | null {
+/**
+ * Método 1: decodifica la palabra de estado del PLC.
+ *
+ * Dos convenciones, porque las plantas no son iguales:
+ *
+ *  1. **Valores literales** (`stateEncoding` en el mapping), si el sitio los declara. Cascajal
+ *     reporta `251` = CERRADA en `INT_IN[1]`, verificado en campo por el operador el 2026-08-13.
+ *     Ese valor NO trae el bit14, así que la regla de bits lo descartaba como "sin estado válido"
+ *     y la planta se quedaba muda: por eso los literales mandan cuando existen.
+ *  2. **Máscara de bits** (Vorágine/Sirena): bit14 = estado válido, bit0 = abierta.
+ *
+ * En ambas, un valor que no encaja devuelve `null` y el veredicto cae al caudal. Es deliberado:
+ * más vale no afirmar nada que enseñar una válvula "cerrada" que está abierta.
+ */
+function stateFromWord(
+  word: number | null,
+  encoding?: SignalDto['stateEncoding'],
+  trusted?: boolean,
+): ValveState | null {
   if (word === null) return null;
+  // El sitio declara que su palabra de estado NO es fiable: se sigue mostrando como diagnóstico
+  // (`rawState`), pero el veredicto lo da el caudal, que es evidencia física. La Sirena está así:
+  // su registro decía CERRADA con 23,33 l/s entrando.
+  if (trusted === false) return null;
+
+  if (encoding && (encoding.closed !== undefined || encoding.open !== undefined)) {
+    if (word === encoding.closed) return 'closed';
+    if (word === encoding.open) return 'open';
+    // El sitio declaró su convención y este valor no es ninguno de los suyos. NO se cae a la regla
+    // de bits: mezclarlas es justo como se inventaron estados falsos antes (ver fix-valve-state).
+    return null;
+  }
+
   // Sin bit14 el PLC no está reportando un estado válido → no se afirma nada.
   if ((word & BIT_VALID) === 0) return null;
   return (word & BIT_OPEN) !== 0 ? 'open' : 'closed';
@@ -69,9 +108,17 @@ function stateFromFlow(flow: number | null): ValveState | null {
  * planta no la tiene mapeada, se usa la entrada. Devuelve también su etiqueta para poder mostrar de
  * dónde salió el veredicto.
  */
-function referenceFlow(signals: Record<string, SignalDto>): { value: number | null; unit: string | null; label: string | null } {
-  const preferred = ['outletFlow1', 'outletFlow2', 'inletFlow1', 'inletFlow2'];
-  for (const key of preferred) {
+function referenceFlow(
+  signals: Record<string, SignalDto>,
+  declarado?: string,
+): { value: number | null; unit: string | null; label: string | null } {
+  // Si el mapping declara QUÉ caudal corresponde a esta válvula, manda ese y no se adivina. El
+  // orden de abajo es una SUPOSICIÓN que acierta o falla según dónde esté físicamente la válvula,
+  // y elegir mal miente justo en el caso que importa: una válvula de salida cerrada con la entrada
+  // llenando el tanque, o una de entrada cerrada con el tanque vaciándose aguas abajo. En ambos
+  // hay caudal en el lado que NO manda, y se afirmaría "abierta" con la válvula cerrada.
+  const orden = declarado ? [declarado] : ['outletFlow1', 'outletFlow2', 'inletFlow1', 'inletFlow2'];
+  for (const key of orden) {
     const sig = signals[key];
     const value = numeric(sig);
     if (value !== null) return { value, unit: sig?.unit ?? null, label: sig?.label ?? key };
@@ -82,7 +129,6 @@ function referenceFlow(signals: Record<string, SignalDto>): { value: number | nu
 export function valvesFromSnapshot(snapshot: PlantSnapshotDto | undefined): ValveView[] {
   if (!snapshot) return [];
   const out: ValveView[] = [];
-  const flow = referenceFlow(snapshot.signals);
 
   // Una válvula por cada señal de comando valve<N> presente en el mapping de la planta.
   const nums = new Set<number>();
@@ -93,9 +139,11 @@ export function valvesFromSnapshot(snapshot: PlantSnapshotDto | undefined): Valv
 
   for (const n of [...nums].sort((a, b) => a - b)) {
     const cmd = snapshot.signals[`valve${n}`];
+    // El caudal se resuelve POR VÁLVULA: cada una puede estar en un punto distinto del proceso.
+    const flow = referenceFlow(snapshot.signals, cmd?.flowDomainKey);
     const stateSig = snapshot.signals[`valve${n}State`];
     const rawState = numeric(stateSig);
-    const byState = stateFromWord(rawState);
+    const byState = stateFromWord(rawState, stateSig?.stateEncoding, stateSig?.stateTrusted);
     const byFlow = stateFromFlow(flow.value);
 
     const state: ValveState = byState ?? byFlow ?? 'unknown';
@@ -112,6 +160,9 @@ export function valvesFromSnapshot(snapshot: PlantSnapshotDto | undefined): Valv
       flowUnit: flow.unit,
       flowLabel: flow.label,
       disagreement: byState !== null && byFlow !== null && byState !== byFlow,
+      // Ausente ⇒ accionable: el backend solo manda el campo cuando vale false, y así una válvula
+      // de las de siempre se comporta igual que antes de que este campo existiera.
+      commandable: cmd?.commandable !== false,
       rawState,
       ts: stateSig?.ts ?? cmd?.ts ?? null,
     });
@@ -131,8 +182,20 @@ export interface CommandVerdict {
   ok: boolean;
   /** La orden salió al PLC (el bit se escribió), aunque el equipo no haya respondido. */
   signalSent: boolean;
+  /**
+   * Cómo se pinta el resultado. Tres estados, no dos, y esa es la corrección que importa.
+   *
+   * Con un booleano, el desenlace «la señal salió pero nadie puede confirmar que la válvula se
+   * movió» devolvía `ok: true` y el diálogo lo pintaba **verde con un tick**, sobre un texto que
+   * decía «Verifique en sitio». El semáforo afirmaba éxito y la letra pequeña pedía ir a mirar:
+   * nadie va a mirar. Ahora ese caso es ÁMBAR, que es lo que significa de verdad — ni éxito ni
+   * fallo, sino incertidumbre que alguien tiene que resolver con los ojos.
+   */
+  tone: 'success' | 'warning' | 'danger';
   title: string;
   message: string;
+  /** Códigos internos y valores crudos: útiles para reportar, nunca dentro de la frase. */
+  technical?: string | null;
 }
 
 /**
@@ -149,22 +212,27 @@ export function interpretCommand(r: ValveCommandResult, verb: 'open' | 'close', 
     return {
       ok: true,
       signalSent: true,
+      tone: 'success',
       title: `Orden confirmada`,
       message: `${valveName}: el equipo confirmó el cambio. Ahora está ${nuevoEstado}.`,
     };
   }
 
   // La orden salió y el eco la verificó, pero el canal de estado de este sitio no está verificado
-  // en campo: no hay con qué afirmar NI negar que la válvula se movió. Se informa exactamente eso.
+  // en campo: no hay con qué afirmar NI negar que la válvula se movió. Se informa exactamente eso —
+  // y en ÁMBAR, porque pintarlo de verde convertía «ve a comprobarlo» en «listo, ya está».
   if (r.status === 'sent') {
     return {
       ok: true,
       signalSent: true,
-      title: 'Orden enviada al equipo',
+      tone: 'warning',
+      title: 'Verifique en la planta: no se pudo confirmar',
       message:
-        `${valveName}: la señal de ${accion} se escribió en el PLC y quedó verificada en el canal ` +
-        `(bit ${r.writtenValue}). Esta planta no reporta un estado eléctrico verificado, así que el ` +
-        `sistema no puede confirmar por sí solo que la válvula se movió. Verifique en sitio.`,
+        `${valveName}: la orden de ${accion} salió y quedó registrada. Esta planta no informa del ` +
+        `estado real de la válvula, así que el sistema no puede saber si se movió. Compruébelo en sitio.`,
+      // El valor crudo del bit fuera de la frase: no significa nada para quien opera y rompía la
+      // lectura. Sigue disponible para reportar una incidencia.
+      technical: `valor escrito: ${r.writtenValue}`,
     };
   }
 
@@ -172,10 +240,11 @@ export function interpretCommand(r: ValveCommandResult, verb: 'open' | 'close', 
     return {
       ok: false,
       signalSent: false,
+      tone: 'danger',
       title: 'No se pudo enviar la señal',
       message:
-        `${valveName}: el PLC RECHAZÓ la escritura, así que la orden de ${accion} no salió. ` +
-        `Revisa la conexión con el equipo y vuelve a intentar.`,
+        `${valveName}: el equipo RECHAZÓ la orden de ${accion}, así que no salió. ` +
+        `Revisa la conexión con la planta y vuelve a intentarlo.`,
     };
   }
 
@@ -185,12 +254,13 @@ export function interpretCommand(r: ValveCommandResult, verb: 'open' | 'close', 
     return {
       ok: false,
       signalSent: eco,
-      title: eco ? 'La señal salió, el equipo no respondió' : 'La orden no se pudo confirmar',
+      tone: 'danger',
+      title: eco ? 'La válvula no respondió' : 'La orden no se pudo confirmar',
       message: eco
-        ? `${valveName}: la señal de ${accion} SÍ se escribió en el PLC (bit ${r.writtenValue} verificado), ` +
-          `pero el equipo no reportó el cambio de estado. Es probable que exista una FALLA FÍSICA que impida ` +
-          `accionar la válvula. La app mantiene el último estado real leído.`
+        ? `${valveName}: la orden de ${accion} salió correctamente, pero la válvula no cambió de estado. ` +
+          `Lo más probable es que esté trabada o sin energía. Revísala en sitio.`
         : `${valveName}: no se pudo verificar que la orden de ${accion} llegara al equipo. No se asume ningún cambio.`,
+      technical: eco ? `valor escrito: ${r.writtenValue}, verificado` : null,
     };
   }
 
@@ -200,19 +270,22 @@ export function interpretCommand(r: ValveCommandResult, verb: 'open' | 'close', 
     return {
       ok: false,
       signalSent: false,
-      title: 'No se envió: enclavamiento',
+      tone: 'danger',
+      title: 'No se envió: falta dato fresco',
       message:
-        `${valveName}: por seguridad no se acciona sin datos frescos del sitio. ` +
-        `Espera a que la planta vuelva a reportar y reintenta. (${reason})`,
+        `${valveName}: por seguridad no se acciona una válvula sin lecturas recientes de la planta. ` +
+        `Espera a que vuelva a reportar y reinténtalo.`,
+      technical: reason,
     };
   }
   if (reason === 'FORBIDDEN') {
-    return { ok: false, signalSent: false, title: 'Sin permiso', message: `Tu rol no puede operar válvulas.` };
+    return { ok: false, signalSent: false, tone: 'danger', title: 'Sin permiso', message: `Tu rol no puede operar válvulas.` };
   }
   if (reason === 'WRITES_DISABLED_INSECURE_SESSION') {
     return {
       ok: false,
       signalSent: false,
+      tone: 'danger',
       title: 'Escritura deshabilitada',
       message: `El servidor tiene el canal de escritura bloqueado por configuración. Avisa al administrador.`,
     };
@@ -221,6 +294,7 @@ export function interpretCommand(r: ValveCommandResult, verb: 'open' | 'close', 
     return {
       ok: false,
       signalSent: false,
+      tone: 'danger',
       title: `Comando no disponible`,
       message: `${valveName}: la orden de ${accion} no está definida para esta válvula.`,
     };
@@ -229,25 +303,36 @@ export function interpretCommand(r: ValveCommandResult, verb: 'open' | 'close', 
     return {
       ok: false,
       signalSent: false,
+      tone: 'danger',
       title: 'Válvula no operable',
       message: `${valveName} no tiene canal de mando configurado.`,
     };
   }
   if (reason === 'IN_PROGRESS') {
-    return { ok: false, signalSent: false, title: 'Orden en curso', message: `${valveName}: ya hay una orden ejecutándose. Espera el resultado.` };
+    return { ok: false, signalSent: false, tone: 'warning', title: 'Orden en curso', message: `${valveName}: ya hay una orden ejecutándose. Espera el resultado.` };
   }
   if (reason === 'SESSION_EXPIRED') {
-    return { ok: false, signalSent: false, title: 'Sesión vencida', message: 'Vuelve a iniciar sesión.' };
+    return { ok: false, signalSent: false, tone: 'danger', title: 'Sesión vencida', message: 'Vuelve a iniciar sesión.' };
   }
   if (reason === 'NETWORK') {
     return {
       ok: false,
       signalSent: false,
+      tone: 'danger',
       title: 'Sin conexión con el servidor',
       message: `No se pudo enviar la orden de ${accion}. No se sabe si salió: verifica el estado antes de reintentar.`,
     };
   }
-  return { ok: false, signalSent: false, title: 'La orden no se ejecutó', message: `${valveName}: ${reason || 'motivo desconocido'}.` };
+  // El fallback NO vuelca el código del backend como si fuese español: se leía
+  // "Válvula de salida: RATE_LIMITED." El código va aparte, para poder reportarlo.
+  return {
+    ok: false,
+    signalSent: false,
+    tone: 'danger',
+    title: 'La orden no se ejecutó',
+    message: `${valveName}: el servidor rechazó la orden y no llegó a la planta.`,
+    technical: reason || 'motivo desconocido',
+  };
 }
 
 // ── Detección de operación MANUAL ─────────────────────────────────────────────────────────────

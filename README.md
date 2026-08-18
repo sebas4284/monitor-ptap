@@ -1,22 +1,26 @@
 # Monitor PTAP
 
-Sistema de **monitoreo en tiempo real de 13 Plantas de Tratamiento de Agua Potable (PTAP)**,
+Sistema de **monitoreo en tiempo real de 12 Plantas de Tratamiento de Agua Potable (PTAP)**,
 conectadas a través de un PLC maestro Allen-Bradley expuesto por un servidor **FactoryTalk
 Optix OPC UA**. El backend lee los buffers crudos del PLC, los procesa por un pipeline de
 capas y los publica a la app móvil/web por REST y Socket.IO.
 
-> **Estado real (2026-07-14):** el puente OPC UA está **vivo contra el PLC real**. El caudal de
-> entrada de Montebello viaja de punta a punta (PLC → backend → móvil) en tiempo real. La
-> telemetría vive **solo en RAM** (nunca se persiste). El resto de señales sigue sin mapear
-> hasta obtener el export L5X del PLC. **Fases 0–4 completas y verificadas** (92/92 tests,
-> typecheck limpio en todo el monorepo, `validate:mapping` OK): JWT+RBAC, seguridad OPC UA
-> (SignAndEncrypt/Basic256Sha256 probado end-to-end contra un servidor local real), audit log,
-> `/api/health/opc`, métricas Prometheus y hardening HTTP. **Fase 5 (comandos de escritura):
-> mecanismo completo y probado** (WriteService con precondición dura de sesión cifrada,
-> interlocks, idempotencia durable, read-back con timeout y audit) — pero el mapping de
-> **producción no tiene ninguna señal `writable`** (sin L5X ni documento oficial de la planta),
-> así que todo comando real se rechaza de forma segura hasta que llegue esa documentación.
-> Detalle en [§0 Estado de fases](#estado-de-fases).
+> **Estado real (2026-08-05):** el puente OPC UA está **vivo contra el PLC real** y la telemetría
+> viaja de punta a punta (PLC → backend → móvil) en tiempo real. La telemetría vive **solo en RAM**
+> (nunca se persiste). **Las 6 fases están ejecutadas** (245/245 tests, typecheck limpio en todo el
+> monorepo, `validate:mapping` OK).
+>
+> **El canal de escritura al PLC está ABIERTO** desde el 2026-08-03, autorizado por Operación: se
+> pueden comandar válvulas en las 12 plantas desde la app, con doble confirmación, RBAC, interlock,
+> idempotencia y read-back. Requiere `OPCUA_ALLOW_INSECURE_WRITES=true` porque el servidor OPC UA del
+> equipo solo admite Anonymous + None (hallazgo P0 abierto) — la protección real es perimetral, no
+> del protocolo. **Alcance real hoy:** falta el actuador físico en varias plantas y el verbo `close`
+> no existe en todo el mapping, así que muchos comandos devuelven `READBACK_UNCONFIRMED` o
+> `UNKNOWN_COMMAND`: es la respuesta correcta, no un fallo del canal.
+>
+> El grueso de las señales de proceso sigue `unmapped` a la espera del export L5X del PLC.
+> Detalle en [§0 Estado de fases](#estado-de-fases). Lo que falta, en
+> [`docs/PENDIENTES.md`](docs/PENDIENTES.md).
 
 ---
 
@@ -46,21 +50,24 @@ capas y los publica a la app móvil/web por REST y Socket.IO.
 
 | Fase | Alcance | Estado | Evidencia |
 |------|---------|--------|-----------|
-| **0** | Contratos (`opc_mapping.schema.json`/`.json`), hallazgo de seguridad P0 | ✅ Completa | `npm run validate:mapping` → 12 plantas OK; `docs/SECURITY_FINDING_P0.md`, `docs/PHASE0_VERIFICATION.md` |
+| **0** | Contratos (`opc_mapping.schema.json`/`.json`), hallazgo de seguridad P0 | ✅ Completa | `npm run validate:mapping` → 12 plantas OK; `docs/SECURITY_FINDING_P0.md`, `docs/plc/OBSERVACIONES_FASE0.md` |
 | **1** | Adaptador OPC UA real, `BridgeStatus`, watchdog, heartbeat, reconexión, `/api/opc/status`\|`info`\|`buffers` | ✅ Completa | `bridge-state-machine.ts`, `watchdog.ts`, `heartbeat-monitor.ts`; tests de bridge en verde |
-| **2** | Parser + sequence + dead letter + cache RAM + Socket.IO con datos reales | ✅ Completa | `plant-pipeline.service.ts`, `/api/opc/dead-letter`; caudal de Montebello confirmado contra el PLC (`docs/FLOW_VALIDATION.md`) |
+| **2** | Parser + sequence + dead letter + cache RAM + Socket.IO con datos reales | ✅ Completa | `plant-pipeline.service.ts`, `/api/opc/dead-letter`; caudal de Montebello confirmado contra el PLC (`docs/plc/OBSERVACIONES_FASE0.md` §4). Replay contra tramas REALES: `test/plc-replay.test.ts` |
 | **3** | Mapping Engine + Quality Service + Snapshot Builder + `dtoVersion` | ✅ Completa | `mapping.engine.ts`, `quality.evaluator.ts`, `snapshot.builder.ts` |
 | **4** | JWT/RBAC, seguridad OPC (SignAndEncrypt+certificado), `/health/opc`, métricas Prometheus, audit log en MySQL, helmet/rate-limit | ✅ Completa | `AuthModule` (login, guards), `users`/`audit_log` en MySQL (`db:migrate`/`db:seed-admin`), `apps/api/test/opcua-security-switch.test.ts` (username **y** certificate probados contra un `OPCUAServer` local real), `GET /api/health/opc`, `GET /metrics`, `docs/OPTIX_CLIENT_CERT_TRUST.md` |
-| **5** | Canal de escritura (comandos) con interlocks, idempotencia y feature flag | ✅ Mecanismo completo y probado (sin señales `writable` en producción hasta el L5X) | `write.service.ts`, `commands.controller.ts` (`POST /api/plants/:id/commands`), `command-log.repository.ts` (idempotencia MySQL), schema `write` spec; `test/write-service.test.ts`, `test/commands-e2e.test.ts`, `test/command-mapping.test.ts` |
-| **6** | Validación operacional: caos, carga, latencia, soak 24–72 h | ❌ No iniciada (depende de 4–5) | — |
+| **5** | Canal de escritura (comandos) con interlocks, idempotencia y feature flag | ✅ Completa y **ABIERTA en producción** (autorizada 2026-08-03; 10 señales `valve1` writable en el mapping) | `write.service.ts`, `commands.controller.ts` (`POST /api/plants/:id/commands`), `command-log.repository.ts` (idempotencia MySQL); `test/write-service.test.ts` (24), `test/commands-e2e.test.ts`, `test/command-mapping.test.ts`. Prueba física real: `docs/archivo/PRUEBA_VALVULA_SIRENA.md` |
+| **7** | Bandeja de notificaciones + detector de sensores congelados | ✅ Completa (2026-08-06) | Migración `0009`, `modules/notifications/`, `stale-data.detector.ts`; `test/stale-data-detector.test.ts` (13). En el front: bandeja con historial de 72 h, campana por **no vistos**, y avisos en el panel del sistema (Android por notificación local, sin Firebase) |
+| **6** | Validación operacional: caos, carga, latencia, soak 24–72 h | 🟡 Ejecutada salvo el soak | `test/operational-resilience.test.ts` (6 escenarios de caos), `scripts/operational-validation.ts` (carga/latencia), `scripts/soak-test.ts` (**arnés listo, la corrida de 24–72 h sigue pendiente**), `docs/OPERATIONAL_VALIDATION.md` |
 
-Verificado el 2026-07-14: `npm run typecheck` limpio en **todo el monorepo** (`@ptap/api`,
-`@ptap/mobile`, `@ptap/shared`), `npm test -w @ptap/api` → **92/92 tests OK** (incluye handshake
-real contra un servidor OPC UA local con SignAndEncrypt+Basic256Sha256), `npm run validate:mapping
--w @ptap/api` → mapping válido. `npm run lint -w @ptap/api` sigue fallando por deuda técnica
-**preexistente** (regla `expo/no-dynamic-env-var` del preset de Expo aplicada a helpers backend de
-lectura de `.env` — ya documentada en la auditoría del 10 jul; Fase 4 añade una instancia más del
-mismo patrón ya establecido en `connectivity.config.ts`, no una regresión nueva).
+Verificado el 2026-08-05: `npm run typecheck` limpio en **todo el monorepo** (`@ptap/api`,
+`@ptap/mobile`, `@ptap/shared`), `npm test -w @ptap/api` → **245/245 tests OK** en 31 archivos
+(incluye handshake real contra un servidor OPC UA local con SignAndEncrypt+Basic256Sha256, y replay
+del pipeline contra tramas reales capturadas del PLC), `npm run validate:mapping -w @ptap/api` →
+mapping válido. `npm run lint` pasa con **0 errores** y 58 warnings de estilo (`array-type`,
+`import/first`).
+
+> ⚠️ **Hueco de cobertura conocido:** el script `typecheck` solo cubre `src/**`. Ni `test/` ni
+> `scripts/` los typechequea ningún script ni el CI. Ver [`docs/PENDIENTES.md §4`](docs/PENDIENTES.md).
 
 **Novedades de Fase 4 para desarrolladores:**
 - `POST /api/auth/login` (`{ email, password } → { token, user: AuthUser }`, mismo shape que ya
@@ -78,11 +85,11 @@ mismo patrón ya establecido en `connectivity.config.ts`, no una regresión nuev
   expone `/api/opc/*` con RBAC.
 - `GET /metrics` vive **fuera** del prefijo `/api` (convención Prometheus); `GET /api/health/opc`
   devuelve 503 en `Stale`/`Faulted`.
-- Gap conocido, documentado y pendiente: el gateway Socket.IO sigue sin autenticación (requeriría
-  tocar el móvil para mandar el JWT en el handshake) — ver `docs/SECURITY_FINDING_P0.md` §6.
+- El gateway Socket.IO **ya exige JWT en el handshake** (SRV-04): el token viaja en `auth.token` y
+  `resetSocket()` lo renueva en cada cambio de identidad. Cubierto por `test/gateway-auth.test.ts`.
 
-> El **mobile app** consume el pipeline real (`services/api.ts`, cero mocks) para sensores/tanques;
-> `mock-data.ts` cubre **a propósito** features que el backend aún no mapea (válvulas, reportes).
+> El **mobile app** consume el pipeline real en **todas** sus pantallas (`services/api.ts`): sensores,
+> tanques, válvulas y reportes. **No queda ningún mock** — `mock-data.ts` fue eliminado.
 > El **login ya es real**: `services/auth.ts` llama a `POST /api/auth/login`, el rol sale de MySQL
 > (no del email), el JWT viaja en cada petición REST y la sesión persiste (secure-store/
 > localStorage), con un 401 limpiándola automáticamente. **Hay auto-registro**, pero la cuenta nace
@@ -101,8 +108,10 @@ atraviesa todo el diseño.
 
 - **Sí hace:** leer buffers OPC UA, detectar frescura por planta, mapear señales conocidas a
   dominio, evaluar calidad, exponer DTOs por REST + push por Socket.IO.
-- **No hace (por ahora):** escribir al PLC (prohibido hasta Fase 5), persistir telemetría en
-  MySQL, ni inventar semántica de señales sin evidencia documental.
+- **También hace (desde 2026-08-03):** escribir al PLC para comandar válvulas, con doble
+  confirmación en la app, RBAC, interlock, idempotencia y read-back de verificación.
+- **No hace:** persistir telemetría en MySQL (vive solo en RAM, por diseño), ni inventar semántica
+  de señales sin evidencia documental.
 
 ---
 
@@ -184,20 +193,20 @@ monitor-ptap/
 │   │   │   │       ├── connectivity.config.ts    # TODA la config OPC/liveness desde .env
 │   │   │   │       ├── connectivity.module.ts    # Wiring DI (sin BD — usado por main.ts Y main.telemetry.ts)
 │   │   │   │       ├── opc-observability.module.ts # ★ Fase 4: OpcController + RBAC/audit/métricas (CON BD; solo main.ts)
-│   │   │   │       ├── connectivity.gateway.ts   # Socket.IO (opc:snapshot / opc:liveness) — sin auth (gap conocido)
+│   │   │   │       ├── connectivity.gateway.ts   # Socket.IO (opc:snapshot / opc:liveness) — JWT en el handshake
 │   │   │   │       ├── bridge-orchestrator.service.ts  # Ciclo de vida + retry del adaptador
 │   │   │   │       └── opc.controller.ts   # /api/opc/status|info|buffers|dead-letter (RBAC, Fase 4)
-│   │   │   └── modules/                    # Dominios HTTP: auth, users, plants, health (+/opc), commands (Fase 5)
-│   │   └── test/                          # Suite (node:test + tsx) — 92 tests; requiere tsconfig.test.json (ver §10)
+│   │   │   └── modules/                    # Dominios HTTP: auth, users, plants, health (+/opc), commands, hmi, reports
+│   │   └── test/                          # Suite (node:test + tsx) — 245 tests en 31 archivos (ver §11)
 │   └── mobile/                       # App Expo (Android / iOS / Web)
-│       ├── app/                          # Rutas (expo-router): (auth)/login, (app)/sensores…
-│       ├── components/                   # LiveBadge, SignalCard, PlantSelector…
-│       ├── hooks/                        # useSnapshot (REST + Socket.IO), useTanques…
+│       ├── app/                          # Rutas (expo-router): (auth)/login, (app)/tablero…
+│       ├── components/                   # GaugeCard, TankGaugeCard, ValveItem, LiveBadge, PlantSelector…
+│       ├── hooks/                        # useSnapshot (REST + Socket.IO), useAlerts, useValveSupervisor…
 │       ├── services/
-│       │   ├── api.ts                     # Cliente REST REAL (cero mocks)
+│       │   ├── api.ts                     # Cliente REST REAL (cero mocks en toda la app)
 │       │   ├── socket.ts                  # Cliente Socket.IO
-│       │   ├── mock-data.ts               # Placeholders de features sin mapear (tanques/válvulas/reportes)
-│       │   └── auth.ts                    # Stub de auth (backend JWT fuera de alcance)
+│       │   ├── valves.ts / reports.ts     # Válvulas y reportes contra el backend real
+│       │   └── auth.ts                    # Login JWT real contra /api/auth/login
 │       ├── context/                      # PlantContext (12 slugs canónicos), AuthContext
 │       └── constants/colors.ts
 ├── packages/
@@ -715,23 +724,52 @@ pichinde, carbonero, sirena, san-antonio, quijote`). Nada de `PTAP Norte` ni `pt
 
 ## Documentación de referencia
 
+**Empieza aquí:** [`docs/SETUP.md`](docs/SETUP.md) si acabas de clonar ·
+[`docs/PENDIENTES.md`](docs/PENDIENTES.md) si quieres saber qué falta.
+
+### Puesta en marcha y operación
+
 | Documento | Contenido |
 |-----------|-----------|
-| `docs/FLOW_VALIDATION.md` | Validación en vivo del caudal de Montebello contra el PLC (evidencia de la inferencia). |
-| `docs/PHASE0_VERIFICATION.md` | Evidencia de solo-lectura que respalda el contrato de mapping. |
-| `docs/LIVENESS_OBSERVATION.md` | Por qué el `connectionStatus` se mide por frescura de datos (4 estados). |
-| `docs/MSG_BITS_OBSERVATION.md` | Por qué los bits DN/ER/TO quedan descartados como fuente de estado. |
-| `docs/SECURITY_FINDING_P0.md` | Hallazgo P0: el servidor OPC UA acepta Anonymous + None. Sección 6 tiene el seguimiento de las mitigaciones de Fase 4. |
-| `docs/OPTIX_CLIENT_CERT_TRUST.md` | ★ Fase 4: cómo confiar el certificado de cliente del gateway en FactoryTalk Optix (y el del servidor, en el gateway). |
-| `docs/SETUP.md` | Puesta en marcha desde cero (MySQL, `.env`, migraciones, usuarios de prueba). Empieza por aquí si acabas de clonar. |
-| `docs/SETUP_AGENT.md` | El mismo montaje como **runbook ejecutable** (pasos + verificación + errores típicos), pensado para que lo siga un agente de IA. |
-| `docs/ANDROID_APK.md` | Guía completa para compilar el `.apk` de Android: toolchain, túnel HTTPS, keystore de firma, checklist de seguridad antes de repartirlo, y qué hacer cuando cambia la URL del túnel. Ver también [§12](#empaquetado-android-apk). |
-| `docs/DEPLOY_VPS.md` | Despliegue en un VPS (bare-metal, PM2, nginx, certbot) — no Docker. |
-| `docs/CHECKLIST_PRODUCCION.md` | Checklist de endurecimiento antes de producción (valores de env, desactivar cuentas demo, `npm ci`+`build`+`migrate` en el servidor). |
-| `docs/REQUISITOS_SERVIDOR.md` | Requisitos del servidor de producción. |
-| `docs/SEGURIDAD_FRONTEND.md` | Requisitos de seguridad del frontend/móvil. |
-| `docs/DATA_CATALOG.md` | Catálogo de señales por planta (generado desde el mapping). |
-| `docs/architecture/` | Documento de arquitectura + métodos/contratos internos del backend. |
-| `docs/api/openapi.yaml`, `docs/postman/` | Contrato de API (todas las rutas, con su permiso). |
-| `docs/audit/` | Auditorías fechadas (evidencia histórica; no se actualizan). |
-| `tools/plc-discovery/` | Ingeniería inversa OPC UA (10 entregables en `docs/plc/`). |
+| [`docs/SETUP.md`](docs/SETUP.md) | Puesta en marcha desde cero (MySQL, `.env`, migraciones, usuarios de prueba), con verificación en cada paso y tabla de errores típicos. Sirve para personas y para agentes. |
+| [`docs/RUNBOOK_PRODUCCION.md`](docs/RUNBOOK_PRODUCCION.md) | **Despliegue y operación**: lo que está montado hoy en la VM (§1–10) y cómo montarlo desde cero en un servidor nuevo (§11: PM2, nginx, certbot — sin Docker). |
+| [`docs/REQUISITOS_SERVIDOR.md`](docs/REQUISITOS_SERVIDOR.md) | Requisitos para aprovisionar la máquina (SO, hardware, software, puertos, accesos). |
+| [`docs/CHECKLIST_PRODUCCION.md`](docs/CHECKLIST_PRODUCCION.md) | Endurecimiento antes de exponer: variables de entorno, cuentas demo, seguridad. |
+| [`docs/ANDROID_APK.md`](docs/ANDROID_APK.md) | Compilar el `.apk`: toolchain, keystore de firma, checklist de seguridad y qué hacer cuando cambia la URL. Ver también [§12](#empaquetado-android-apk). |
+| [`docs/DOMINIO_AQUORA_CLOUDFLARE.md`](docs/DOMINIO_AQUORA_CLOUDFLARE.md) | Dominio `aquora.xpertic.co` y TLS: el camino de Cloudflare y por qué se acabó yendo por Let's Encrypt. |
+| [`docs/dns/`](docs/dns/) | Zonas BIND para importar en Cloudflare (excluyentes entre sí — leer su README). |
+
+### Estado, pendientes e incidentes
+
+| Documento | Contenido |
+|-----------|-----------|
+| [`docs/PENDIENTES.md`](docs/PENDIENTES.md) | **Único tracker de pendientes**: bloqueado por infraestructura, pendiente de desplegar, decisiones del cliente y deuda técnica. |
+| [`docs/INCIDENTE_CONEXION_PLC.md`](docs/INCIDENTE_CONEXION_PLC.md) | Incidente **abierto**: pérdida de acceso al PLC maestro. |
+| [`docs/OPERATIONAL_VALIDATION.md`](docs/OPERATIONAL_VALIDATION.md) | Fase 6: caos, carga, latencia y replay. El soak de 24–72 h sigue sin correr. |
+| [`docs/CATALOGO_ERRORES.md`](docs/CATALOGO_ERRORES.md) | Catálogo de códigos de error: código → archivo → causa → responsable. |
+| [`docs/archivo/`](docs/archivo/) | **Evidencia histórica congelada** (auditorías fechadas, pruebas de campo). No refleja el estado actual — leer su README. |
+
+### Seguridad
+
+| Documento | Contenido |
+|-----------|-----------|
+| [`docs/SECURITY_FINDING_P0.md`](docs/SECURITY_FINDING_P0.md) | Hallazgo P0 **abierto**: el servidor OPC UA del PLC acepta Anonymous + SecurityPolicy None. Es la razón de que la escritura exija `OPCUA_ALLOW_INSECURE_WRITES`. |
+| [`docs/SEGURIDAD_FRONTEND.md`](docs/SEGURIDAD_FRONTEND.md) | Postura de seguridad del frontend/móvil. |
+| [`docs/OPTIX_CLIENT_CERT_TRUST.md`](docs/OPTIX_CLIENT_CERT_TRUST.md) | Confiar el certificado de cliente del gateway en FactoryTalk Optix (y el del servidor, en el gateway). |
+
+### El PLC: contrato, señales y evidencia
+
+| Documento | Contenido |
+|-----------|-----------|
+| [`docs/DATA_CATALOG.md`](docs/DATA_CATALOG.md) | Catálogo de señales por planta. **Generado** desde el mapping — no editar a mano. |
+| [`docs/plc/OBSERVACIONES_FASE0.md`](docs/plc/OBSERVACIONES_FASE0.md) | Las cuatro observaciones de solo lectura contra el PLC real, como una sola investigación: verificación del contrato, por qué DN/ER/TO **no** sirven como estado de conexión, cómo se llegó al modelo de frescura de 3 estados, y la validación del caudal de Montebello. |
+| [`docs/plc/`](docs/plc/) | Los 10 entregables de la ingeniería inversa OPC UA (`tools/plc-discovery`). |
+| [`docs/PROTOCOLO_VALVULAS_VORAGINE.md`](docs/PROTOCOLO_VALVULAS_VORAGINE.md) | Protocolo de comando y estado de válvulas (semántica de bits). |
+
+### Contratos y arquitectura
+
+| Documento | Contenido |
+|-----------|-----------|
+| [`docs/architecture/`](docs/architecture/) | Arquitectura del backend + métodos y contratos internos. |
+| [`docs/api/openapi.yaml`](docs/api/openapi.yaml), [`docs/postman/`](docs/postman/) | Contrato HTTP completo, con el permiso de cada ruta. |
+| [`docs/integration/frontend-integration.md`](docs/integration/frontend-integration.md) | Guía de integración frontend ↔ backend. |

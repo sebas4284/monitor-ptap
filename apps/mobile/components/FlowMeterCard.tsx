@@ -1,9 +1,11 @@
+import { memo } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '../constants/colors';
 import type { SignalDto } from '../services/api';
 import { directionFor } from '../services/signal-kind';
 import { GaugeCard } from './GaugeCard';
+import { sameSignalCard } from './memo-compare';
 
 /** Formato numérico es-CO (coma decimal + separador de miles), coherente con el reloj del tablero. */
 const fmt = (n: number, d = 2): string =>
@@ -15,16 +17,19 @@ const fmt = (n: number, d = 2): string =>
  * es degenerado (opMin === opMax → dividir por cero daría "NaN%"), o el valor es null, cae a
  * GaugeCard — no hay con qué dibujar la barra.
  */
-export function FlowMeterCard({
+function FlowMeterCardBase({
   signal,
   name,
   icon,
   frozen = false,
+  compact = false,
 }: {
   signal: SignalDto;
   name: string;
   icon: string;
   frozen?: boolean;
+  /** Tablero en modo compacto: oculta las etiquetas 0%/N%/100% bajo la barra. */
+  compact?: boolean;
 }) {
   const numeric = typeof signal.value === 'number';
   const opMin = signal.opMin;
@@ -32,7 +37,7 @@ export function FlowMeterCard({
   const hasSpan = typeof opMin === 'number' && typeof opMax === 'number' && opMax - opMin > 0;
 
   if (!numeric || !hasSpan) {
-    return <GaugeCard signal={signal} name={name} icon={icon} frozen={frozen} />;
+    return <GaugeCard signal={signal} name={name} icon={icon} frozen={frozen} compact={compact} />;
   }
 
   const value = signal.value as number;
@@ -75,14 +80,19 @@ export function FlowMeterCard({
       <View style={styles.barOuter}>
         <View style={[styles.barFill, { width: `${pct}%`, backgroundColor: outOfRange ? Colors.danger : accent }]} />
       </View>
-      <View style={styles.barLabels}>
-        <Text style={styles.barLabelText}>0%</Text>
-        <Text style={[styles.barLabelText, outOfRange && styles.barLabelAlert]}>{Math.round(pct)}%</Text>
-        <Text style={styles.barLabelText}>100%</Text>
-      </View>
+      {!compact && (
+        <View style={styles.barLabels}>
+          <Text style={styles.barLabelText}>0%</Text>
+          <Text style={[styles.barLabelText, outOfRange && styles.barLabelAlert]}>{Math.round(pct)}%</Text>
+          <Text style={styles.barLabelText}>100%</Text>
+        </View>
+      )}
     </View>
   );
 }
+
+/** Memo con comparación POR VALOR — ver `memo-compare.ts`. */
+export const FlowMeterCard = memo(FlowMeterCardBase, sameSignalCard);
 
 const styles = StyleSheet.create({
   card: {
@@ -117,7 +127,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
   },
-  rangeTagText: { fontSize: 9, fontWeight: '700', color: Colors.danger, letterSpacing: 0.5 },
+  rangeTagText: { fontSize: 11, fontWeight: '700', color: Colors.danger, letterSpacing: 0.5 },
   frozenTag: {
     backgroundColor: Colors.textSecondary + '22',
     borderColor: Colors.textSecondary,
@@ -126,7 +136,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
   },
-  frozenTagText: { fontSize: 9, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.5 },
+  frozenTagText: { fontSize: 11, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.5 },
   value: { fontSize: 28, fontWeight: '800', color: Colors.textPrimary, marginBottom: 10, fontVariant: ['tabular-nums'] },
   unit: { fontSize: 14, fontWeight: '400', color: Colors.textSecondary },
   barOuter: {
@@ -138,6 +148,6 @@ const styles = StyleSheet.create({
   },
   barFill: { height: '100%', borderRadius: 4 },
   barLabels: { flexDirection: 'row', justifyContent: 'space-between' },
-  barLabelText: { fontSize: 10, color: Colors.textSecondary },
+  barLabelText: { fontSize: 12, color: Colors.textSecondary },
   barLabelAlert: { color: Colors.danger, fontWeight: '700' },
 });

@@ -2,7 +2,7 @@
   "expo": {
     "name": "Monitor PTAP",
     "slug": "monitor-ptap",
-    "version": "1.0.0",
+    "version": "1.2.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -19,7 +19,8 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "package": "com.ptap.monitor"
+      "package": "com.ptap.monitor",
+      "versionCode": 3
     },
     "web": {
       "bundler": "metro",

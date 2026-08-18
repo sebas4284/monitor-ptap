@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { sendValveCommand } from '../services/api';
 import { detectManual, interpretCommand, type CommandVerdict, type ValveState, type ValveView } from '../services/valves';
 
@@ -16,8 +16,14 @@ import { detectManual, interpretCommand, type CommandVerdict, type ValveState, t
  *     cambió — así el operador no se queda con un "listo" que no ocurrió.
  */
 
-/** Ventana tras una orden nuestra en la que un cambio NO se considera manual. */
-const COMMAND_WINDOW_MS = 15_000;
+/**
+ * Ventana tras una orden nuestra en la que un cambio NO se considera manual.
+ *
+ * 60 s, no los 15 s de antes: en La Vorágine la señal se SOSTIENE hasta que el PLC confirma, con un
+ * tope de 45 s. Con la ventana corta, una maniobra que tardara más de 15 s terminaba fuera de ella y
+ * la app avisaba de «válvula abierta manualmente» por una orden que había mandado ella misma.
+ */
+const COMMAND_WINDOW_MS = 60_000;
 
 export interface ValveEvent {
   id: string;
@@ -69,14 +75,20 @@ export function useValveSupervisor(plantId: string, valves: ValveView[]) {
       if (manual) {
         const nuevo: ValveState = manual === 'opened' ? 'open' : 'closed';
         setOverrides((o) => ({ ...o, [v.id]: nuevo }));
-        pushEvent({
-          valveId: v.id,
-          kind: 'manual',
-          title: manual === 'opened' ? 'Válvula abierta manualmente' : 'Válvula cerrada manualmente',
-          message:
-            `${v.name}: el caudal indica que ahora está ${nuevo === 'open' ? 'ABIERTA' : 'CERRADA'}, ` +
-            `pero el PLC no reportó ninguna maniobra eléctrica. Se asume operación MANUAL y se actualiza el estado.`,
-        });
+        // En una válvula SIN canal de mando, que la manejen a mano no es una anomalía: es la única
+        // forma que hay de manejarla. El aviso existe para delatar maniobras que la app no ordenó
+        // en válvulas que la app SÍ podría ordenar; aquí solo sería ruido cada vez que el caudal
+        // cruza el umbral. El estado mostrado sí se actualiza, que es lo que interesa.
+        if (v.commandable) {
+          pushEvent({
+            valveId: v.id,
+            kind: 'manual',
+            title: manual === 'opened' ? 'Válvula abierta manualmente' : 'Válvula cerrada manualmente',
+            message:
+              `${v.name}: el caudal indica que ahora está ${nuevo === 'open' ? 'ABIERTA' : 'CERRADA'}, ` +
+              `pero el PLC no reportó ninguna maniobra eléctrica. Se asume operación MANUAL y se actualiza el estado.`,
+          });
+        }
       } else if (v.byState !== null && overrides[v.id] && v.byState === overrides[v.id]) {
         // La lectura eléctrica ya coincide con el override: se deja de forzar.
         setOverrides((o) => {
@@ -89,10 +101,16 @@ export function useValveSupervisor(plantId: string, valves: ValveView[]) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [valves, pushEvent]);
 
-  const supervised: SupervisedValve[] = valves.map((v) => {
-    const ov = overrides[v.id];
-    return { ...v, effectiveState: ov ?? v.state, manualOverride: ov !== undefined };
-  });
+  // Memoizado: sin esto se creaba un array (y N objetos) nuevos en CADA render, rompiendo la
+  // identidad de las props de todas las `ValveItem` y anulando su memo.
+  const supervised = useMemo<SupervisedValve[]>(
+    () =>
+      valves.map((v) => {
+        const ov = overrides[v.id];
+        return { ...v, effectiveState: ov ?? v.state, manualOverride: ov !== undefined };
+      }),
+    [valves, overrides],
+  );
 
   /**
    * Envía la orden. SIEMPRE se envía, incluso si la válvula ya está en ese estado (lo pidió el

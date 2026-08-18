@@ -1,0 +1,90 @@
+import {
+  Controller,
+  ForbiddenException,
+  Get,
+  Inject,
+  Post,
+  Req,
+  UnauthorizedException,
+  UseGuards,
+} from '@nestjs/common';
+import { hasPermission } from '@ptap/shared';
+import type { AuthenticatedRequest } from '../auth/authenticated-request';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PermissionGuard } from '../auth/guards/permission.guard';
+import { RequirePermission } from '../auth/decorators/require-permission.decorator';
+import { NotificationRepository, type StoredNotification } from './notification.repository';
+
+/** Ventana del historial. El requisito es "mínimo 24 h"; se sirven 72 para cubrir un fin de semana. */
+const HISTORY_HOURS = 72;
+const MAX_ITEMS = 200;
+
+/**
+ * Bandeja de notificaciones.
+ *
+ * **No hay endpoint de borrado, y es deliberado.** El usuario no puede eliminar un aviso: solo
+ * marcarlo como visto. El historial es evidencia operativa — si alguien pudiera borrar el aviso de
+ * que un sensor lleva 15 días caído, se perdería justo el rastro que hace falta para reclamarlo.
+ *
+ * Exige `view_dashboard`: el Civil no recibe avisos de proceso (coherente con el resto de la
+ * matriz, que no le da señales detalladas).
+ *
+ * **Acotada POR PLANTA.** Aquí no sirve `PlantScopeGuard`: estas rutas no llevan `:plantId`, así
+ * que el guard es un no-op y el ámbito hay que aplicarlo en la consulta. Sin eso, un operador de
+ * Km 18 recibía —y le sonaban en el celular— los avisos de las otras once plantas.
+ */
+@Controller('notifications')
+@UseGuards(JwtAuthGuard, PermissionGuard)
+export class NotificationsController {
+  constructor(@Inject(NotificationRepository) private readonly repo: NotificationRepository) {}
+
+  /**
+   * Identidad y ámbito de quien pregunta.
+   *
+   * El estado de lectura es POR usuario, así que sin identidad no hay respuesta posible.
+   * `JwtAuthGuard` ya lo garantiza; esto es la red de seguridad para que el tipo opcional no
+   * degenere en un `!` que oculte un fallo de wiring de guards.
+   *
+   * `plantScope: null` significa TODAS las plantas y solo lo concede `view_all_plants` (hoy el
+   * Admin). Para el resto es la planta de la cuenta — y si esa cuenta no trae planta, esto
+   * FALLA en vez de caer a `null`: un fallo de wiring debe cerrar la bandeja, no abrirla entera.
+   */
+  private scopeOf(req: AuthenticatedRequest): { userId: string; plantScope: string | null } {
+    const user = req.user;
+    if (!user?.id) throw new UnauthorizedException('Sesión requerida');
+    if (hasPermission(user.role, 'view_all_plants')) return { userId: user.id, plantScope: null };
+    if (!user.plant) throw new ForbiddenException('Tu cuenta no tiene una planta asignada');
+    return { userId: user.id, plantScope: user.plant };
+  }
+
+  /** Historial reciente de SU planta, con el estado de visto DE QUIEN pregunta. */
+  @Get()
+  @RequirePermission('view_dashboard')
+  async list(@Req() req: AuthenticatedRequest): Promise<{ notifications: StoredNotification[]; unseen: number }> {
+    const { userId, plantScope } = this.scopeOf(req);
+    const [notifications, unseen] = await Promise.all([
+      this.repo.listRecent(userId, plantScope, HISTORY_HOURS, MAX_ITEMS),
+      this.repo.countUnseen(userId, plantScope, HISTORY_HOURS),
+    ]);
+    return { notifications, unseen };
+  }
+
+  /** Solo el contador: es lo que sondea la campana, y así no se baja el historial entero. */
+  @Get('unseen-count')
+  @RequirePermission('view_dashboard')
+  async unseenCount(@Req() req: AuthenticatedRequest): Promise<{ unseen: number }> {
+    const { userId, plantScope } = this.scopeOf(req);
+    return { unseen: await this.repo.countUnseen(userId, plantScope, HISTORY_HOURS) };
+  }
+
+  /**
+   * Marca como vistos todos los avisos del historial. Lo llama el front al ABRIR la bandeja:
+   * "visto" significa que la persona entró a mirarlos, que es exactamente lo que se pidió.
+   */
+  @Post('seen')
+  @RequirePermission('view_dashboard')
+  async markSeen(@Req() req: AuthenticatedRequest): Promise<{ marked: number }> {
+    const { userId, plantScope } = this.scopeOf(req);
+    return { marked: await this.repo.markAllSeen(userId, plantScope, HISTORY_HOURS) };
+  }
+}

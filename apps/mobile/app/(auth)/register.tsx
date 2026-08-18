@@ -7,7 +7,6 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  Alert,
   ActivityIndicator,
   StyleSheet,
 } from 'react-native';
@@ -16,16 +15,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { apiRegister } from '../../services/auth';
 import { PLANTS } from '../../context/PlantContext';
+import { toast } from '../../services/toast-store';
 import Colors from '../../constants/colors';
-
-function alertWeb(title: string, message: string, onDismiss?: () => void) {
-  if (Platform.OS === 'web') {
-    window.alert(`${title}\n${message}`);
-    onDismiss?.();
-  } else {
-    Alert.alert(title, message, onDismiss ? [{ text: 'OK', onPress: onDismiss }] : undefined);
-  }
-}
 
 /**
  * Medidor de seguridad de la contraseña (0..4) para feedback visual. Cuenta: longitud ≥8,
@@ -94,7 +85,7 @@ export default function RegisterScreen() {
   async function handleRegister() {
     const error = validate();
     if (error) {
-      alertWeb('Revisa los datos', error);
+      toast.error('Revisa los datos', error);
       return;
     }
     setIsLoading(true);
@@ -108,9 +99,12 @@ export default function RegisterScreen() {
         password,
         website, // honeypot; vacío para humanos
       });
-      alertWeb('Cuenta creada', message, () => router.replace('/(auth)/login'));
+      // El aviso vive en la raíz, así que sobrevive a la navegación: se puede volver al login de
+      // inmediato en vez de retener al usuario tras un `window.alert` solo para que pulse OK.
+      toast.success('Cuenta creada', message);
+      router.replace('/(auth)/login');
     } catch (err) {
-      alertWeb('No se pudo crear la cuenta', err instanceof Error ? err.message : 'Intenta de nuevo.');
+      toast.error('No se pudo crear la cuenta', err instanceof Error ? err.message : 'Intenta de nuevo.');
     } finally {
       setIsLoading(false);
     }
@@ -226,7 +220,13 @@ export default function RegisterScreen() {
               autoCorrect={false}
               maxLength={200}
             />
-            <TouchableOpacity style={styles.eye} onPress={() => setShowPassword((v) => !v)} hitSlop={8}>
+            <TouchableOpacity
+              style={styles.eye}
+              onPress={() => setShowPassword((v) => !v)}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel={showPassword ? 'Ocultar la contraseña' : 'Mostrar la contraseña'}
+            >
               <Ionicons name={showPassword ? 'eye-off-outline' : 'eye-outline'} size={20} color={Colors.textSecondary} />
             </TouchableOpacity>
           </View>

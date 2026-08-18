@@ -102,6 +102,10 @@ export function ConnectionDiagnostics() {
     queryKey: ['route-history'],
     queryFn: fetchRouteHistory,
     enabled: routeCheck !== null,
+    // Sin sondeo: es una ventana de 20 h con muestras horarias, no cambia entre pulsaciones. Se
+    // refresca cuando el usuario corre la prueba (`invalidateQueries` en `onRouteCheck`), que es
+    // el único momento en que hay algo nuevo que enseñar.
+    staleTime: 5 * 60_000,
   });
 
   async function onRouteCheck() {
@@ -165,7 +169,12 @@ export function ConnectionDiagnostics() {
     <View style={styles.card}>
       <View style={styles.head}>
         <Text style={styles.headText}>Historial de conexión con el PLC</Text>
-        <TouchableOpacity onPress={() => void refetch()} hitSlop={8}>
+        <TouchableOpacity
+          onPress={() => void refetch()}
+          hitSlop={8}
+          accessibilityRole="button"
+          accessibilityLabel="Actualizar el historial de conexión"
+        >
           <Ionicons name="refresh-outline" size={18} color={Colors.primary} />
         </TouchableOpacity>
       </View>
@@ -195,6 +204,9 @@ export function ConnectionDiagnostics() {
         onPress={() => void onRouteCheck()}
         disabled={checkingRoute}
         activeOpacity={0.85}
+        accessibilityRole="button"
+        accessibilityState={{ disabled: checkingRoute, busy: checkingRoute }}
+        accessibilityLabel={checkingRoute ? 'Probando la ruta al PLC' : 'Probar ahora la ruta al PLC'}
       >
         {checkingRoute ? (
           <ActivityIndicator size="small" color={Colors.primary} />

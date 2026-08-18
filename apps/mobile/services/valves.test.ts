@@ -57,6 +57,38 @@ test('valves: método 1 — 16385 (bit14+bit0) → ABIERTA', () => {
   assert.equal(v.state, 'open');
 });
 
+// ── Método 1b: convención de valores LITERALES (stateEncoding) ──
+// Cascajal no usa la máscara de bits: reporta 251 = CERRADA en INT_IN[1], verificado en campo
+// (2026-08-13). Sin esta convención el valor no trae bit14 y la planta se quedaba sin estado.
+test('valves: stateEncoding — 251 declarado como cerrada → CERRADA (aunque no tenga bit14)', () => {
+  const v = valvesFromSnapshot(
+    snap({ valve1: sig(0), valve1State: sig(251, { stateEncoding: { closed: 251 } }) }),
+  )[0];
+  assert.equal(v.byState, 'closed');
+  assert.equal(v.state, 'closed');
+  assert.equal(v.source, 'estado');
+});
+
+test('valves: stateEncoding — un valor NO declarado no se interpreta (no cae a la regla de bits)', () => {
+  // 16385 tiene bit14+bit0 → la regla de bits diría "abierta". Pero el sitio declaró su propia
+  // convención, y mezclarlas es exactamente como se inventaron estados falsos antes.
+  const v = valvesFromSnapshot(
+    snap({ valve1: sig(0), valve1State: sig(16385, { stateEncoding: { closed: 251 } }) }),
+  )[0];
+  assert.equal(v.byState, null, 'no se afirma nada con un valor ajeno a la convención declarada');
+});
+
+test('valves: stateEncoding — también sirve para declarar el valor de abierta', () => {
+  const enc = { stateEncoding: { closed: 251, open: 1056 } };
+  assert.equal(valvesFromSnapshot(snap({ valve1: sig(0), valve1State: sig(1056, enc) }))[0].byState, 'open');
+  assert.equal(valvesFromSnapshot(snap({ valve1: sig(0), valve1State: sig(251, enc) }))[0].byState, 'closed');
+});
+
+test('valves: sin stateEncoding se conserva la regla de bits de siempre', () => {
+  assert.equal(valvesFromSnapshot(snap({ valve1: sig(0), valve1State: sig(16384) }))[0].byState, 'closed');
+  assert.equal(valvesFromSnapshot(snap({ valve1: sig(0), valve1State: sig(251) }))[0].byState, null);
+});
+
 test('valves: método 1 — sin bit14 el PLC no reporta estado válido → no se afirma nada', () => {
   const v = valvesFromSnapshot(snap({ valve1: sig(0), valve1State: sig(1) }))[0];
   assert.equal(v.byState, null, 'sin bit de validez no se puede decidir');
@@ -146,8 +178,10 @@ test('interpretCommand: 502 con eco verificado → la señal SÍ salió, avisa d
     'Válvula 1',
   );
   assert.equal(v.ok, false, 'no se puede afirmar que la válvula se movió');
-  assert.equal(v.signalSent, true, 'pero el bit se escribió: eso NO es un fallo del canal');
-  assert.match(v.message, /FALLA FÍSICA/);
+  assert.equal(v.signalSent, true, 'pero la orden salió: eso NO es un fallo del canal');
+  assert.match(v.message, /trabada o sin energía/, 'se dice la causa probable en cristiano');
+  assert.equal(v.tone, 'danger');
+  assert.match(String(v.technical), /verificado/, 'el detalle técnico existe, pero fuera de la frase');
 });
 
 test('interpretCommand: WRITE_REJECTED → la señal NO salió', () => {
@@ -159,7 +193,9 @@ test('interpretCommand: WRITE_REJECTED → la señal NO salió', () => {
 test('interpretCommand: interlock y permisos se explican sin culpar al equipo', () => {
   const il = interpretCommand(res({ http: 409, status: 'rejected', reason: 'INTERLOCK_FAILED: snapshot frozen' }), 'open', 'V1');
   assert.equal(il.signalSent, false);
-  assert.match(il.title, /enclavamiento/i);
+  assert.match(il.title, /dato fresco/i, 'sin la palabra «enclavamiento», que no está en el vocabulario de nadie');
+  assert.equal(il.technical, 'INTERLOCK_FAILED: snapshot frozen', 'el código va aparte, para reportarlo');
+  assert.doesNotMatch(il.message, /INTERLOCK_FAILED/, 'y NUNCA dentro de la frase');
   const fb = interpretCommand(res({ http: 403, status: 'rejected', reason: 'FORBIDDEN' }), 'open', 'V1');
   assert.match(fb.title, /permiso/i);
 });
@@ -187,4 +223,167 @@ test('detectManual: si el PLC SÍ reportó el cambio, fue eléctrico (no manual)
 test('detectManual: sin cambio de lado del caudal no hay evento', () => {
   assert.equal(detectManual('open', 'open', 'open', 'open', false), null);
   assert.equal(detectManual(null, 'open', null, null, false), null, 'sin lectura previa no se juzga');
+});
+
+// ── Qué caudal corresponde a cada válvula ────────────────────────────────────
+// El orden por defecto (salida, luego entrada) es una SUPOSICIÓN: acierta o falla según dónde esté
+// físicamente la válvula. Declararlo en el mapping convierte un dato de campo en configuración.
+// La Sirena declara `outletFlow1`: su única válvula es la de SALIDA (operador, 2026-08-15).
+test('valves: si el mapping declara flowDomainKey, ese caudal MANDA sobre la preferencia', () => {
+  const v = valvesFromSnapshot(
+    snap({
+      valve1: sig(0, { flowDomainKey: 'inletFlow1' }),
+      inletFlow1: sig(23.3),
+      outletFlow1: sig(0), // la preferencia por defecto diría CERRADA; lo declarado dice ABIERTA
+    }),
+  )[0];
+  assert.equal(v.byFlow, 'open');
+  assert.equal(v.state, 'open');
+});
+
+test('valves: elegir el caudal equivocado miente — válvula de SALIDA con la entrada llenando', () => {
+  // El caso real que protege esto: la válvula de salida está cerrada y la entrada sigue llenando
+  // el tanque. Mirar la entrada diría ABIERTA con la válvula cerrada.
+  const v = valvesFromSnapshot(
+    snap({ valve1: sig(0, { flowDomainKey: 'outletFlow1' }), inletFlow1: sig(23.3), outletFlow1: sig(0) }),
+  )[0];
+  assert.equal(v.byFlow, 'closed');
+});
+
+test('valves: sin flowDomainKey se conserva la preferencia de siempre (salida primero)', () => {
+  const v = valvesFromSnapshot(snap({ valve1: sig(0), inletFlow1: sig(0), outletFlow1: sig(19.6) }))[0];
+  assert.equal(v.byFlow, 'open', 'sin declaración explícita manda el caudal de salida');
+});
+
+test('valves: cada válvula resuelve SU caudal por separado', () => {
+  const v = valvesFromSnapshot(
+    snap({
+      valve1: sig(0, { flowDomainKey: 'inletFlow1' }),
+      valve2: sig(0), // esta usa la preferencia por defecto
+      inletFlow1: sig(20),
+      outletFlow1: sig(0),
+    }),
+  );
+  assert.equal(v[0].byFlow, 'open', 'valve1 mira la entrada');
+  assert.equal(v[1].byFlow, 'closed', 'valve2 cae a la salida, que está en 0');
+});
+
+// El caso REAL que reportó el cliente: la app decía CERRADA con 23,33 l/s entrando.
+test('valves: con la palabra declarada no fiable, el veredicto lo da el caudal (caso Sirena)', () => {
+  // El caso REAL que reportó el cliente: la app decía CERRADA con el agua pasando.
+  const v = valvesFromSnapshot(
+    snap({
+      valve1: sig(0, { flowDomainKey: 'outletFlow1' }),
+      valve1State: sig(17408, { stateTrusted: false }),
+      outletFlow1: sig(19.66),
+    }),
+  )[0];
+  assert.equal(v.byState, null, 'su palabra no está verificada: no puede decidir');
+  assert.equal(v.state, 'open');
+  assert.equal(v.source, 'caudal');
+});
+
+// La Sirena: su INT_IN[0] paso de 16384 a 17408 con 23,33 l/s entrando, y ninguna convencion
+// conocida lo explica. Se conserva MAPEADO como diagnostico (rawState sigue visible) pero se
+// declara no fiable, para que el veredicto lo de el caudal — que es evidencia fisica.
+test('valves: stateTrusted:false → la palabra NO decide, pero se sigue viendo como diagnóstico', () => {
+  const v = valvesFromSnapshot(
+    snap({
+      valve1: sig(0, { flowDomainKey: 'inletFlow1' }),
+      valve1State: sig(17408, { stateTrusted: false }),
+      inletFlow1: sig(23.33),
+    }),
+  )[0];
+  assert.equal(v.byState, null, 'no se afirma nada desde un registro declarado no fiable');
+  assert.equal(v.rawState, 17408, 'pero el valor crudo SIGUE disponible para diagnosticar');
+  assert.equal(v.state, 'open', 'manda el caudal de entrada');
+  assert.equal(v.source, 'caudal');
+});
+
+test('valves: stateTrusted:false no marca discrepancia (no hay dos veredictos que comparar)', () => {
+  const v = valvesFromSnapshot(
+    snap({ valve1: sig(0), valve1State: sig(16384, { stateTrusted: false }), outletFlow1: sig(19.6) }),
+  )[0];
+  assert.equal(v.disagreement, false, 'la palabra no opina, asi que no puede contradecir al caudal');
+});
+
+test('valves: sin stateTrusted la palabra sigue mandando (las demás plantas no cambian)', () => {
+  const v = valvesFromSnapshot(snap({ valve1: sig(0), valve1State: sig(16384), outletFlow1: sig(19.6) }))[0];
+  assert.equal(v.byState, 'closed');
+  assert.equal(v.source, 'estado');
+});
+
+// ── Dos válvulas en una planta (La Vorágine, 2026-08-15) ────────────────────────────────────
+//
+// Salida accionable con su caudal de salida; entrada sin canal de mando, juzgada por el de entrada.
+// El caso que estos tests protegen es el de los caudales cruzados: si cada válvula no declara el
+// suyo, el orden por defecto prefiere la salida y las DOS se juzgarían con el mismo dato.
+
+const DOS_VALVULAS = {
+  valve1: sig(0, { label: 'Válvula de salida', flowDomainKey: 'outletFlow1' }),
+  valve2: sig(0, { label: 'Válvula de entrada', flowDomainKey: 'inletFlow1', commandable: false }),
+  outletFlow1: sig(1.61),
+  inletFlow1: sig(6.93),
+};
+
+test('valves: una planta con dos válvulas devuelve las dos, ordenadas y con su nombre', () => {
+  const v = valvesFromSnapshot(snap(DOS_VALVULAS));
+  assert.equal(v.length, 2);
+  assert.deepEqual(v.map((x) => x.id), ['valve1', 'valve2']);
+  assert.deepEqual(v.map((x) => x.name), ['Válvula de salida', 'Válvula de entrada']);
+});
+
+test('valves: cada válvula se juzga con SU caudal, no con el de la otra', () => {
+  const [salida, entrada] = valvesFromSnapshot(snap(DOS_VALVULAS));
+  assert.equal(salida.flowValue, 1.61);
+  assert.equal(entrada.flowValue, 6.93);
+  assert.equal(salida.source, 'caudal');
+  assert.equal(entrada.source, 'caudal');
+});
+
+// Lo que de verdad importa de este caso: una válvula de ENTRADA cerrada mientras el tanque se vacía
+// aguas abajo. Hay caudal en el lado que no manda, y sin `flowDomainKey` se afirmaría "abierta".
+test('valves: la de entrada CERRADA no se contagia del caudal de salida', () => {
+  const [, entrada] = valvesFromSnapshot(
+    snap({ ...DOS_VALVULAS, inletFlow1: sig(0), outletFlow1: sig(12.4) }),
+  );
+  assert.equal(entrada.state, 'closed', 'su caudal es 0: está cerrada aunque salga agua del tanque');
+});
+
+test('valves: commandable false solo en la que no tiene mando; ausente = accionable', () => {
+  const [salida, entrada] = valvesFromSnapshot(snap(DOS_VALVULAS));
+  assert.equal(salida.commandable, true, 'sin el campo, la válvula se acciona como siempre');
+  assert.equal(entrada.commandable, false);
+});
+
+// El operario no tiene por qué saber qué es un bit, un PLC ni un enclavamiento. Este test recorre
+// TODOS los desenlaces y bloquea la jerga en el texto visible; los códigos siguen disponibles en
+// `technical`, que es donde sirven para reportar una incidencia por teléfono.
+test('interpretCommand: ningún desenlace suelta jerga en el texto que se lee', () => {
+  const casos: ValveCommandResult[] = [
+    res({ http: 200, status: 'confirmed', confirmedValue: 16385 }),
+    res({ http: 202, status: 'sent', writeVerified: true, writtenValue: 4096 }),
+    res({ http: 502, status: 'failed', reason: 'WRITE_REJECTED' }),
+    res({ http: 502, status: 'failed', reason: 'READBACK_UNCONFIRMED', writeVerified: true }),
+    res({ http: 409, status: 'rejected', reason: 'INTERLOCK_FAILED: snapshot frozen' }),
+    res({ http: 429, status: 'rejected', reason: 'RATE_LIMITED' }),
+    res({ http: 0, status: 'error', reason: 'NETWORK' }),
+  ];
+  const prohibido = /bit|PLC|enclavamiento|read-?back|snapshot|[A-Z]{4,}_[A-Z_]+/;
+  for (const r of casos) {
+    const v = interpretCommand(r, 'open', 'Válvula 1');
+    assert.doesNotMatch(v.title, prohibido, `título con jerga: ${v.title}`);
+    assert.doesNotMatch(v.message, prohibido, `mensaje con jerga: ${v.message}`);
+    assert.ok(['success', 'warning', 'danger'].includes(v.tone));
+  }
+});
+
+// El desenlace que motivó el tercer color: la orden salió y nadie puede confirmar que la válvula se
+// movió. Con `ok` booleano se pintaba VERDE con un tick sobre un texto que pedía ir a comprobarlo en
+// planta. El semáforo ganaba y nadie iba.
+test('interpretCommand: «no se pudo confirmar» es ÁMBAR, nunca verde', () => {
+  const v = interpretCommand(res({ http: 202, status: 'sent', writeVerified: true, writtenValue: 4096 }), 'open', 'V1');
+  assert.equal(v.tone, 'warning');
+  assert.notEqual(v.tone, 'success', 'un tick verde convierte «ve a mirar» en «ya está»');
+  assert.match(v.title, /[Vv]erifique/);
 });

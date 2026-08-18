@@ -3,6 +3,44 @@
 > Objetivo: servir el monitor PTAP en **`https://aquora.xpertic.co`** con TLS válido y renovación
 > automática.
 
+---
+
+## ✅ RESUELTO — 2026-08-11
+
+**El dominio ya sirve desde Internet con certificado válido.** Verificado desde fuera de la red:
+
+```
+https://aquora.xpertic.co/            -> 200   certificado válido
+https://aquora.xpertic.co/api/health  -> 200
+IP contactada: 191.102.61.125
+```
+
+**Lo que lo destrabó no fue ninguno de los dos caminos que este documento evaluaba.** Redes cambió
+la publicación de la VM a **NAT 1:1 contra `191.102.61.125`** (antes: DNAT por puerto contra
+`191.102.61.123`, y solo el `:5554`). Con eso desapareció de golpe la premisa sobre la que gira todo
+el resto del documento — "el único puerto publicado es el 5554 y el DNS no transporta puertos" — y
+el registro A pasó a bastar por sí solo.
+
+Consecuencias, ya aplicadas:
+
+- `APP_PUBLIC_URL` = `https://aquora.xpertic.co` (antes: túnel efímero de Cloudflare).
+- El **quick tunnel de Cloudflare se apagó**; su origen se retiró de `CORS_ORIGINS`.
+- El camino A (named tunnel) queda **descartado**, no pendiente: ya no aporta nada.
+
+Lo que sigue abierto:
+
+- 🔴 **El puerto 80 sigue cerrado desde Internet**, así que el desafío HTTP-01 no funciona y la
+  renovación automática del certificado **no puede completarse**. El certificado vence el
+  **2026-10-29**. Ver [`PENDIENTES.md`](./PENDIENTES.md).
+- Con NAT 1:1, **ufw pasó de ser la segunda barrera a ser la única**. Verificado el 2026-08-11
+  desde Internet: 3306, 4000 y 8080 **cerrados**; 22 abierto a propósito (solo-llave + fail2ban).
+
+> **El resto del documento se conserva como registro de la investigación** (inventario de la zona,
+> procedimientos de ambos caminos, emisión del certificado). Sus datos de partida —la IP `.123` y el
+> DNAT `:5554`— **ya no son válidos**.
+
+---
+
 ## Estado a 2026-07-31 — se eligió el camino B (Let's Encrypt)
 
 Se evaluaron dos caminos. **El elegido es el B**, detallado en [§7](#7-camino-b--lets-encrypt-en-la-vm).
@@ -30,12 +68,16 @@ titular de GoDaddy aparece, conviene volver a A — no expone la VM a Internet.
 | Qué | Valor |
 |---|---|
 | Dominio elegido | `aquora.xpertic.co` (marca AQUORA sobre el dominio corporativo Xpertic) |
-| IP pública de la sede | `191.102.61.123` (**fija**, confirmado) |
-| VM del backend | `192.168.30.50` (nginx :80 → pm2 `ptap-api` :4000) |
-| DNAT actual en el router | `191.102.61.123:5554 → 192.168.30.50:80` |
+| IP pública de la sede | ~~`191.102.61.123`~~ → **`191.102.61.125`** desde el 2026-08-11 |
+| VM del backend | `192.168.30.50` (nginx :80/:443 → pm2 `ptap-api` :4000) |
+| Publicación en el router | ~~DNAT `:5554 → :80`~~ → **NAT 1:1** contra `191.102.61.125` (sin puertos) |
 | Nameservers de la zona | `ns15/ns16.latinoamericahosting.com` (cPanel de LatinoaméricaHosting) |
 
-### Por qué no basta con el registro A
+### Por qué no bastaba con el registro A *(superado — ver la cabecera)*
+
+> Todo este apartado describe la situación **anterior al 2026-08-11**. Con la NAT 1:1 los tres
+> puntos dejaron de aplicar y el registro A pasó a ser suficiente. Se conserva porque explica por
+> qué se llegó a evaluar Cloudflare Tunnel.
 
 El registro `aquora IN A 191.102.61.123` ya está creado y resuelve bien, pero **no da acceso**:
 

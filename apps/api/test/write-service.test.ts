@@ -36,7 +36,9 @@ const WRITE: WriteSpec = {
 };
 
 interface FakeAdapter extends ConnectivityAdapter {
-  writes: Array<{ value: number | boolean }>;
+  /** El ÍNDICE importa tanto como el valor: en una orden compuesta, escribir el sentido en la
+   *  posición equivocada es indistinguible de no escribirlo si solo se mira el valor. */
+  writes: Array<{ index: number; value: number | boolean }>;
 }
 
 function fakeAdapter(opts: { secure: boolean; bridge: BridgeStatus; confirms?: boolean; writeThrows?: boolean; preset?: number; echoFails?: boolean }): FakeAdapter {
@@ -48,17 +50,17 @@ function fakeAdapter(opts: { secure: boolean; bridge: BridgeStatus; confirms?: b
   const key = (t: { plantId: string; channel: string; sourceBuffer: string; index: number }) =>
     `${t.plantId}/${t.channel}/${t.sourceBuffer}[${t.index}]`;
   const adapter = {
-    writes: [] as Array<{ value: number | boolean }>,
+    writes: [] as Array<{ index: number; value: number | boolean }>,
     getWriteSecurity: () => ({
       secure: opts.secure,
       securityMode: opts.secure ? 'SignAndEncrypt' : 'None',
       identity: opts.secure ? 'username' : 'anonymous',
     }),
     getBridgeStatus: () => opts.bridge,
-    async writeBufferElement(t: never, v: number | boolean) {
+    async writeBufferElement(t: { plantId: string; channel: string; sourceBuffer: string; index: number }, v: number | boolean) {
       // Emula un write RECHAZADO por el servidor OPC UA (StatusCode != Good) o un buffer faulted.
       if (opts.writeThrows) throw new Error('write OPC UA rechazado (BadUserAccessDenied)');
-      adapter.writes.push({ value: v });
+      adapter.writes.push({ index: t.index, value: v });
       store.set(key(t), v);
     },
     async readBufferElement(t: never) {
@@ -362,6 +364,207 @@ test('write-service: estado NO verificado pero SIN eco → sigue siendo FALLIDO'
 
   assert.equal(r.status, 'failed');
   assert.equal(r.reason, FAIL.READBACK_UNCONFIRMED);
+});
+
+// ── ÓRDENES COMPUESTAS (La Sirena, 2026-08-15) ──────────────────────────────────────────────
+//
+// La válvula la mueve un relé conmutador en montaje de inversión de giro: una posición del buffer
+// da el SENTIDO y otra lo quita. Escribir una sola no puede moverla — por eso la prueba de campo del
+// 2026-08-03 concluyó "canal sin actuador" cuando lo que estaba incompleto era la orden.
+
+const WRITE_SECUENCIA: WriteSpec = {
+  target: { channel: 'intOut', sourceBuffer: 'INT_OUT_TEST', index: 0 },
+  commands: { open: 1, close: 0 },
+  sequences: {
+    open: [{ index: 1, value: 0 }, { index: 0, value: 1 }],
+    close: [{ index: 0, value: 0 }, { index: 1, value: 1 }],
+  },
+  latched: true,
+  mode: 'absolute',
+  pulse: null,
+  readBack: { channel: 'intIn', sourceBuffer: 'INT_IN_TEST', index: 0, confirmsWrittenValue: false, expectedValue: 16385, stateVerified: false },
+  timeoutMs: 60,
+  rollbackValue: 0,
+  permission: 'control_valves',
+};
+
+test('write-service: una orden compuesta escribe TODOS sus pasos, en orden', async () => {
+  const { service, adapter } = build({ secure: true, bridge: 'Connected', write: WRITE_SECUENCIA, confirms: true });
+  const r = await service.execute('sirena', { command: 'open', target: 'valve1' }, OPERADOR);
+
+  assert.deepEqual(adapter.writes, [{ index: 1, value: 0 }, { index: 0, value: 1 }]);
+  assert.equal(r.writtenValue, 1, 'writtenValue es el del canal primario');
+  assert.equal(r.status, 'sent', 'el canal de estado de este sitio no está verificado');
+});
+
+// EL ORDEN ES LA SEGURIDAD, no una preferencia de estilo: si se energiza antes de soltar la
+// dirección contraria, existe un instante con las dos bobinas activas — el fallo que el protocolo
+// declara ERROR. Este test falla si alguien "optimiza" la secuencia reordenándola.
+test('write-service: la orden compuesta DESENERGIZA antes de energizar', async () => {
+  const { service, adapter } = build({ secure: true, bridge: 'Connected', write: WRITE_SECUENCIA, confirms: true });
+  await service.execute('sirena', { command: 'close', target: 'valve1' }, OPERADOR);
+
+  assert.deepEqual(adapter.writes, [{ index: 0, value: 0 }, { index: 1, value: 1 }]);
+  const primerEnergizado = adapter.writes.findIndex((w) => w.value !== 0);
+  assert.ok(!adapter.writes.slice(primerEnergizado + 1).some((w) => w.value === 0), 'ningún cero después de energizar');
+});
+
+test('write-service: una secuencia que energizaría dos direcciones a la vez se RECHAZA sin escribir', async () => {
+  const spec: WriteSpec = { ...WRITE_SECUENCIA, sequences: { open: [{ index: 1, value: 1 }, { index: 0, value: 1 }] } };
+  const { service, adapter } = build({ secure: true, bridge: 'Connected', write: spec, confirms: true });
+  const r = await service.execute('sirena', { command: 'open', target: 'valve1' }, OPERADOR);
+
+  assert.equal(r.status, 'rejected');
+  assert.ok(r.reason?.startsWith(REJECT.INTERLOCK_FAILED));
+  assert.equal(adapter.writes.length, 0, 'no se acciona equipo con una orden que se contradice');
+});
+
+// El eco de un solo paso no basta: si el SENTIDO no quedó puesto, el equipo no se mueve por mucho
+// que la habilitación sí esté. Decir "verificado" con medio comando escrito sería el engaño exacto
+// que este eco existe para evitar.
+test('write-service: el eco comprueba TODOS los pasos, no solo el canal primario', async () => {
+  const { service } = build({ secure: true, bridge: 'Connected', write: WRITE_SECUENCIA, confirms: false });
+  const r = await service.execute('sirena', { command: 'open', target: 'valve1' }, OPERADOR);
+
+  assert.equal(r.writeVerified, false);
+  assert.equal(r.status, 'failed', 'sin eco íntegro no se concede el desenlace `sent`');
+});
+
+// Deshacer un "abrir" escribiendo 0/0 dejaría el actuador SIN DIRECCIÓN: ni abierto ni cerrado, un
+// estado que nadie pidió y del que el operador no se enteraría. En una orden sostenida, lo correcto
+// es dejarla puesta y que sea una persona quien mande el verbo contrario.
+test('write-service: una orden SOSTENIDA no se deshace sola cuando el estado no confirma', async () => {
+  const { service, adapter } = build({ secure: true, bridge: 'Connected', write: WRITE_SECUENCIA, confirms: true });
+  const r = await service.execute('sirena', { command: 'open', target: 'valve1' }, OPERADOR);
+
+  assert.equal(r.status, 'sent');
+  assert.equal(adapter.writes.length, 2, 'los 2 pasos y ni un write más: sin rollback');
+});
+
+test('write-service: una orden compuesta NO sostenida se deshace en orden INVERSO', async () => {
+  const spec: WriteSpec = { ...WRITE_SECUENCIA, latched: false, readBack: { ...WRITE_SECUENCIA.readBack, stateVerified: true } };
+  const { service, adapter } = build({ secure: true, bridge: 'Connected', write: spec, confirms: true });
+  const r = await service.execute('sirena', { command: 'open', target: 'valve1' }, OPERADOR);
+
+  assert.equal(r.status, 'failed');
+  assert.deepEqual(
+    adapter.writes.map((w) => w.index),
+    [1, 0, 0, 1],
+    'se escribe 1→0 y se suelta 0→1: soltar primero lo último puesto evita pasar por dos direcciones activas',
+  );
+  assert.deepEqual(adapter.writes.slice(2).map((w) => w.value), [0, 0]);
+});
+
+// ── SEÑAL SOSTENIDA HASTA LA REALIMENTACIÓN (La Vorágine, 2026-08-15) ───────────────────────
+//
+// La válvula es motorizada: la señal debe mantenerse durante todo el recorrido y soltarse cuando el
+// PLC avisa (INT_IN[1] == 1). El pulso ciego de 300 ms arrancaba el movimiento y lo cortaba a mitad.
+
+/** Adaptador cuya realimentación pasa a valer `equals` tras N lecturas (emula el recorrido). */
+function adapterConRealimentacion(opts: { lecturasHastaLlegar: number | null }): FakeAdapter {
+  const store = new Map<string, number | boolean>();
+  let lecturasFeedback = 0;
+  const key = (t: { plantId: string; channel: string; sourceBuffer: string; index: number }) =>
+    `${t.plantId}/${t.channel}/${t.sourceBuffer}[${t.index}]`;
+  const adapter = {
+    writes: [] as Array<{ index: number; value: number | boolean }>,
+    getWriteSecurity: () => ({ secure: true, securityMode: 'SignAndEncrypt', identity: 'username' }),
+    getBridgeStatus: () => 'Connected' as BridgeStatus,
+    async writeBufferElement(t: { plantId: string; channel: string; sourceBuffer: string; index: number }, v: number | boolean) {
+      adapter.writes.push({ index: t.index, value: v });
+      store.set(key(t), v);
+    },
+    async readBufferElement(t: { plantId: string; channel: string; sourceBuffer: string; index: number }) {
+      if (t.sourceBuffer === 'INT_IN_TEST' && t.index === 1) {
+        lecturasFeedback += 1;
+        const llego = opts.lecturasHastaLlegar !== null && lecturasFeedback >= opts.lecturasHastaLlegar;
+        // 1025 es el valor real leído en planta: tiene el bit0 puesto y NO vale 1.
+        return { value: llego ? 1 : 1025, quality: 'Good' as const, sourceTimestamp: null };
+      }
+      return { value: store.get(key(t)) ?? 0, quality: 'Good' as const, sourceTimestamp: null };
+    },
+  };
+  return adapter as unknown as FakeAdapter;
+}
+
+const WRITE_SOSTENIDO: WriteSpec = {
+  ...WRITE,
+  target: { channel: 'intOut', sourceBuffer: 'INT_OUT_TEST', index: 0 },
+  mode: 'bitmask',
+  commands: { open: 4096, close: 8192 },
+  pulse: {
+    holdMs: 3000,
+    until: { channel: 'intIn', sourceBuffer: 'INT_IN_TEST', index: 1, equals: 1 },
+  },
+  readBack: { channel: 'intIn', sourceBuffer: 'INT_IN_TEST', index: 0, confirmsWrittenValue: false, expectedValue: 16385, stateVerified: false },
+};
+
+function buildSostenido(lecturasHastaLlegar: number | null) {
+  const adapter = adapterConRealimentacion({ lecturasHastaLlegar });
+  const audit = fakeAudit();
+  const service = new WriteService(
+    adapter, fakeConfig(true), fakeCache(snap('live')), fakeResolver(WRITE_SOSTENIDO), fakeRepo(), audit.service,
+  );
+  return { service, adapter, audit };
+}
+
+test('write-service: la señal se sostiene hasta que la realimentación vale 1, y entonces se suelta', async () => {
+  const { service, adapter } = buildSostenido(3);
+  const r = await service.execute('voragine', { command: 'open', target: 'valve1' }, OPERADOR);
+
+  assert.equal(adapter.writes.length, 2, 'activación + limpieza del bit');
+  assert.equal(adapter.writes[0].value, 4096);
+  assert.equal(Number(adapter.writes[1].value) & 4096, 0, 'el bit del comando queda LIMPIO');
+  assert.notEqual(r.reason, FAIL.HOLD_FEEDBACK_TIMEOUT, 'la realimentación SÍ llegó');
+});
+
+// 1025 = bits{0,10} es el valor real de INT_IN[1] en planta. Si la condición se hubiera escrito
+// como "bit0 encendido" se cumpliría desde el primer instante y la señal se cortaría antes de que
+// la válvula se moviera. Por eso se compara el VALOR ENTERO.
+test('write-service: 1025 NO satisface la realimentación aunque tenga el bit0 puesto', async () => {
+  const { service, adapter } = buildSostenido(null); // nunca llega a 1
+  const t0 = Date.now();
+  const r = await service.execute('voragine', { command: 'open', target: 'valve1' }, OPERADOR);
+
+  assert.ok(Date.now() - t0 >= 3000, 'debió sostener hasta agotar el tope, no cortar al ver el bit0');
+  assert.equal(r.status, 'failed');
+  assert.equal(r.reason, FAIL.HOLD_FEEDBACK_TIMEOUT, 'se dice que faltó la realimentación, no que el estado no confirmara');
+});
+
+// LO QUE MÁS IMPORTA DE TODO EL SOSTENIDO: pase lo que pase, el bit se suelta. Dejarlo puesto
+// mantiene la bobina energizada, y eso no puede depender de que la maniobra haya salido bien.
+test('write-service: aunque la realimentación no llegue NUNCA, el bit se limpia igual', async () => {
+  const { service, adapter } = buildSostenido(null);
+  await service.execute('voragine', { command: 'open', target: 'valve1' }, OPERADOR);
+
+  assert.equal(adapter.writes.length, 2, 'activación + limpieza, incluso tras agotar el tope');
+  assert.equal(Number(adapter.writes[1].value) & 4096, 0, 'la bobina NO se queda energizada');
+});
+
+// Con 300 ms la ventana era despreciable; con decenas de segundos caben dos órdenes opuestas, y en
+// `bitmask` eso deja los bits 12 y 13 energizados a la vez — el fallo que el protocolo declara ERROR.
+test('write-service: una segunda orden sobre la MISMA válvula se rechaza mientras la primera está en curso', async () => {
+  const { service, adapter } = buildSostenido(null);
+  const primera = service.execute('voragine', { command: 'open', target: 'valve1' }, OPERADOR);
+  const segunda = await service.execute('voragine', { command: 'close', target: 'valve1' }, OPERADOR);
+
+  assert.equal(segunda.status, 'rejected');
+  assert.ok(segunda.reason?.startsWith(REJECT.INTERLOCK_FAILED));
+  assert.equal(httpStatusForCommand(segunda), 409);
+
+  await primera;
+  const bits = adapter.writes.map((w) => Number(w.value));
+  assert.ok(!bits.some((v) => (v & 4096) !== 0 && (v & 8192) !== 0), 'jamás los dos sentidos a la vez');
+});
+
+// Si el cerrojo no se liberara, esa válvula quedaría bloqueada hasta reiniciar el proceso.
+test('write-service: el cerrojo se libera al terminar, aunque la orden acabe en fallo', async () => {
+  const { service } = buildSostenido(null);
+  const primera = await service.execute('voragine', { command: 'open', target: 'valve1' }, OPERADOR);
+  assert.equal(primera.status, 'failed');
+
+  const segunda = await service.execute('voragine', { command: 'open', target: 'valve1' }, OPERADOR);
+  assert.notEqual(segunda.status, 'rejected', 'la válvula debe poder volver a comandarse');
 });
 
 test('write-service: idempotencia — misma idempotencyKey NO re-ejecuta', async () => {

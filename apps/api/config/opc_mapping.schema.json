@@ -123,6 +123,10 @@
         "index": { "type": "integer", "minimum": 0 },
         "domainKey": { "type": "string", "minLength": 1, "pattern": "^[a-zA-Z][a-zA-Z0-9_.]*$" },
         "label": { "type": "string" },
+        "_nota": {
+          "type": "string",
+          "description": "Advertencia o contexto pegado a la señal, para lo que el resto de campos no puede expresar. Equivale a `_riesgo` del writeSpec, pero para señales de solo lectura — que hasta ahora no tenían dónde dejar constancia de nada. El caso que lo motivó: una válvula que existe físicamente pero cuyo canal de comando se desconoce, así que su índice es un ANCLA (toda señal debe colgar de un elemento monitorizado real o el pipeline emite dead-letters) y no una afirmación sobre dónde se manda. Sin esta nota, el próximo que lea el mapping deduciría del índice algo que nadie verificó. JSON no admite comentarios y una nota en otro archivo no se lee cuando toca."
+        },
         "unit": { "type": "string" },
         "min": { "type": "number" },
         "max": { "type": "number" },
@@ -134,7 +138,25 @@
         "mappingStatus": { "$ref": "#/$defs/mappingStatus" },
         "confidence": { "$ref": "#/$defs/confidence" },
         "writable": { "type": "boolean" },
-        "write": { "$ref": "#/$defs/writeSpec" }
+        "write": { "$ref": "#/$defs/writeSpec" },
+        "stateTrusted": {
+          "type": "boolean",
+          "description": "Solo en palabras de ESTADO de válvula. false = el registro se sigue leyendo y mostrando como DIAGNÓSTICO, pero no se usa para decidir si la válvula está abierta. La Sirena está así desde el 2026-08-15: su INT_IN[0] pasó de 16384 a 17408 mientras entraban 23,33 l/s y ninguna convención conocida lo explica. Se conserva mapeado A PROPÓSITO en vez de borrarlo: es lo que permite que ValveStateObserver acumule evidencia y algún día se pueda decodificar. Borrarlo dejaba al sistema ciego justo donde falta conocimiento."
+        },
+        "flowDomainKey": {
+          "type": "string",
+          "description": "Solo en señales de VÁLVULA: domainKey del caudal que corresponde a ESA válvula, para inferir su estado cuando la palabra de estado no es fiable. Sin esto el front aplica una preferencia fija (salida y luego entrada) que es una SUPOSICIÓN: acierta o falla según dónde esté físicamente cada válvula. Elegir el caudal equivocado miente justo en el caso que importa — una válvula de salida cerrada con la entrada llenando el tanque, o una de entrada cerrada con el tanque vaciándose aguas abajo: en ambos hay caudal en el lado que no manda y la app diría 'abierta' con la válvula cerrada. La Sirena declara outletFlow1: su única válvula es la de SALIDA (operador, 2026-08-15)."
+        },
+        "stateEncoding": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "closed": { "type": "number" },
+            "open": { "type": "number" }
+          },
+          "description": "Valores LITERALES de la palabra de estado de una válvula, para sitios que no usan la máscara de bits de Vorágine/Sirena (bit14 = estado válido, bit0 = abierta). Cascajal reporta 251 = CERRADA en INT_IN[1], verificado en campo (2026-08-13); ese valor no trae el bit14, así que sin esta declaración el front lo descarta como 'sin estado válido'. Solo se declara lo VERIFICADO: un valor que no coincida con ninguno no se interpreta, y el estado cae al método del caudal."
+        }
       },
       "allOf": [
         {
@@ -151,6 +173,11 @@
           "description": "El write spec solo puede existir en una señal writable (⇒ confirmed por la regla de arriba).",
           "if": { "required": ["write"] },
           "then": { "properties": { "writable": { "const": true } }, "required": ["writable"] }
+        },
+        {
+          "description": "Una señal MAPEADA debe tener etiqueta legible. Sin ella, los avisos enseñaban el domainKey crudo al operario ('Soledad: outletFlow2 fuera de rango') o, si se prefiere callar, se perdía el aviso entero. Ninguna de las dos es aceptable, así que el hueco se caza aquí: al validar el mapping, no de madrugada en el móvil de alguien.",
+          "if": { "properties": { "mappingStatus": { "const": "mapped" } }, "required": ["mappingStatus"] },
+          "then": { "required": ["label"], "properties": { "label": { "type": "string", "minLength": 1 } } }
         }
       ]
     },
@@ -164,9 +191,23 @@
           "description": "Un PULSO se limpia antes del read-back, así que NO puede confirmarse releyendo el valor escrito: su readBack debe apuntar al canal de ESTADO (confirmsWrittenValue:false + expectedValue).",
           "if": { "required": ["pulse"] },
           "then": { "properties": { "readBack": { "properties": { "confirmsWrittenValue": { "const": false } }, "required": ["confirmsWrittenValue"] } } }
+        },
+        {
+          "description": "pulse y latched son EXCLUYENTES: uno se limpia solo tras holdMs, el otro debe quedarse puesto. Declarar los dos es pedir cosas opuestas.",
+          "if": { "required": ["pulse"] },
+          "then": { "properties": { "latched": { "const": false } } }
+        },
+        {
+          "description": "Una secuencia escribe posiciones COMPLETAS del array (la posición es el canal físico), no bits dentro de una palabra compartida: bitmask no aplica.",
+          "if": { "required": ["sequences"] },
+          "then": { "properties": { "mode": { "const": "absolute" } } }
         }
       ],
       "properties": {
+        "_riesgo": {
+          "type": "string",
+          "description": "Advertencia escrita AL LADO del comando al que se refiere. Existe porque un valor de escritura puede ser deliberado y aun asi peligroso, y quien lo lea dentro de seis meses no tendra el contexto: JSON no admite comentarios, y una nota en otro archivo no se lee cuando toca. Documenta por que se puso ese valor, que se sabe y que no, y como revertirlo."
+        },
         "target": {
           "type": "object",
           "additionalProperties": false,
@@ -189,6 +230,29 @@
           "propertyNames": { "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" },
           "additionalProperties": { "type": ["number", "boolean"] }
         },
+        "sequences": {
+          "type": "object",
+          "description": "ORDEN COMPUESTA: verbo → pasos ordenados {index, value} sobre el MISMO buffer de salida. Necesaria cuando el equipo lo mueve un relé conmutador (una posición da el sentido y otra lo quita): escribir una sola posición NO puede moverlo — es lo que hizo que la prueba de campo del 2026-08-03 concluyera 'canal sin actuador' con la orden a medias. Reglas que el loader EXIGE (incumplirlas descarta el spec y deja la señal no-writable): el verbo debe estar también en commands y el paso del canal primario debe llevar ese mismo valor; primero se desenergiza y después se energiza (ningún cero detrás de un no-cero); como mucho UNA posición queda energizada al final; sin índices repetidos.",
+          "minProperties": 1,
+          "propertyNames": { "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$" },
+          "additionalProperties": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["index", "value"],
+              "properties": {
+                "index": { "type": "integer", "minimum": 0 },
+                "value": { "type": ["number", "boolean"] }
+              }
+            }
+          }
+        },
+        "latched": {
+          "type": "boolean",
+          "description": "true ⇒ la orden es SOSTENIDA: el valor se queda puesto y NO se hace rollback si el estado no confirma. Correcto cuando cada verbo define un estado eléctrico completo y su opuesto es el otro verbo (abrir = c0:1/c1:0, cerrar = c0:0/c1:1): deshacer un 'abrir' a 0/0 dejaría el actuador sin dirección, ni abierto ni cerrado, y sin que nadie lo pidiera. Excluyente con pulse."
+        },
         "mode": {
           "type": "string",
           "enum": ["absolute", "bitmask"],
@@ -200,7 +264,19 @@
           "description": "Presente ⇒ el comando es un PULSO: se activa, se sostiene holdMs y se limpia SIEMPRE (confirme el estado o no). Sin esto, un comando confirmado dejaría el bit enclavado.",
           "required": ["holdMs"],
           "properties": {
-            "holdMs": { "type": "integer", "minimum": 1, "maximum": 60000, "description": "Duración del pulso en ms (típico 200–500 ms)." }
+            "holdMs": { "type": "integer", "minimum": 1, "maximum": 60000, "description": "Duración del pulso en ms (típico 200–500 ms). Con `until` presente deja de ser la duración y pasa a ser el TOPE DURO del sostenido." },
+            "until": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Realimentación que decide cuándo SOLTAR la señal: se sondea ese elemento y el bit se suelta en cuanto vale `equals`, que es como funciona un actuador motorizado (la señal se mantiene hasta que avisa el final de carrera). Si nunca coincide, al vencer holdMs el bit se limpia igualmente y el comando sale fallido con HOLD_FEEDBACK_TIMEOUT — nunca se sostiene indefinidamente, porque un sensor averiado dejaría la bobina energizada sin que nadie se entere. Se compara por VALOR COMPLETO, no por bits: en La Vorágine INT_IN[1] vale 1025 = bits{0,10}, así que una condición 'bit 0 encendido' ya se cumpliría con la válvula quieta y cortaría la señal antes de que se moviera.",
+              "required": ["channel", "index", "equals"],
+              "properties": {
+                "channel": { "$ref": "#/$defs/channel" },
+                "sourceBuffer": { "type": "string", "minLength": 1 },
+                "index": { "type": "integer", "minimum": 0 },
+                "equals": { "type": ["number", "boolean"] }
+              }
+            }
           }
         },
         "readBack": {
@@ -260,7 +336,7 @@
         },
         "topologyVerified": {
           "type": "boolean",
-          "description": "Marca opcional: la topología de buffers de este sitio fue verificada por browse de solo lectura contra el PLC (ver docs/PHASE0_VERIFICATION.md)."
+          "description": "Marca opcional: la topología de buffers de este sitio fue verificada por browse de solo lectura contra el PLC (ver docs/plc/OBSERVACIONES_FASE0.md §1)."
         },
         "opcBuffers": { "$ref": "#/$defs/opcBuffers" },
         "connection": { "$ref": "#/$defs/connection" },

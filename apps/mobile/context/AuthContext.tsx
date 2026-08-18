@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import * as SecureStore from 'expo-secure-store';
 import { Platform, AppState } from 'react-native';
 import type { AuthUser, Permission } from '@ptap/shared';
@@ -116,7 +116,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => sub.remove();
   }, [token]);
 
-  async function login(newToken: string, newUser: AuthUser) {
+  const login = useCallback(async (newToken: string, newUser: AuthUser) => {
     await Promise.all([
       storage.setItem(TOKEN_KEY, newToken),
       storage.setItem(USER_KEY, JSON.stringify(newUser)),
@@ -127,9 +127,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     resetSocket();
     setToken(newToken);
     setUser(newUser);
-  }
+  }, []);
 
-  async function logout() {
+  const logout = useCallback(async () => {
     await Promise.all([
       storage.deleteItem(TOKEN_KEY),
       storage.deleteItem(USER_KEY),
@@ -140,18 +140,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     resetSocket();
     setToken(null);
     setUser(null);
-  }
+  }, []);
 
-  function hasPermissionFn(perm: Permission): boolean {
-    if (!user) return false;
-    return checkPermission(user.role, perm);
-  }
-
-  return (
-    <AuthContext.Provider value={{ token, user, isLoading, login, logout, hasPermission: hasPermissionFn }}>
-      {children}
-    </AuthContext.Provider>
+  const hasPermission = useCallback(
+    (perm: Permission): boolean => (user ? checkPermission(user.role, perm) : false),
+    [user],
   );
+
+  // El valor del provider se memoiza: envuelve TODA la app, y con un objeto literal nuevo en cada
+  // render cualquier cambio de estado aquí invalidaba a los ~10 consumidores de `useAuth()`,
+  // incluida la cáscara de pestañas. Con `login`/`logout`/`hasPermission` estables, el valor solo
+  // cambia cuando cambia de verdad la sesión.
+  const value = useMemo(
+    () => ({ token, user, isLoading, login, logout, hasPermission }),
+    [token, user, isLoading, login, logout, hasPermission],
+  );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {

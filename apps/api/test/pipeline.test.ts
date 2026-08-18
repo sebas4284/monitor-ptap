@@ -9,6 +9,7 @@ import { evaluateQuality } from '../src/infrastructure/connectivity/pipeline/qua
 import { MappingEngine } from '../src/infrastructure/connectivity/pipeline/mapping.engine';
 import { DeadLetterBuffer } from '../src/infrastructure/connectivity/pipeline/dead-letter.buffer';
 import { PlantCache } from '../src/infrastructure/connectivity/pipeline/plant-cache';
+import { buildSnapshot } from '../src/infrastructure/connectivity/pipeline/snapshot.builder';
 import type { LoadedMapping } from '../src/infrastructure/connectivity/mapping/opc-mapping.loader';
 import type { RawBufferSample, RawPlantFrame } from '../src/infrastructure/connectivity/ports/connectivity-adapter.port';
 
@@ -110,10 +111,55 @@ test('liveness: cambio viejo con sesión sana → stable, NO congelado', () => {
   lt.ingest(frame('m', [buf('B', 'realIn', [2], old)]));
   assert.equal(lt.get('m', true).state, 'stable');
 
-  const veryOld = new Date(Date.now() - 400_000).toISOString(); // más de la ventana de 300 s
-  lt.ingest(frame('m', [buf('B', 'realIn', [3], veryOld)]));
-  assert.equal(lt.get('m', true).state, 'stable', 'con la sesión viva, el tiempo por sí solo no congela');
-  assert.equal(lt.get('m', false).state, 'frozen', 'lo que congela es perder la sesión');
+  assert.equal(lt.get('m', false).state, 'frozen', 'perder la sesión congela, pase lo que pase');
+});
+
+/**
+ * LA CORRECCIÓN DEL 2026-08-15. El cambio anterior quitó el criterio de reloj porque marcaba
+ * "congelada" a una planta en régimen estable — legítimo. Pero se pasó de largo: quitó TODA cota
+ * superior, y `windowSec` quedó configurado, expuesto en el DTO y sin consultarse en ninguna parte.
+ *
+ * Consecuencia real: con el puente `Connected`, una planta con datos de 24 DÍAS devolvía `stable`,
+ * indistinguible de un tanque quieto 30 segundos. Así pasaron inadvertidas tres plantas muertas en
+ * campo y 41 h en las que el propio backend dejó de entregar frames.
+ *
+ * El equilibrio correcto es la cota LARGA que ya estaba declarada: dentro de `windowSec` es
+ * operación normal; pasada la ventana, es un congelamiento y hay que decirlo.
+ */
+test('liveness: quieto MÁS que la ventana → frozen, aunque la sesión esté sana', () => {
+  const lt = new LivenessTracker(10, 300);
+
+  // Dentro de la ventana: proceso quieto, operación normal. NO se toca.
+  const dentro = new Date(Date.now() - 60_000).toISOString();
+  lt.ingest(frame('m', [buf('B', 'realIn', [1], dentro)]));
+  lt.ingest(frame('m', [buf('B', 'realIn', [2], dentro)]));
+  assert.equal(lt.get('m', true).state, 'stable', 'un minuto quieto es operación normal');
+
+  // Pasada la ventana: ya no se puede llamar "estable" a esto.
+  const fuera = new Date(Date.now() - 400_000).toISOString();
+  lt.ingest(frame('m', [buf('B', 'realIn', [3], fuera)]));
+  assert.equal(lt.get('m', true).state, 'frozen', 'más que windowSec sin moverse ES un congelamiento');
+});
+
+test('liveness: conectados y sin ver NUNCA un cambio → stable al principio, frozen pasada la ventana', () => {
+  const lt = new LivenessTracker(10, 300);
+  const t0 = Date.now();
+  // El arranque merece el beneficio de la duda: la primera muestra de cada buffer no es un cambio.
+  assert.equal(lt.get('v', true, t0).state, 'stable');
+  // Pero si pasa la ventana entera sin ver moverse nada, no es "acabamos de arrancar".
+  assert.equal(lt.get('v', true, t0 + 301_000).state, 'frozen');
+});
+
+test('liveness: tras congelarse, un cambio nuevo lo devuelve a live de inmediato', () => {
+  const lt = new LivenessTracker(10, 300);
+  const viejo = new Date(Date.now() - 400_000).toISOString();
+  lt.ingest(frame('m', [buf('B', 'realIn', [1], viejo)]));
+  lt.ingest(frame('m', [buf('B', 'realIn', [2], viejo)]));
+  assert.equal(lt.get('m', true).state, 'frozen');
+
+  // La señal vuelve: debe alzarse en el acto, sin esperas ni histéresis.
+  lt.ingest(frame('m', [buf('B', 'realIn', [3], new Date().toISOString())]));
+  assert.equal(lt.get('m', true).state, 'live', 'apenas vuelve el dato, la planta vuelve a estar viva');
 });
 
 // ── MappingEngine (PASO 3.4) ─────────────────────────────────────────────────
@@ -130,6 +176,51 @@ function montebelloMapping(): LoadedMapping {
     raw: {},
   };
 }
+
+// `stateEncoding` es estático del mapping y solo sirve si llega ENTERO hasta el DTO: el front
+// decide con él si la válvula está cerrada. Se prueba el recorrido completo (mapping → engine →
+// snapshot) porque el fallo típico aquí es calcularlo y olvidar copiarlo al DTO — ya pasó con
+// `outOfRange` (fcfc2af).
+test('mapping: stateEncoding viaja del mapping al DTO (Cascajal: 251 = cerrada)', () => {
+  const mapping: LoadedMapping = {
+    version: '0.3.0', protocolVersion: 'v2', dtoVersion: 'v1',
+    plants: [{ plantId: 'cascajal', displayName: 'Cascajal', livenessWindowSec: null }],
+    targets: [],
+    signals: [
+      { plantId: 'cascajal', buffer: 'intIn', sourceBuffer: 'INT_IN_CASCAJAL', index: 1, domainKey: 'valve1State', label: 'Estado válvula 1', unit: null, min: null, max: null, mappingStatus: 'mapped', confidence: 'confirmed', writable: false, stateEncoding: { closed: 251 } },
+    ],
+    raw: {},
+  };
+  const dl = new DeadLetterBuffer();
+  const latest = new Map<string, RawBufferSample>();
+  latest.set('INT_IN_CASCAJAL', buf('INT_IN_CASCAJAL', 'intIn', [7826, 251, 0]));
+
+  const extracted = new MappingEngine(mapping).extract('cascajal', latest, dl);
+  assert.deepEqual(extracted[0]?.stateEncoding, { closed: 251 }, 'el engine debe conservarlo');
+
+  const snapshot = buildSnapshot({
+    plantId: 'cascajal', displayName: 'Cascajal', protocolVersion: 'v2', dtoVersion: 'v1',
+    sequence: 1, bridgeStatus: 'Connected',
+    liveness: { state: 'live', lastChangeAt: null, windowSec: 300 },
+    extracted, deadLetter: dl,
+  });
+  assert.equal(snapshot.signals.valve1State?.value, 251);
+  assert.deepEqual(snapshot.signals.valve1State?.stateEncoding, { closed: 251 }, 'y el DTO también');
+});
+
+test('mapping: una señal sin stateEncoding no lo inventa en el DTO', () => {
+  const engine = new MappingEngine(montebelloMapping());
+  const dl = new DeadLetterBuffer();
+  const latest = new Map<string, RawBufferSample>();
+  latest.set('REAL_IN_MONTEBELLO', buf('REAL_IN_MONTEBELLO', 'realIn', Array.from({ length: 50 }, (_, i) => i)));
+  const snapshot = buildSnapshot({
+    plantId: 'montebello', displayName: 'Montebello', protocolVersion: 'v2', dtoVersion: 'v1',
+    sequence: 1, bridgeStatus: 'Connected',
+    liveness: { state: 'live', lastChangeAt: null, windowSec: 300 },
+    extracted: engine.extract('montebello', latest, dl), deadLetter: dl,
+  });
+  assert.equal('stateEncoding' in (snapshot.signals.inletFlow1 ?? {}), false);
+});
 
 test('mapping: extrae realIn[0]→inletFlow1 y realIn[5]→inletFlow2 del buffer primario', () => {
   const engine = new MappingEngine(montebelloMapping());

@@ -27,7 +27,7 @@
       "urn:FTOptix:OPCUACommon",
       "urn:FTOptix:OPCUAClient"
     ],
-    "connectionEvidence": "connection.confidence proviene de leer DN/ER/TO con StatusCode Good el 2026-07-14T10:52:32.242Z (sesión Anonymous/None de solo lectura). Ver docs/PHASE0_VERIFICATION.md."
+    "connectionEvidence": "connection.confidence proviene de leer DN/ER/TO con StatusCode Good el 2026-07-14T10:52:32.242Z (sesión Anonymous/None de solo lectura). Ver docs/plc/OBSERVACIONES_FASE0.md §1."
   },
   "notes": [
     "Identidad canónica = plantId (slug). No usar nombres del frontend ni ptap-N.",
@@ -37,8 +37,8 @@
     "Las referencias a nodos usan { nsUri, identifier } SIN índice de namespace. El adaptador de Fase 1 DEBE resolver nsUri → índice vía ReadNamespaceArray en CADA conexión y reconexión (el índice de Optix puede cambiar entre reinicios), usando scripts/resolve-namespaces.ts.",
     "Si un nsUri del mapping NO está en el NamespaceArray del servidor: NamespaceNotFoundError ⇒ BridgeStatus = Faulted (NO Recovering: no se arregla reintentando). Prohibido fallback a ns=0 o a un índice previo.",
     "MANGOS y ALTO_MANGOS fusionados en alto-los-mangos (confirmado). SAN_ANTONO normalizado a san-antonio.",
-    "Sin export L5X: casi TODA señal de proceso sigue unmapped (signals: []). Única semántica confirmada por lectura: connection (DN/ER/TO de MSG_READ). Ver docs/PHASE0_VERIFICATION.md y docs/MSG_BITS_OBSERVATION.md.",
-    "Excepción: montebello.signals mapea 6 señales, TODAS con sourceBuffer REAL_IN_MONTEBELLO (g=EBA8E3EB-53A2-0CCD-3912-501C0F7E4C8F; el canal realIn también tiene TK1/TK2/TK3 de 10 elementos): caudal de entrada 1[0] y 2[5] (verificados en vivo, docs/FLOW_VALIDATION.md), caudal de salida[10] l/s; presión de entrada 1[15], de entrada 2[16] y de salida[17] psi (sin rango operativo entregado; confirmación del operador 2026-07-15). confidence: CONFIRMED (cliente, 2026-07-21). El máximo de caudal (1000 l/s) es un bound físico plausible, no la capacidad de diseño.",
+    "Sin export L5X: casi TODA señal de proceso sigue unmapped (signals: []). Única semántica confirmada por lectura: connection (DN/ER/TO de MSG_READ). Ver docs/plc/OBSERVACIONES_FASE0.md §1 y §2.",
+    "Excepción: montebello.signals mapea 6 señales, TODAS con sourceBuffer REAL_IN_MONTEBELLO (g=EBA8E3EB-53A2-0CCD-3912-501C0F7E4C8F; el canal realIn también tiene TK1/TK2/TK3 de 10 elementos): caudal de entrada 1[0] y 2[5] (verificados en vivo, docs/plc/OBSERVACIONES_FASE0.md §4), caudal de salida[10] l/s; presión de entrada 1[15], de entrada 2[16] y de salida[17] psi (sin rango operativo entregado; confirmación del operador 2026-07-15). confidence: CONFIRMED (cliente, 2026-07-21). El máximo de caudal (1000 l/s) es un bound físico plausible, no la capacidad de diseño.",
     "PENDIENTE DE RECTIFICAR (montebello): sus tanques NO van en los 50 índices del buffer primario — la app original los muestra y en el maestro existen REAL_IN_TK1/TK2/TK3_MONTEBELLO (Float[10], cada uno con su MSG_READ), pero falta la semántica de índices DENTRO de cada TK (¿cuál es nivel, cuál volumen?). El operador sospecha planta hija / tanques compartidos (¿con Campoalegre?). Cuando se confirme, se mapean con sourceBuffer REAL_IN_TK<N>_MONTEBELLO.",
     "Excepción: campoalegre.signals mapea outletFlow1 (realIn[0]), outletFlow2 (realIn[7]) en l/s; outletPressure1 (realIn[12]) y outletPressure2 (realIn[13]) en psi; y tanques 1/2/3: nivel en m y volumen en m³ en realIn[5]/[6], realIn[14]/[15] y realIn[16]/[17]. confidence: CONFIRMED (cliente, 2026-07-21) — confirmación del operador desde el HMI de Optix (2026-07-14; identificador verificado: REAL_IN_CAMPOALEGRE = g=E1680D60-7BCD-C892-7257-C4D4AAE41E1C), NO del L5X ni de documento oficial. Rango de presión: instrumento 0–16 bar → max 232 psi. Máximos de nivel (20 m) y volumen (10000 m³) son bounds plausibles, no dimensiones reales del tanque.",
     "Los índices de array NO son transferibles entre plantas (realIn[5] es nivel de tanque en campoalegre y caudal en montebello). El código debe direccionar señales SIEMPRE por (plantId, domainKey), nunca por índice global.",
@@ -151,15 +151,20 @@
           "sourceBuffer": "INT_OUT_VORAGINE",
           "index": 0,
           "domainKey": "valve1",
-          "label": "Válvula 1",
+          "label": "Válvula de salida",
+          "flowDomainKey": "outletFlow1",
           "mappingStatus": "mapped",
           "confidence": "confirmed",
           "writable": true,
           "write": {
+            "_riesgo": "VERIFICADO EN CAMPO por el cliente (2026-08-15) y ya operando: abrir = 4096 (bit12) y cerrar = 8192 (bit13) en INT_OUT[0]. Actua sobre el CAUDAL DE SALIDA. LA SENAL ES SOSTENIDA, NO UN PULSO: se mantiene puesta hasta que INT_IN[1] vale 1, y solo entonces se suelta (pulse.until). Antes se soltaba a los 300 ms a ciegas, lo que en una valvula motorizada arranca el movimiento y lo corta a mitad. Se compara el VALOR ENTERO, no bits: INT_IN[1] valia 1025 = bits{0,10} el dia del cambio, asi que una condicion 'bit0 encendido' se habria cumplido en el primer instante y habria cortado la senal antes de que la valvula se moviera. TOPE DURO 45 s, no los 60 s que se plantearon. nginx NO es el limite: se verifico en la VM el 2026-08-15 que /etc/nginx/snippets/ptap-app.conf declara proxy_read_timeout 300s, que es el que gobierna una respuesta lenta del backend. El limite real es el cliente: el fetch de la app no fija timeout, asi que manda el de la plataforma (~60 s en iOS/NSURLSession). Pasarse de ahi le muestra al operador un error de red con la orden viva en el PLC, invitando a pulsar otra vez. Si vence el tope, el bit se limpia igual y el comando sale HOLD_FEEDBACK_TIMEOUT. Lectura del PLC ese dia con la valvula pasando agua (outletFlow1 = 1,61 l/s, entrada 6,93 l/s): INT_OUT[0..19] todos a 0 e INT_IN[0] = 7192 = bits{3,4,10,11,12}. HIPOTESIS, NO CONFIRMADA: el bit12 de INT_IN[0] es el mismo bit del comando de abrir y el bit13 (cerrar) esta ausente. Es UNA sola muestra con la valvula en UNA posicion, asi que readBack sigue con stateVerified:false y el veredicto lo da el caudal de salida. Revertir: pulse a { holdMs: 300 } sin until.",
             "target": { "channel": "intOut", "sourceBuffer": "INT_OUT_VORAGINE", "index": 0 },
-            "commands": { "open": 4096 },
+            "commands": { "open": 4096, "close": 8192 },
             "mode": "bitmask",
-            "pulse": { "holdMs": 300 },
+            "pulse": {
+              "holdMs": 45000,
+              "until": { "channel": "intIn", "sourceBuffer": "INT_IN_VORAGINE", "index": 1, "equals": 1 }
+            },
             "readBack": {
               "channel": "intIn",
               "sourceBuffer": "INT_IN_VORAGINE",
@@ -172,6 +177,18 @@
             "rollbackValue": 0,
             "permission": "control_valves"
           }
+        },
+        {
+          "buffer": "intOut",
+          "sourceBuffer": "INT_OUT_VORAGINE",
+          "index": 1,
+          "domainKey": "valve2",
+          "label": "Válvula de entrada",
+          "flowDomainKey": "inletFlow1",
+          "_nota": "SIN CANAL DE COMANDO CONOCIDO. Esta valvula existe fisicamente (el cliente confirmo el 2026-08-15 que La Voragine tiene dos: entrada y salida), pero no se sabe con que frecuencia de bits se mueve ni tiene palabra de estado. Por eso writable:false y sin write spec: la app la muestra pero NO la acciona. EL INDICE ES UN ANCLA, NO UNA AFIRMACION. Toda senal debe colgar de un elemento real de un buffer monitorizado o el MappingEngine la marca rota y emite un dead-letter en cada barrido; realIn[0] no servia porque chocaria con inletFlow1 (validate-mapping rechaza dos senales en el mismo canal[indice]). Se eligio INT_OUT_VORAGINE[1] por estar libre y ser el canal donde vivira su comando cuando lo haya, pero NADIE ha verificado que la entrada se mande por esa posicion. No deducir de aqui el indice del comando. SU ESTADO SALE DEL CAUDAL DE ENTRADA (flowDomainKey: inletFlow1), que es evidencia fisica: por encima de 0,1 l/s esta abierta. Cuando el cliente entregue las frecuencias de bits: anadir el write spec, poner writable:true, confidence:confirmed y corregir el indice al que diga el campo.",
+          "mappingStatus": "mapped",
+          "confidence": "estimated",
+          "writable": false
         },
         {
           "buffer": "realIn",
@@ -481,7 +498,7 @@
           "unit": "m",
           "min": 0,
           "max": 5,
-          "opMin": 0.75,
+          "opMin": 1,
           "opMax": 2.8,
           "mappingStatus": "mapped",
           "confidence": "confirmed",
@@ -1031,6 +1048,17 @@
           }
         },
         {
+          "buffer": "intIn",
+          "sourceBuffer": "INT_IN_CASCAJAL",
+          "index": 1,
+          "domainKey": "valve1State",
+          "label": "Estado válvula 1",
+          "mappingStatus": "mapped",
+          "confidence": "confirmed",
+          "writable": false,
+          "stateEncoding": { "closed": 251 }
+        },
+        {
           "buffer": "realIn",
           "index": 0,
           "domainKey": "outletFlow1",
@@ -1100,6 +1128,18 @@
           "unit": "psi",
           "min": -15,
           "max": 232,
+          "mappingStatus": "mapped",
+          "confidence": "confirmed",
+          "writable": false
+        },
+        {
+          "buffer": "realIn",
+          "index": 14,
+          "domainKey": "inletFlow1",
+          "label": "Caudal de entrada 1",
+          "unit": "l/s",
+          "min": 0,
+          "max": 1000,
           "mappingStatus": "mapped",
           "confidence": "confirmed",
           "writable": false
@@ -1470,6 +1510,7 @@
           "unit": "m",
           "min": 0,
           "max": 5,
+          "opMin": 1,
           "opMax": 2.5,
           "mappingStatus": "mapped",
           "confidence": "confirmed",
@@ -1664,6 +1705,7 @@
           "unit": "m",
           "min": 0,
           "max": 20,
+          "opMin": 1,
           "mappingStatus": "mapped",
           "confidence": "confirmed",
           "writable": false
@@ -1724,6 +1766,7 @@
           "unit": "m",
           "min": 0,
           "max": 20,
+          "opMin": 1,
           "mappingStatus": "mapped",
           "confidence": "confirmed",
           "writable": false
@@ -1748,6 +1791,7 @@
           "unit": "m",
           "min": 0,
           "max": 20,
+          "opMin": 1,
           "mappingStatus": "mapped",
           "confidence": "confirmed",
           "writable": false
@@ -2331,7 +2375,8 @@
           "label": "Estado de la válvula 1",
           "mappingStatus": "mapped",
           "confidence": "inferred",
-          "writable": false
+          "writable": false,
+          "stateTrusted": false
         },
         {
           "buffer": "intOut",
@@ -2339,14 +2384,16 @@
           "index": 0,
           "domainKey": "valve1",
           "label": "Válvula 1",
+          "flowDomainKey": "outletFlow1",
           "mappingStatus": "mapped",
           "confidence": "confirmed",
           "writable": true,
           "write": {
+            "_riesgo": "VERIFICADO EN CAMPO Y OFICIAL (cliente, 2026-08-15). Valvula de SALIDA de La Sirena, unico canal: INT_OUT[0]. Abrir = 1, cerrar = 2, y despues de cualquiera de los dos se vuelve a escribir 0 para limpiar (rollbackValue). El cliente fijo un minimo de 45 s sosteniendo el 2 antes de limpiar; se aplica el MISMO sostenido a abrir, porque es el mismo actuador y el mismo recorrido, y porque un 'abrir' que se soltara antes dejaria la maniobra a medias igual que la dejaba el pulso de 300 ms. TOPE: 45 s. No puede subir sin tocar el cliente: el fetch de la app no fija timeout y hereda el de la plataforma (~60 s en iOS); nginx no estorba (proxy_read_timeout 300s, verificado en la VM). ESTO SUSTITUYE a dos intentos anteriores del mismo dia que NUNCA llegaron a produccion: el 4096 heredado de Voragine y la orden compuesta c0/c1 con relE de inversion. La realidad es mas simple: un solo canal con tres valores. PENDIENTE de una futura actualizacion, dicho por el cliente: ligar la parada al CAUDAL en vez de al reloj. Cuando llegue, es pulse.until (ya existe, lo usa Voragine). El estado sigue sin decidirse por INT_IN[0] (stateTrusted:false, valia 17408 con 18 l/s saliendo): el veredicto lo da outletFlow1, que es evidencia fisica. Revertir no aplica: esta es la entrega oficial de esta valvula.",
             "target": { "channel": "intOut", "sourceBuffer": "INT_OUT_SIRENA", "index": 0 },
-            "commands": { "open": 4096 },
-            "mode": "bitmask",
-            "pulse": { "holdMs": 300 },
+            "commands": { "open": 1, "close": 2 },
+            "mode": "absolute",
+            "pulse": { "holdMs": 45000 },
             "readBack": {
               "channel": "intIn",
               "sourceBuffer": "INT_IN_SIRENA",

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Modal, View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '../constants/colors';
+import { useWebEscape } from '../hooks/useWebEscape';
 
 /**
  * Doble confirmación antes de accionar una válvula real.
@@ -51,10 +52,14 @@ export function ValveConfirmDialog({ visible, valveName, plantName, verb, busy =
   const listo = restante === 0 && !busy;
   const colorAccion = verb === 'open' ? Colors.success : Colors.danger;
 
+  // Escape cancela — pero NUNCA con una orden en vuelo: cerrar el diálogo no la detendría, y
+  // dejaría al operador creyendo que canceló algo que ya salió al PLC.
+  useWebEscape(visible && !busy, onCancel);
+
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={busy ? undefined : onCancel}>
       <View style={styles.backdrop}>
-        <View style={styles.card}>
+        <View style={styles.card} accessibilityViewIsModal accessibilityRole="alert">
           <View style={styles.headerRow}>
             <View style={styles.warnIcon}>
               <Ionicons name="warning-outline" size={24} color={Colors.warning} />

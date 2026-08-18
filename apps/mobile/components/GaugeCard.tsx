@@ -1,8 +1,10 @@
+import { memo } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '../constants/colors';
 import type { SignalDto, UnusableReason } from '../services/api';
 import { directionFor } from '../services/signal-kind';
+import { sameSignalCard } from './memo-compare';
 
 const REASON_TEXT: Record<UnusableReason, string> = {
   BAD_QUALITY: 'calidad OPC no buena',
@@ -21,16 +23,19 @@ const fmt = (n: number, d = 2): string =>
  * `frozen` (planta sin conexión) y `outOfRange` (lectura fuera de límites) para no aparentar
  * frescura ni normalidad cuando no las hay.
  */
-export function GaugeCard({
+function GaugeCardBase({
   signal,
   name,
   icon,
   frozen = false,
+  compact = false,
 }: {
   signal: SignalDto;
   name: string;
   icon: string;
   frozen?: boolean;
+  /** Tablero en modo compacto: oculta la fila Mín/Máx, que es la que más ruido aporta por tarjeta. */
+  compact?: boolean;
 }) {
   const numeric = typeof signal.value === 'number';
   const isBool = typeof signal.value === 'boolean';
@@ -81,7 +86,7 @@ export function GaugeCard({
         </View>
       )}
 
-      {(hasMin || hasMax) && (
+      {!compact && (hasMin || hasMax) && (
         <Text style={styles.rangeText}>
           {hasMin ? `Mín: ${fmt(signal.opMin as number)}` : ''}
           {hasMin && hasMax ? '   ' : ''}
@@ -91,6 +96,12 @@ export function GaugeCard({
     </View>
   );
 }
+
+/**
+ * Memo con comparación POR VALOR: el snapshot se reconstruye entero cada ~2 s, así que la
+ * comparación por referencia de `memo` no ahorraría ni un render. Ver `memo-compare.ts`.
+ */
+export const GaugeCard = memo(GaugeCardBase, sameSignalCard);
 
 const styles = StyleSheet.create({
   card: {
@@ -123,7 +134,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
   },
-  rangeTagText: { fontSize: 9, fontWeight: '700', color: Colors.danger, letterSpacing: 0.5 },
+  rangeTagText: { fontSize: 11, fontWeight: '700', color: Colors.danger, letterSpacing: 0.5 },
   frozenTag: {
     backgroundColor: Colors.textSecondary + '22',
     borderColor: Colors.textSecondary,
@@ -132,7 +143,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
   },
-  frozenTagText: { fontSize: 9, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.5 },
+  frozenTagText: { fontSize: 11, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.5 },
   value: { fontSize: 28, fontWeight: '800', marginBottom: 6, textAlign: 'center', fontVariant: ['tabular-nums'] },
   unit: { fontSize: 14, fontWeight: '400', color: Colors.textSecondary },
   rangeText: { fontSize: 11, fontWeight: '600', color: Colors.textSecondary },
