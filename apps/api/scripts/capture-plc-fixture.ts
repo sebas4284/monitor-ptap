@@ -14,7 +14,7 @@
  *
  * Uso (desde la VM, con la VPN activa):
  *   CAPTURE_SECONDS=90 npm exec -w @ptap/api -- tsx scripts/capture-plc-fixture.ts
- *   OPC_ENDPOINT=opc.tcp://10.10.51.225:59100 CAPTURE_SECONDS=120 npm exec -w @ptap/api -- tsx scripts/capture-plc-fixture.ts
+ *   OPC_ENDPOINT=opc.tcp://181.204.165.66:59200 CAPTURE_SECONDS=120 npm exec -w @ptap/api -- tsx scripts/capture-plc-fixture.ts
  *
  * Salida: `test/fixtures/plc-frames-<fecha>.json`, versionable en git.
  */
@@ -25,7 +25,7 @@ import { loadMapping } from '../src/infrastructure/connectivity/mapping/opc-mapp
 import type { RawPlantFrame } from '../src/infrastructure/connectivity/ports/connectivity-adapter.port';
 import type { OpcUaConfig } from '../src/infrastructure/connectivity/connectivity.config';
 
-const ENDPOINT = process.env.OPC_ENDPOINT ?? 'opc.tcp://181.204.165.66:59100';
+const ENDPOINT = process.env.OPC_ENDPOINT ?? 'opc.tcp://181.204.165.66:59200';
 const SECONDS = Number(process.env.CAPTURE_SECONDS ?? 90);
 const MAX_FRAMES = Number(process.env.CAPTURE_MAX_FRAMES ?? 400);
 const OUT_DIR = join(__dirname, '..', 'test', 'fixtures');

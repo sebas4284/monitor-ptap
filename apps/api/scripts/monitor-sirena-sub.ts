@@ -10,7 +10,7 @@ import {
   ClientSubscription, ClientMonitoredItem, TimestampsToReturn,
 } from 'node-opcua';
 
-const ENDPOINT = process.argv[2] ?? process.env.OPC_ENDPOINT ?? 'opc.tcp://181.204.165.66:59100';
+const ENDPOINT = process.argv[2] ?? process.env.OPC_ENDPOINT ?? 'opc.tcp://181.204.165.66:59200';
 const SECONDS = Number(process.env.MONITOR_SECONDS ?? 120);
 // Todos los buffers de Sirena, por si el pulso aparece en otro canal:
 const TARGETS: Array<{ name: string; guid: string }> = [

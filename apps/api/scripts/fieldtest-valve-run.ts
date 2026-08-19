@@ -103,7 +103,7 @@ async function startWitness(): Promise<{ events: WitnessEvent[]; t0: number; sto
     connectionStrategy: { maxRetry: 1, initialDelay: 500, maxDelay: 1500 },
     requestedSessionTimeout: 600000,
   });
-  await client.connect(process.env.OPC_ENDPOINT ?? 'opc.tcp://181.204.165.66:59100');
+  await client.connect(process.env.OPC_ENDPOINT ?? 'opc.tcp://181.204.165.66:59200');
   const session = await client.createSession();
   const nsArray = await session.readNamespaceArray();
   const aq = nsArray.indexOf('AQUATECH');

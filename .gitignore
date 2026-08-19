@@ -37,6 +37,12 @@ yarn-error.*
 # local env files
 .env
 .env*.local
+# Respaldos del .env: llevan los MISMOS secretos que el original y el patron `.env` no los
+# cubre (solo casa el nombre exacto). El 2026-08-19 un `git add -A` estuvo a punto de subir
+# `.env.bak-endpoint-local` con todo dentro. La VM ya acumula varios `.env.bak-*` por el mismo
+# motivo -ver docs/PENDIENTES.md-, asi que el patron va aqui antes de que uno acabe en el repo.
+.env.bak*
+.env.*.bak
 
 # typescript
 *.tsbuildinfo

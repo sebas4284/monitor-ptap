@@ -8,7 +8,7 @@
 import { OPCUAClient, MessageSecurityMode, SecurityPolicy, AttributeIds } from 'node-opcua';
 import { writeFileSync } from 'node:fs';
 
-const ENDPOINT = process.argv[2] ?? process.env.OPC_ENDPOINT ?? 'opc.tcp://181.204.165.66:59100';
+const ENDPOINT = process.argv[2] ?? process.env.OPC_ENDPOINT ?? 'opc.tcp://181.204.165.66:59200';
 const OUT_GUID = '4AB6ECB4-D019-D4F1-A8A8-6177C3FE3278'; // INT_OUT_SIRENA (comando)
 const IN_GUID = '184E4071-DC15-213A-3DE8-442A4E0A354B';  // INT_IN_SIRENA  (estado)
 const HZ = 10;

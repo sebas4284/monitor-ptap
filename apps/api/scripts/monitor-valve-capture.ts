@@ -13,7 +13,7 @@
  *
  * Uso:
  *   PLANT=montebello MONITOR_SECONDS=120 npm exec -w @ptap/api -- tsx scripts/monitor-valve-capture.ts
- *   PLANT=sirena npm exec -w @ptap/api -- tsx scripts/monitor-valve-capture.ts opc.tcp://host:59100
+ *   PLANT=sirena npm exec -w @ptap/api -- tsx scripts/monitor-valve-capture.ts opc.tcp://host:59200
  *
  * Mientras corre, alguien en la planta acciona ABRIR y luego CERRAR desde el HMI. El resumen dice
  * qué valor viajó por el canal en cada caso.
@@ -25,7 +25,7 @@ import {
   ClientSubscription, ClientMonitoredItem, TimestampsToReturn,
 } from 'node-opcua';
 
-const ENDPOINT = process.argv[2] ?? process.env.OPC_ENDPOINT ?? 'opc.tcp://181.204.165.66:59100';
+const ENDPOINT = process.argv[2] ?? process.env.OPC_ENDPOINT ?? 'opc.tcp://181.204.165.66:59200';
 const SECONDS = Number(process.env.MONITOR_SECONDS ?? 120);
 const PLANT = process.env.PLANT ?? 'sirena';
 

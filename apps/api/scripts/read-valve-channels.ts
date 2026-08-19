@@ -72,7 +72,7 @@ async function main(): Promise<void> {
 
   const iWatch = argv.indexOf('--watch');
   const watchSec = iWatch >= 0 ? Number(argv[iWatch + 1] ?? 60) : 0;
-  const endpoint = argv.find((a, i) => a.startsWith('opc.tcp://') && i > 0) ?? process.env.OPC_ENDPOINT ?? 'opc.tcp://181.204.165.66:59100';
+  const endpoint = argv.find((a, i) => a.startsWith('opc.tcp://') && i > 0) ?? process.env.OPC_ENDPOINT ?? 'opc.tcp://181.204.165.66:59200';
 
   const planta = plantaDelMapping(plantId);
   const targets = (['intOut', 'intIn'] as const)

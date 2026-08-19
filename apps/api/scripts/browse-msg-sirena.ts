@@ -10,7 +10,7 @@
  */
 import { OPCUAClient, MessageSecurityMode, SecurityPolicy, AttributeIds, BrowseDirection, NodeClass } from 'node-opcua';
 
-const ENDPOINT = process.env.OPC_ENDPOINT ?? 'opc.tcp://181.204.165.66:59100';
+const ENDPOINT = process.env.OPC_ENDPOINT ?? 'opc.tcp://181.204.165.66:59200';
 const MSG_WRITE_GUID = 'AEC8BB93-ED3D-BEC5-6EC5-782EA513CFA2'; // MSG_WRITE_INT_SIRENA
 const MSG_READ_GUID = '44F9A9C6-5FE8-FF87-FDD2-F7DA8EB94BA1'; // MSG_READ_INT_SIRENA (comparación)
 
