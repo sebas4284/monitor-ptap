@@ -60,16 +60,34 @@ export async function syncNotificationsToDevice(): Promise<number> {
 
   await ensureAndroidChannel();
 
-  // Más de dos avisos de golpe se resumen: llenar el panel con doce tarjetas es peor que una.
-  if (nuevos.length > 2) {
-    const plantas = [...new Set(nuevos.map((n) => n.plantId))].length;
+  // LO CRÍTICO NUNCA SE RESUME. Antes, tres avisos de golpe se colapsaban en «3 avisos nuevos» sin
+  // severidad ni planta, y un tanque rebosando se leía igual que tres sensores parados. Ahora lo
+  // crítico sale siempre con su título completo, por el canal de importancia máxima y persistente;
+  // solo se agrupa el resto.
+  const criticos = nuevos.filter((n) => n.severity === 'critical');
+  const resto = nuevos.filter((n) => n.severity !== 'critical');
+
+  for (const n of criticos) {
     await presentNotification(
-      `${nuevos.length} avisos nuevos`,
+      n.title,
+      n.action ? `${n.message}
+
+▸ ${n.action}` : n.message,
+      { tag: `n-${n.id}`, plantId: n.plantId, subject: n.subject },
+      true,
+    );
+  }
+
+  // Más de dos avisos de golpe se resumen: llenar el panel con doce tarjetas es peor que una.
+  if (resto.length > 2) {
+    const plantas = [...new Set(resto.map((n) => n.plantId))].length;
+    await presentNotification(
+      `${resto.length} avisos nuevos`,
       `${plantas} planta${plantas === 1 ? '' : 's'} requieren atención. Abre la aplicación para ver el detalle.`,
       { tag: 'resumen' },
     );
   } else {
-    for (const n of nuevos) {
+    for (const n of resto) {
       await presentNotification(n.title, n.message, { tag: `n-${n.id}`, plantId: n.plantId, subject: n.subject });
     }
   }
