@@ -7,7 +7,12 @@ import { getJson, postJson } from './api';
  * al recargar. Esto es el historial que sobrevive, recuerda quién lo vio, y **nadie puede borrar**.
  */
 
-export type NotificationKind = 'sensor_stale' | 'signal_out_of_range';
+/**
+ * Tipos que emite el backend. Estuvo desincronizado: le faltaba `tank_level`, que es el aviso MÁS
+ * accionable de todos, y por eso se pintaba con el icono genérico. La fuente de verdad es
+ * `apps/api/src/modules/notifications/notification.repository.ts`.
+ */
+export type NotificationKind = 'sensor_stale' | 'signal_out_of_range' | 'tank_level' | 'tank_autonomy';
 export type NotificationSeverity = 'critical' | 'warning' | 'info';
 
 export interface AppNotification {
@@ -19,6 +24,12 @@ export interface AppNotification {
   subject: string | null;
   title: string;
   message: string;
+  /**
+   * QUÉ HACER, en una frase. La API lo devuelve desde el 2026-08-18 y el móvil lo ignoraba, que era
+   * tanto como no tenerlo: el aviso volvía a ser solo un síntoma. `null` cuando no hay una acción
+   * clara — y entonces no se pinta nada, en vez de un hueco vacío.
+   */
+  action: string | null;
   createdAt: string;
   seen: boolean;
 }

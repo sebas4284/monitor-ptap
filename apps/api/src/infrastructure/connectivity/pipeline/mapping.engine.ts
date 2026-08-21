@@ -1,6 +1,7 @@
 import type { LoadedMapping, SignalMapping } from '../mapping/opc-mapping.loader';
 import type { OpcQuality, RawBufferSample } from '../ports/connectivity-adapter.port';
 import type { DeadLetterBuffer } from './dead-letter.buffer';
+import { esFinDeSemanaOFestivo } from './dia-operativo';
 
 export interface ExtractedSignal {
   domainKey: string;
@@ -24,6 +25,27 @@ export interface ExtractedSignal {
   quality: OpcQuality;
   sourceTimestamp: string | null;
   structurallyBroken: boolean; // buffer ausente o índice fuera de rango (ya en dead-letter)
+}
+
+/**
+ * Rango operativo que rige HOY para una señal.
+ *
+ * Se resuelve aquí, en el backend, y no en el front: así el DTO ya lleva el `opMin`/`opMax` del día
+ * que toca y TODO lo que ya sabe leerlos —el detector de rango, la campana, el tablero, y hasta una
+ * APK vieja que no conozca este campo— funciona sin cambiar una línea. Duplicar la lógica de días en
+ * el cliente habría significado dos calendarios que pueden discrepar.
+ *
+ * Sin `opRangeByDay` se devuelve el par de siempre, que es el caso de las 100 señales restantes.
+ */
+function rangoDelDia(sig: SignalMapping): { opMin: number | null; opMax: number | null } {
+  const porDefecto = { opMin: sig.opMin ?? null, opMax: sig.opMax ?? null };
+  if (!sig.opRangeByDay) return porDefecto;
+  const hoy = esFinDeSemanaOFestivo(new Date()) ? sig.opRangeByDay.finde : sig.opRangeByDay.semana;
+  if (!hoy) return porDefecto;
+  return {
+    opMin: typeof hoy.opMin === 'number' ? hoy.opMin : porDefecto.opMin,
+    opMax: typeof hoy.opMax === 'number' ? hoy.opMax : porDefecto.opMax,
+  };
 }
 
 /**
@@ -72,8 +94,7 @@ export class MappingEngine {
       unit: sig.unit,
       min: sig.min,
       max: sig.max,
-      opMin: sig.opMin ?? null,
-      opMax: sig.opMax ?? null,
+      ...rangoDelDia(sig),
       stateEncoding: sig.stateEncoding,
       flowDomainKey: sig.flowDomainKey,
       stateTrusted: sig.stateTrusted,

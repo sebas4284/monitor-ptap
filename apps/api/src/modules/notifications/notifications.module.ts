@@ -3,9 +3,11 @@ import { AuditModule } from '../../infrastructure/audit/audit.module';
 import { ConnectivityModule } from '../../infrastructure/connectivity/connectivity.module';
 import { DatabaseModule } from '../../infrastructure/database/database.module';
 import { AuthModule } from '../auth/auth.module';
+import { FlowHourlyRepository } from './flow-hourly.repository';
 import { NotificationRepository } from './notification.repository';
 import { NotificationsController } from './notifications.controller';
 import { StaleDataDetector } from './stale-data.detector';
+import { TankAutonomyDetector } from './tank-autonomy.detector';
 import { TankOverflowDetector } from './tank-overflow.detector';
 import { ValveStateObserver } from './valve-state.observer';
 
@@ -22,7 +24,14 @@ import { ValveStateObserver } from './valve-state.observer';
   // detecta, porque la inyección se resuelve en runtime.
   imports: [ConnectivityModule, DatabaseModule, AuthModule, AuditModule],
   controllers: [NotificationsController],
-  providers: [NotificationRepository, StaleDataDetector, TankOverflowDetector, ValveStateObserver],
+  providers: [
+    NotificationRepository,
+    FlowHourlyRepository,
+    StaleDataDetector,
+    TankOverflowDetector,
+    TankAutonomyDetector,
+    ValveStateObserver,
+  ],
   exports: [NotificationRepository],
 })
 export class NotificationsModule {}
