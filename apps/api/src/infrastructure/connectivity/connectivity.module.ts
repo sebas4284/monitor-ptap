@@ -7,6 +7,7 @@ import { SimulatorBridgeAdapter } from './adapters/simulator/simulator-bridge.ad
 import { OpcUaConnectivityAdapter } from './adapters/opcua/opcua-connectivity.adapter';
 import { BridgeOrchestratorService } from './bridge-orchestrator.service';
 import { PlantCache } from './pipeline/plant-cache';
+import { TankAutonomyStore } from './pipeline/tank-autonomy.store';
 import { PlantPipelineService } from './pipeline/plant-pipeline.service';
 import type { ConnectivityAdapter } from './ports/connectivity-adapter.port';
 
@@ -42,9 +43,10 @@ import type { ConnectivityAdapter } from './ports/connectivity-adapter.port';
 
     // ── Pipeline de dominio en RAM (parser → liveness → mapping → quality → DTO) ──
     PlantCache,
+    TankAutonomyStore,
     PlantPipelineService,
     ConnectivityGateway,
   ],
-  exports: [CONNECTIVITY_ADAPTER, CONNECTIVITY_CONFIG, PlantCache, PlantPipelineService],
+  exports: [CONNECTIVITY_ADAPTER, CONNECTIVITY_CONFIG, PlantCache, PlantPipelineService, TankAutonomyStore],
 })
 export class ConnectivityModule {}

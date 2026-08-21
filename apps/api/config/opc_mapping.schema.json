@@ -109,6 +109,16 @@
         "confidence": { "$ref": "#/$defs/confidence" }
       }
     },
+    "rangoOperativo": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "description": "Par opMin/opMax para un tipo de dia concreto.",
+      "properties": {
+        "opMin": { "type": "number" },
+        "opMax": { "type": "number" }
+      }
+    },
     "signal": {
       "type": "object",
       "additionalProperties": false,
@@ -135,6 +145,16 @@
           "description": "Rango OPERATIVO/normativo esperado (insumo de alarmas futuras). NO es validez del dato: fuera de [opMin,opMax] la lectura sigue siendo usable; la validez física la dan min/max."
         },
         "opMax": { "type": "number" },
+        "opRangeByDay": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "description": "Rango operativo que CAMBIA segun el dia. El caudal de salida de La Voragine es 1-3 l/s entre semana pero 1-2 l/s los sabados, domingos y festivos (cliente, 2026-08-20): un solo par opMin/opMax no puede expresarlo, y aplicar el de entre semana el domingo dejaria pasar un consumo que el operador considera excesivo. Cuando esta presente MANDA sobre opMin/opMax, que se conservan como valor por defecto para cualquier consumidor que no conozca este campo.",
+          "properties": {
+            "semana": { "$ref": "#/$defs/rangoOperativo" },
+            "finde": { "$ref": "#/$defs/rangoOperativo" }
+          }
+        },
         "mappingStatus": { "$ref": "#/$defs/mappingStatus" },
         "confidence": { "$ref": "#/$defs/confidence" },
         "writable": { "type": "boolean" },

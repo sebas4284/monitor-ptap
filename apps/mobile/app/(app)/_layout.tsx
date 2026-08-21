@@ -13,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import Colors from '../../constants/colors';
 import { useAuth } from '../../context/AuthContext';
 import { useUnseenNotifications } from '../../hooks/useNotifications';
+import { NotificationOptIn } from '../../components/NotificationOptIn';
 import { usePendingUsers } from '../../hooks/usePendingUsers';
 import { useWebEscape } from '../../hooks/useWebEscape';
 import { ROLE_LABELS, ROLE_COLORS, type AuthUser } from '@ptap/shared';
@@ -221,6 +222,13 @@ export default function AppLayout() {
 
   return (
     <>
+      {/* La franja de permiso vive AQUÍ, no en Ajustes. El permiso del sistema no se puede pedir
+          solo —los navegadores lo rechazan y Android lo cuenta como denegado para siempre—, así que
+          hace falta un gesto del usuario; y hasta ahora ese gesto solo era posible si alguien
+          entraba a Ajustes y encontraba la tarjeta. Quien no lo hiciera no recibía un solo aviso en
+          el móvil sin manera de enterarse. Montarla en la cáscara también registra la tarea de
+          fondo (`useDeviceNotifications`), que era el otro motivo por el que casi nadie los recibía. */}
+      <NotificationOptIn />
       {/* Montado solo mientras está abierto: un `<Modal visible={false}>` monta igual su subárbol,
           y con él un segundo observador de `usePendingUsers` que re-renderizaba el cajón cerrado
           cada 60 s. El badge del botón de menú sigue vivo por su cuenta. */}

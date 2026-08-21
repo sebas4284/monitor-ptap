@@ -1,9 +1,10 @@
-import { memo, useEffect } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useNotifications } from '../../hooks/useNotifications';
+import { useNotificationPrefs } from '../../services/notification-prefs';
 import { usePlant, PLANTS } from '../../context/PlantContext';
 import { formatWhen, type AppNotification } from '../../services/notifications';
 import { ListSkeleton } from '../../components/Skeleton';
@@ -61,14 +62,21 @@ const NotificationRow = memo(function NotificationRow({
 });
 
 export default function AlertasScreen() {
-  const { notifications, unseen, isLoading, isError, refetch, markSeen } = useNotifications();
+  const [verSilenciados, setVerSilenciados] = useState(false);
+  const { notifications, unseen, isLoading, isError, refetch, markSeen } = useNotifications(verSilenciados);
+  const { prefs } = useNotificationPrefs();
   const { setSelectedPlant } = usePlant();
 
-  // Entrar aquí ES verlas. Se marca una sola vez por montaje, no en cada re-render.
+  // ¿Tiene sentido ofrecer el interruptor? Solo si esta persona está callando algo. A quien no
+  // filtra nada, un interruptor de "ver también lo silenciado" no le dice nada.
+  const filtra = prefs.mutedKinds.length > 0 || prefs.minSeverity !== 'info';
+
+  // Entrar aquí ES verlas. Se marca al montar y cada vez que cambia lo que se está mirando: si se
+  // destapan los silenciados, esos también quedan vistos — se acaban de enseñar.
   useEffect(() => {
     markSeen();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [verSilenciados]);
 
   function abrir(n: AppNotification) {
     // Seleccionar la planta primero: el tablero muestra la que esté activa, así que sin esto el
@@ -93,6 +101,25 @@ export default function AlertasScreen() {
               ? 'Historial de los últimos 3 días'
               : `${notifications.length} en los últimos 3 días${unseen > 0 ? ` · ${unseen} sin ver` : ''}`}
           </Text>
+          {filtra ? (
+            <TouchableOpacity
+              style={styles.filtro}
+              onPress={() => setVerSilenciados((v) => !v)}
+              activeOpacity={0.7}
+              accessibilityRole="switch"
+              accessibilityState={{ checked: verSilenciados }}
+              accessibilityLabel="Ver también los avisos silenciados"
+            >
+              <Ionicons
+                name={verSilenciados ? 'eye-outline' : 'eye-off-outline'}
+                size={15}
+                color={verSilenciados ? Colors.primary : Colors.textSecondary}
+              />
+              <Text style={[styles.filtroTexto, verSilenciados && styles.filtroActivo]}>
+                {verSilenciados ? 'Mostrando también los silenciados' : 'Ver también los silenciados'}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
 
         {isLoading ? (
@@ -133,6 +160,9 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.surface },
   content: { padding: 16 },
   head: { marginBottom: 14 },
+  filtro: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 10, marginTop: 2 },
+  filtroTexto: { fontSize: 12.5, color: Colors.textSecondary },
+  filtroActivo: { color: Colors.primary, fontWeight: '600' },
   heading: { fontSize: 20, fontWeight: '800', color: Colors.textPrimary },
   sub: { fontSize: 13, color: Colors.textSecondary, marginTop: 2 },
   card: {

@@ -211,7 +211,7 @@
           "min": 0,
           "max": 5,
           "opMin": 1,
-          "opMax": 1.97,
+          "opMax": 1.98,
           "mappingStatus": "mapped",
           "confidence": "confirmed",
           "writable": false
@@ -236,6 +236,12 @@
           "unit": "l/s",
           "min": 0,
           "max": 1000,
+          "opMin": 1,
+          "opMax": 3,
+          "opRangeByDay": {
+            "semana": { "opMin": 1, "opMax": 3 },
+            "finde":  { "opMin": 1, "opMax": 2 }
+          },
           "mappingStatus": "mapped",
           "confidence": "confirmed",
           "writable": false

@@ -26,6 +26,7 @@ import { UsersRepository } from '../src/modules/users/users.repository';
 import { MYSQL_POOL } from '../src/infrastructure/database/database.tokens';
 import { NotificationRepository } from '../src/modules/notifications/notification.repository';
 import { NotificationsController } from '../src/modules/notifications/notifications.controller';
+import { NotificationPrefsRepository } from '../src/modules/notifications/notification-prefs.repository';
 
 process.env.JWT_SECRET = process.env.JWT_SECRET ?? 'test-secret-notifications-scope';
 
@@ -60,6 +61,8 @@ function fakePool(): { pool: Pool; consultas: Consulta[] } {
   const pool = {
     query: async (sql: string, params: unknown[] = []) => {
       consultas.push({ sql, params });
+      // Sin fila de preferencias: todo llega, que es el comportamiento por defecto.
+      if (/notification_prefs/i.test(sql)) return [[], undefined];
       const planta = typeof params[2] === 'string' ? (params[2] as string) : null;
       const visibles = planta === null ? AVISOS : AVISOS.filter((a) => a.plant_id === planta);
 
@@ -105,6 +108,7 @@ async function buildApp(pool: Pool) {
     controllers: [NotificationsController],
     providers: [
       NotificationRepository,
+      NotificationPrefsRepository,
       JwtAuthGuard,
       PermissionGuard,
       JwtService,
@@ -142,12 +146,15 @@ test('notificaciones: el operador solo recibe los avisos de SU planta', async ()
     // nunca podría dejarla en cero.
     assert.equal(res.body.unseen, res.body.notifications.length);
 
-    // Y el ámbito debe viajar en el SQL, no aplicarse después en el cliente.
+    // Y el ámbito debe viajar en el SQL, no aplicarse después en el cliente. Se miran solo las
+    // consultas de la bandeja: la de preferencias va por usuario y no tiene planta que acotar.
+    const bandeja = consultas.filter((c) => /notification n|INTO notification_seen/i.test(c.sql));
+    assert.ok(bandeja.length > 0);
     assert.ok(
-      consultas.every((c) => c.sql.includes('n.plant_id = ?')),
+      bandeja.every((c) => c.sql.includes('n.plant_id = ?')),
       'todas las consultas de la bandeja deben acotar por planta en SQL',
     );
-    assert.ok(consultas.every((c) => c.params.includes('km18')));
+    assert.ok(bandeja.every((c) => c.params.includes('km18')));
   } finally {
     await app.close();
   }

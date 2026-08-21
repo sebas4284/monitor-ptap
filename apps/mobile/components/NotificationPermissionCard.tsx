@@ -34,8 +34,8 @@ export function NotificationPermissionCard() {
         <View style={styles.body}>
           <Text style={styles.title}>Avisos activados</Text>
           <Text style={styles.text}>
-            Recibirás en el panel del dispositivo los sensores que dejen de refrescarse y las señales
-            fuera de rango. Se revisa cada 15 minutos y al abrir la aplicación.
+            Recibirás en el panel del dispositivo los avisos que elijas aquí abajo. Se revisa cada
+            15 minutos y al abrir la aplicación.
           </Text>
         </View>
       </View>

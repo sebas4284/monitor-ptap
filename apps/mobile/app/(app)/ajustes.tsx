@@ -14,6 +14,7 @@ import { useAuth } from '../../context/AuthContext';
 import { API_BASE_URL } from '../../services/api';
 import { ConnectionDiagnostics } from '../../components/ConnectionDiagnostics';
 import { NotificationPermissionCard } from '../../components/NotificationPermissionCard';
+import { NotificationPrefsCard } from '../../components/NotificationPrefsCard';
 import { AppUpdateBanner } from '../../components/AppUpdateBanner';
 import { runningVersion } from '../../services/app-release';
 import Colors from '../../constants/colors';
@@ -93,6 +94,7 @@ export default function AjustesScreen() {
         {/* ── Avisos en el dispositivo ───────────────────────────── */}
         <Text style={styles.sectionTitle}>Notificaciones</Text>
         <NotificationPermissionCard />
+        <NotificationPrefsCard />
 
         {/* ── Permisos ───────────────────────────────────────────── */}
         <Text style={styles.sectionTitle}>Permisos de tu rol</Text>

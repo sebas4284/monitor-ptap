@@ -242,6 +242,96 @@ export interface PlantSnapshotDto {
   signals: Record<string, SignalDto>;
   /** true si aún no hay snapshot en cache para esa planta (respuesta de espera, sin señales). */
   pending?: boolean;
+  /**
+   * Cuánto aguanta cada tanque. Ausente mientras el detector no haya hecho su primer barrido: es
+   * preferible no enseñar nada a enseñar un número viejo.
+   */
+  autonomy?: TankAutonomyDto[];
+}
+
+/**
+ * Autonomía de un tanque: cuánto falta para el 50 % y para quedarse vacío.
+ *
+ * El cliente lo pidió (2026-08-20) para poder decidir ANTES de cerrar la entrada. El número lo
+ * calcula el backend con un temporizador estable —banda muerta de 0,2 l/s y salto de régimen de
+ * 0,6 l/s— porque recalcularlo con el caudal instantáneo lo hacía saltar de 5 h a 3 h y volver, y
+ * así no sirve para decidir nada.
+ */
+export interface TankAutonomyDto {
+  /** Número de tanque, para casarlo con `tank<N>Level` del mismo snapshot. */
+  tankN: number;
+  /** Horas hasta bajar al 50 %. 0 si ya está por debajo; null si no se puede calcular. */
+  hoursTo50: number | null;
+  /** Horas hasta quedar vacío. null si no se puede calcular. */
+  hoursTo0: number | null;
+  /** Caudal (l/s) con el que se fijó el temporizador. */
+  flowLps: number;
+  /**
+   * Qué SIGNIFICA el número, que no es lo mismo según el estado de la entrada:
+   *  - `vaciado_real`: la entrada está cerrada y el tanque se vacía de verdad. Es una cuenta atrás.
+   *  - `proyeccion_24h`: la entrada está abierta y el tanque NO se vacía. Es un supuesto —«si
+   *    cerraras ahora»— con el consumo medio del día. Presentarlo como cuenta atrás sería mentir.
+   */
+  basis: 'vaciado_real' | 'proyeccion_24h';
+}
+
+/**
+ * Qué avisos quiere recibir un usuario. Contrato único backend↔móvil.
+ *
+ * Es una RESTA sobre el comportamiento por defecto: sin preferencias guardadas llega todo, igual
+ * que siempre. Se declara lo que se silencia, nunca lo que se permite — así un tipo de aviso nuevo
+ * alcanza a todo el mundo en lugar de quedar invisible hasta que cada uno lo active.
+ */
+export interface NotificationPrefsDto {
+  /** Tipos silenciados. Vacío = ninguno. */
+  mutedKinds: string[];
+  /** Gravedad mínima que llega. `info` = todo. */
+  minSeverity: 'info' | 'warning' | 'critical';
+  /**
+   * Franja de «no molestar» en hora LOCAL del dispositivo, `HH:MM`. `null` = sin silencio.
+   *
+   * Solo calla la notificación del SISTEMA: nunca oculta nada de la bandeja ni descuenta de la
+   * campana. Si algo pasó a las tres de la mañana, por la mañana tiene que seguir ahí.
+   *
+   * `from > to` significa que cruza la medianoche (22:00–06:00), que es el caso normal.
+   */
+  quietFrom: string | null;
+  quietTo: string | null;
+}
+
+/** Lo que llega cuando el usuario nunca ha tocado sus preferencias: todo. */
+export const NOTIFICATION_PREFS_DEFAULT: NotificationPrefsDto = {
+  mutedKinds: [],
+  minSeverity: 'info',
+  quietFrom: null,
+  quietTo: null,
+};
+
+/**
+ * ¿Este aviso debe SONAR en el dispositivo ahora mismo?
+ *
+ * Vive en `shared` porque la decide el cliente —depende del reloj del teléfono, no del servidor— y
+ * aun así tiene que ser la misma regla que el backend documenta. Lo crítico atraviesa el silencio:
+ * un tanque rebosando suena a las cuatro de la mañana, que es justo para lo que sirve distinguir la
+ * gravedad.
+ */
+export function debeSonar(
+  severity: 'critical' | 'warning' | 'info',
+  prefs: NotificationPrefsDto,
+  ahora: Date,
+): boolean {
+  if (severity === 'critical') return true;
+  if (!prefs.quietFrom || !prefs.quietTo) return true;
+  const min = (hhmm: string): number => {
+    const [h, m] = hhmm.split(':').map(Number);
+    return h * 60 + m;
+  };
+  const ahoraMin = ahora.getHours() * 60 + ahora.getMinutes();
+  const desde = min(prefs.quietFrom);
+  const hasta = min(prefs.quietTo);
+  // Franja que cruza la medianoche: dentro es "después de desde O antes de hasta".
+  const enSilencio = desde <= hasta ? ahoraMin >= desde && ahoraMin < hasta : ahoraMin >= desde || ahoraMin < hasta;
+  return !enSilencio;
 }
 
 /** Cambio de liveness para el evento Socket.IO `opc:liveness`. */

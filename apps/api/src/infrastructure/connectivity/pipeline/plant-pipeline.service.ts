@@ -10,6 +10,7 @@ import { MappingEngine } from './mapping.engine';
 import { PlantCache } from './plant-cache';
 import type { LivenessChange, LivenessState, PlantSnapshotDto } from './plant-snapshot.dto';
 import { buildSnapshot } from './snapshot.builder';
+import { TankAutonomyStore } from './tank-autonomy.store';
 
 /**
  * PlantPipelineService: cierra la cadena en RAM
@@ -44,6 +45,7 @@ export class PlantPipelineService implements OnModuleInit, OnModuleDestroy {
     @Inject(CONNECTIVITY_ADAPTER) private readonly adapter: ConnectivityAdapter,
     @Inject(CONNECTIVITY_CONFIG) private readonly config: ConnectivityConfig,
     @Inject(PlantCache) private readonly cache: PlantCache,
+    @Inject(TankAutonomyStore) private readonly autonomia: TankAutonomyStore,
   ) {
     this.mapping = loadMapping();
     this.engine = new MappingEngine(this.mapping);
@@ -123,6 +125,10 @@ export class PlantPipelineService implements OnModuleInit, OnModuleDestroy {
       extracted,
       deadLetter: this.deadLetter,
     });
+    // La autonomía la calcula el detector una vez por minuto, con su temporizador estable; aquí
+    // solo se adjunta. Recalcularla en cada frame devolvería el baile que el cliente pidió evitar.
+    const autonomy = this.autonomia.get(plantId);
+    if (autonomy.length > 0) candidate.autonomy = autonomy;
 
     // Diff: firma sin sequence. No emitir snapshots idénticos (PASO 3.7). Firma BARATA (sin
     // JSON.stringify de todo el objeto en CADA frame): solo los campos que cambian en runtime

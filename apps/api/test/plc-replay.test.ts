@@ -18,6 +18,7 @@ import { join } from 'node:path';
 import { loadMapping } from '../src/infrastructure/connectivity/mapping/opc-mapping.loader';
 import { PlantCache } from '../src/infrastructure/connectivity/pipeline/plant-cache';
 import { PlantPipelineService } from '../src/infrastructure/connectivity/pipeline/plant-pipeline.service';
+import { TankAutonomyStore } from '../src/infrastructure/connectivity/pipeline/tank-autonomy.store';
 import type { ConnectivityConfig } from '../src/infrastructure/connectivity/connectivity.config';
 import type {
   BridgeStatus,
@@ -57,7 +58,7 @@ function config(): ConnectivityConfig {
 function replayAll(): { snapshots: PlantSnapshotDto[]; cache: PlantCache; pipeline: PlantPipelineService } {
   const adapter = replayAdapter();
   const cache = new PlantCache();
-  const pipeline = new PlantPipelineService(adapter, config(), cache, loadMapping());
+  const pipeline = new PlantPipelineService(adapter, config(), cache, new TankAutonomyStore());
   pipeline.onModuleInit();
   const snapshots: PlantSnapshotDto[] = [];
   const sub = pipeline.snapshot$.subscribe((s) => snapshots.push(s));

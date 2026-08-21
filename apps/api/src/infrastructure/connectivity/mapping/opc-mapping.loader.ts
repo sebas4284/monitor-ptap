@@ -24,6 +24,12 @@ export interface MonitorTarget {
   dataType: string | null;
 }
 
+/** Par opMin/opMax para un tipo de día concreto (ver `SignalMapping.opRangeByDay`). */
+export interface RangoOperativo {
+  opMin?: number;
+  opMax?: number;
+}
+
 /** Elemento de un buffer (canal + browseName + índice). Fase 5: destino/feedback de escritura. */
 export interface BufferElementRef {
   channel: string;
@@ -152,6 +158,12 @@ export interface SignalMapping {
   /** Rango operativo/normativo (se expone en el DTO para que el front lo muestre). */
   opMin?: number | null;
   opMax?: number | null;
+  /**
+   * Rango operativo que CAMBIA segun el dia. Cuando esta, MANDA sobre opMin/opMax para el tipo de
+   * dia que toque; `opMin`/`opMax` quedan como valor por defecto. El caudal de salida de La Voragine
+   * es 1-3 l/s entre semana y 1-2 l/s sabados, domingos y festivos (cliente, 2026-08-20).
+   */
+  opRangeByDay?: { semana?: RangoOperativo; finde?: RangoOperativo };
   mappingStatus: 'mapped' | 'unmapped';
   confidence: 'confirmed' | 'inferred' | 'estimated';
   writable: boolean;
@@ -237,6 +249,7 @@ interface RawSignal {
   max?: number;
   opMin?: number;
   opMax?: number;
+  opRangeByDay?: { semana?: RangoOperativo; finde?: RangoOperativo };
   mappingStatus?: string;
   confidence?: string;
   writable?: boolean;
@@ -492,6 +505,7 @@ export function loadMapping(explicitPath?: string): LoadedMapping {
         max: typeof s.max === 'number' ? s.max : null,
         opMin: typeof s.opMin === 'number' ? s.opMin : null,
         opMax: typeof s.opMax === 'number' ? s.opMax : null,
+        ...(s.opRangeByDay ? { opRangeByDay: s.opRangeByDay } : {}),
         mappingStatus: s.mappingStatus === 'unmapped' ? 'unmapped' : 'mapped',
         confidence: (s.confidence as SignalMapping['confidence']) ?? 'inferred',
         writable: s.writable === true,
