@@ -101,6 +101,13 @@ export function sameTankCard(a: TankCardProps, b: TankCardProps): boolean {
     x.percentage === y.percentage &&
     x.levelOpMin === y.levelOpMin &&
     x.levelOpMax === y.levelOpMax &&
-    x.outOfRange === y.outOfRange
+    x.outOfRange === y.outOfRange &&
+    // La autonomía se pinta desde el 2026-08-21, así que entra aquí o la tarjeta se quedaría
+    // enseñando la primera cifra para siempre — es la trampa que este archivo advierte arriba.
+    // Se comparan los tres campos que se muestran, no el objeto: llega uno nuevo en cada snapshot
+    // y comparar por referencia haría re-render en cada frame, que es justo lo que este memo evita.
+    x.autonomy?.hoursTo0 === y.autonomy?.hoursTo0 &&
+    x.autonomy?.hoursTo50 === y.autonomy?.hoursTo50 &&
+    x.autonomy?.basis === y.autonomy?.basis
   );
 }

@@ -17,6 +17,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SimulatorBridgeAdapter } from '../src/infrastructure/connectivity/adapters/simulator/simulator-bridge.adapter';
 import { PlantPipelineService } from '../src/infrastructure/connectivity/pipeline/plant-pipeline.service';
+import { TankAutonomyStore } from '../src/infrastructure/connectivity/pipeline/tank-autonomy.store';
 import { PlantCache } from '../src/infrastructure/connectivity/pipeline/plant-cache';
 import { loadMapping } from '../src/infrastructure/connectivity/mapping/opc-mapping.loader';
 import type {
@@ -82,7 +83,7 @@ function boot(config: ConnectivityConfig): Harness {
   const mapping = loadMapping();
   const adapter = new SimulatorBridgeAdapter(config.opcua, mapping);
   const cache = new PlantCache();
-  const pipeline = new PlantPipelineService(adapter, config, cache);
+  const pipeline = new PlantPipelineService(adapter, config, cache, new TankAutonomyStore());
 
   const statuses: BridgeStatus[] = [adapter.getBridgeStatus()];
   adapter.onStatusChange((s) => statuses.push(s));

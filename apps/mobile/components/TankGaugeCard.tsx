@@ -1,5 +1,6 @@
 import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
 import { memo, useEffect, useRef } from 'react';
+import type { TankAutonomyDto } from '../services/api';
 import type { TankView } from '../services/tanks';
 import Colors from '../constants/colors';
 import { sameTankCard } from './memo-compare';
@@ -47,6 +48,7 @@ function TankGaugeCardBase({ tank, frozen = false }: Props) {
     tank.outOfRange ||
     (hasLevel && (tank.levelM as number) < 0) ||
     (tank.percentage !== null && (tank.percentage < 0 || tank.percentage > 100));
+  const autonomia = autonomiaTexto(tank.autonomy);
   const fillAnim = useRef(new Animated.Value(0)).current;
   /** Último valor al que se llevó la barra: permite saltarse los tweens imperceptibles. */
   const shownPct = useRef<number | null>(null);
@@ -134,6 +136,13 @@ function TankGaugeCardBase({ tank, frozen = false }: Props) {
       <View style={styles.info}>
         <InfoRow label="Nivel" value={tank.levelM !== null ? `${tank.levelM.toFixed(2)} m` : 'Sin dato'} />
         <InfoRow label="Volumen" value={tank.volumeM3 !== null ? `${tank.volumeM3.toFixed(1)} m³` : 'Sin dato'} />
+        {autonomia && (
+          <InfoRow
+            label={autonomia.basis === 'vaciado_real' ? 'Autonomía' : 'Autonomía si cierras'}
+            value={autonomia.texto}
+            hint={autonomia.pie}
+          />
+        )}
       </View>
     </View>
   );
@@ -142,13 +151,47 @@ function TankGaugeCardBase({ tank, frozen = false }: Props) {
 /** Memo con comparación POR VALOR — ver `memo-compare.ts`. */
 export const TankGaugeCard = memo(TankGaugeCardBase, sameTankCard);
 
-function InfoRow({ label, value }: { label: string; value: string }) {
+function InfoRow({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
-    <View style={styles.infoRow}>
-      <Text style={styles.infoLabel}>{label}</Text>
-      <Text style={styles.infoValue}>{value}</Text>
+    <View>
+      <View style={styles.infoRow}>
+        <Text style={styles.infoLabel}>{label}</Text>
+        <Text style={styles.infoValue}>{value}</Text>
+      </View>
+      {/* El pie dice de dónde sale el número. Sin él, "4 h" con la entrada abierta se leería como
+          una cuenta atrás cuando en realidad el tanque no se está vaciando. */}
+      {hint ? <Text style={styles.infoHint}>{hint}</Text> : null}
     </View>
   );
+}
+
+/** Horas y minutos como los diría un operador: «3 h 20 min», «45 min». */
+function humanHoras(horas: number): string {
+  if (horas < 1) return `${Math.max(1, Math.round(horas * 60))} min`;
+  const h = Math.floor(horas);
+  const min = Math.round((horas - h) * 60);
+  return min === 0 ? `${h} h` : `${h} h ${min} min`;
+}
+
+/**
+ * Texto de la autonomía, o `null` si no hay nada honesto que decir.
+ *
+ * El número lo calcula el BACKEND con un temporizador estable; aquí solo se redacta. Los dos casos
+ * se distinguen a propósito porque significan cosas distintas: con la entrada cerrada es una cuenta
+ * atrás real, y con la entrada abierta es un supuesto —«si cerraras ahora»— con el consumo medio del
+ * día. Enseñar ambos igual haría creer al operario que el tanque se está vaciando cuando no.
+ */
+function autonomiaTexto(a: TankAutonomyDto | null): { texto: string; pie: string; basis: TankAutonomyDto['basis'] } | null {
+  if (!a || a.hoursTo0 === null) return null;
+  const hasta50 = a.hoursTo50 !== null && a.hoursTo50 > 0 ? `, ${humanHoras(a.hoursTo50)} al 50 %` : '';
+  return {
+    basis: a.basis,
+    texto: `${humanHoras(a.hoursTo0)}${hasta50}`,
+    pie:
+      a.basis === 'vaciado_real'
+        ? `Entrada cerrada · vaciándose a ${a.flowLps.toFixed(1)} l/s`
+        : `Proyección con el consumo medio del día (${a.flowLps.toFixed(1)} l/s)`,
+  };
 }
 
 const styles = StyleSheet.create({
@@ -229,4 +272,5 @@ const styles = StyleSheet.create({
   infoRow: { flexDirection: 'row', justifyContent: 'space-between' },
   infoLabel: { fontSize: 11, color: Colors.textSecondary },
   infoValue: { fontSize: 11, fontWeight: '600', color: Colors.textPrimary },
+  infoHint: { fontSize: 10, color: Colors.textSecondary, opacity: 0.75, marginTop: -2, marginBottom: 2 },
 });

@@ -1,7 +1,8 @@
 import { Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
-import type { SignalDto } from '@ptap/shared';
+import type { SignalDto, TankAutonomyDto } from '@ptap/shared';
 import { PlantCache } from '../../infrastructure/connectivity/pipeline/plant-cache';
 import { PlantPipelineService } from '../../infrastructure/connectivity/pipeline/plant-pipeline.service';
+import { TankAutonomyStore } from '../../infrastructure/connectivity/pipeline/tank-autonomy.store';
 import { dedupeDay } from './notification-day';
 import { FlowHourlyRepository } from './flow-hourly.repository';
 import { NotificationRepository, type NewNotification } from './notification.repository';
@@ -51,6 +52,7 @@ export class TankAutonomyDetector implements OnModuleInit, OnModuleDestroy {
     private readonly cache: PlantCache,
     private readonly repo: NotificationRepository,
     private readonly flujo: FlowHourlyRepository,
+    private readonly store: TankAutonomyStore,
   ) {}
 
   onModuleInit(): void {
@@ -81,11 +83,22 @@ export class TankAutonomyDetector implements OnModuleInit, OnModuleDestroy {
         const promedio = await this.flujo.promedio(plant.plantId, 'outletFlow1', 24);
         const lecturas = analizarAutonomia(snapshot, promedio?.avgLps ?? null);
 
+        const publicables: TankAutonomyDto[] = [];
         for (const t of lecturas) {
           const temporizador = this.fijarTemporizador(plant.plantId, t, now);
+          publicables.push({
+            tankN: t.tankN,
+            hoursTo50: temporizador.horasHasta50,
+            hoursTo0: temporizador.horasHasta0,
+            flowLps: temporizador.caudalFijadoLps,
+            basis: temporizador.origen,
+          });
           const aviso = this.avisoDe(plant.plantId, t, temporizador, now);
           if (aviso && (await this.repo.create(aviso))) created++;
         }
+        // Se publica lo del TEMPORIZADOR, no el cálculo del instante: la tarjeta debe enseñar
+        // exactamente el mismo número que el aviso, o el operario verá dos verdades distintas.
+        this.store.set(plant.plantId, publicables);
       }
       if (created > 0) this.logger.warn(`${created} aviso(s) de autonomía de tanque`);
     } catch (err) {

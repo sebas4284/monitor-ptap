@@ -242,6 +242,37 @@ export interface PlantSnapshotDto {
   signals: Record<string, SignalDto>;
   /** true si aún no hay snapshot en cache para esa planta (respuesta de espera, sin señales). */
   pending?: boolean;
+  /**
+   * Cuánto aguanta cada tanque. Ausente mientras el detector no haya hecho su primer barrido: es
+   * preferible no enseñar nada a enseñar un número viejo.
+   */
+  autonomy?: TankAutonomyDto[];
+}
+
+/**
+ * Autonomía de un tanque: cuánto falta para el 50 % y para quedarse vacío.
+ *
+ * El cliente lo pidió (2026-08-20) para poder decidir ANTES de cerrar la entrada. El número lo
+ * calcula el backend con un temporizador estable —banda muerta de 0,2 l/s y salto de régimen de
+ * 0,6 l/s— porque recalcularlo con el caudal instantáneo lo hacía saltar de 5 h a 3 h y volver, y
+ * así no sirve para decidir nada.
+ */
+export interface TankAutonomyDto {
+  /** Número de tanque, para casarlo con `tank<N>Level` del mismo snapshot. */
+  tankN: number;
+  /** Horas hasta bajar al 50 %. 0 si ya está por debajo; null si no se puede calcular. */
+  hoursTo50: number | null;
+  /** Horas hasta quedar vacío. null si no se puede calcular. */
+  hoursTo0: number | null;
+  /** Caudal (l/s) con el que se fijó el temporizador. */
+  flowLps: number;
+  /**
+   * Qué SIGNIFICA el número, que no es lo mismo según el estado de la entrada:
+   *  - `vaciado_real`: la entrada está cerrada y el tanque se vacía de verdad. Es una cuenta atrás.
+   *  - `proyeccion_24h`: la entrada está abierta y el tanque NO se vacía. Es un supuesto —«si
+   *    cerraras ahora»— con el consumo medio del día. Presentarlo como cuenta atrás sería mentir.
+   */
+  basis: 'vaciado_real' | 'proyeccion_24h';
 }
 
 /** Cambio de liveness para el evento Socket.IO `opc:liveness`. */

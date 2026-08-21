@@ -1,4 +1,4 @@
-import type { PlantSnapshotDto, SignalDto } from './api';
+import type { PlantSnapshotDto, SignalDto, TankAutonomyDto } from './api';
 
 /**
  * Tanques REALES derivados del snapshot de dominio (PLC → mapping → snapshot.signals).
@@ -23,6 +23,15 @@ export interface TankView {
   outOfRange: boolean;
   /** true = tanque de OTRA planta retransmitido en el buffer de esta (pendiente de rectificar). */
   external: boolean;
+  /**
+   * Cuánto aguanta el tanque, calculado por el backend. `null` mientras no llegue.
+   *
+   * NO se calcula aquí a propósito, aunque los datos estarían a mano: el backend lo hace con un
+   * temporizador estable (banda muerta de 0,2 l/s, salto de régimen de 0,6 l/s) y con el promedio
+   * de salida de 24 h, y es el MISMO número que usan los avisos. Recalcularlo en el móvil daría dos
+   * verdades distintas — la tarjeta diciendo una cosa y la notificación otra.
+   */
+  autonomy: TankAutonomyDto | null;
 }
 
 const TANK_NUM = /^tank(\d+)(?:Level|Volume)$/;
@@ -135,6 +144,7 @@ export function tanksFromSnapshot(snapshot: PlantSnapshotDto | undefined): TankV
         ts: meta?.ts ?? null,
         outOfRange: meta?.outOfRange ?? false,
         external: false,
+        autonomy: (snapshot.autonomy ?? []).find((a) => a.tankN === n) ?? null,
       },
     });
   }
@@ -155,6 +165,9 @@ export function tanksFromSnapshot(snapshot: PlantSnapshotDto | undefined): TankV
       ts: level.ts,
       outOfRange: level.outOfRange ?? false,
       external: true,
+      // Un tanque retransmitido pertenece a OTRA planta: su caudal de salida no está en este
+      // snapshot, así que no hay con qué calcular su autonomía y no se finge una.
+      autonomy: null,
     });
   }
   return tanks;

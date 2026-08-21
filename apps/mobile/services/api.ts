@@ -51,6 +51,7 @@ export type {
   SignalDto,
   LivenessDto,
   PlantSnapshotDto,
+  TankAutonomyDto,
   LivenessChange,
   PlantBasicStatusDto,
   PlantListItem,
