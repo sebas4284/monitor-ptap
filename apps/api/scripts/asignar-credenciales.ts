@@ -78,6 +78,14 @@ async function main(): Promise<void> {
   const archivo = argv[argv.indexOf('--archivo') + 1];
   const aplicar = argv.includes('--aplicar');
   const forzar = argv.includes('--forzar');
+  /**
+   * Cambiar rol/planta SIN tocar la contraseña.
+   *
+   * Ascender a alguien no debería echarlo del sistema: el jefe de La Vorágine acababa de recibir su
+   * clave, y darle permisos de operador se la habría invalidado — repartir una contraseña nueva por
+   * un cambio que no tiene nada que ver con su acceso.
+   */
+  const soloRol = argv.includes('--solo-rol');
   if (!archivo || archivo.startsWith('--')) {
     console.error('Falta --archivo <ruta.json> con una lista de { email, rol, planta, nombre? }');
     process.exit(1);
@@ -111,7 +119,9 @@ async function main(): Promise<void> {
       const actual = filas[0];
       const password = generarPassword();
 
-      if (actual && actual.last_login_at && !forzar) {
+      // Con --solo-rol no se toca la contraseña, así que no hay a quién dejar fuera y la guarda de
+      // "esta cuenta ya se usó" no aplica.
+      if (actual && actual.last_login_at && !forzar && !soloRol) {
         console.error(
           `✗ ${email} YA SE USÓ (último acceso ${new Date(actual.last_login_at).toISOString().slice(0, 10)}). ` +
             'Cambiarle la contraseña deja fuera a quien la esté usando. Repite con --forzar si es lo que quieres.',
@@ -119,13 +129,25 @@ async function main(): Promise<void> {
         process.exit(1);
       }
 
+      if (soloRol && !actual) {
+        console.error(`✗ ${email} no existe: --solo-rol cambia cuentas, no las crea.`);
+        process.exit(1);
+      }
+
       const nombre = p.nombre ?? actual?.name ?? email.split('@')[0];
-      const accion = actual
+      const accion = soloRol
+        ? `SOLO ROL: ${actual!.role}/${actual!.plant} -> ${p.rol}/${p.planta} (contraseña intacta)`
+        : actual
         ? `reutiliza (era ${actual.role}/${actual.plant}${actual.name ? `, ${actual.name}` : ''})`
         : 'CREA cuenta nueva';
       entregas.push({ email, password, rol: p.rol, planta: p.planta, nombre, accion });
 
       if (!aplicar) continue;
+
+      if (soloRol) {
+        await pool.query('UPDATE users SET role = ?, plant = ?, is_active = 1 WHERE id = ?', [p.rol, p.planta, actual!.id]);
+        continue;
+      }
 
       const { passwordHash, pepperVersion } = await hashing.hashPassword(password);
       if (actual) {
@@ -150,10 +172,10 @@ async function main(): Promise<void> {
     console.log(`rol         : ${e.rol}`);
     console.log(`nombre      : ${e.nombre}`);
     console.log(`correo      : ${e.email}`);
-    console.log(`contraseña  : ${aplicar ? e.password : '(se generará al aplicar)'}`);
+    console.log(`contraseña  : ${soloRol ? '(sin cambios)' : aplicar ? e.password : '(se generará al aplicar)'}`);
     console.log(`acción      : ${e.accion}\n`);
   }
-  if (aplicar) console.log('Estas contraseñas NO se guardan en ningún sitio. Cópialas ahora.\n');
+  if (aplicar && !soloRol) console.log('Estas contraseñas NO se guardan en ningún sitio. Cópialas ahora.\n');
 }
 
 if (require.main === module) {
