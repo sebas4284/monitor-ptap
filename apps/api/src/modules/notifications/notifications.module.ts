@@ -5,6 +5,7 @@ import { DatabaseModule } from '../../infrastructure/database/database.module';
 import { AuthModule } from '../auth/auth.module';
 import { FlowHourlyRepository } from './flow-hourly.repository';
 import { NotificationRepository } from './notification.repository';
+import { NotificationPrefsRepository } from './notification-prefs.repository';
 import { NotificationsController } from './notifications.controller';
 import { StaleDataDetector } from './stale-data.detector';
 import { TankAutonomyDetector } from './tank-autonomy.detector';
@@ -26,6 +27,7 @@ import { ValveStateObserver } from './valve-state.observer';
   controllers: [NotificationsController],
   providers: [
     NotificationRepository,
+    NotificationPrefsRepository,
     FlowHourlyRepository,
     StaleDataDetector,
     TankOverflowDetector,

@@ -275,6 +275,65 @@ export interface TankAutonomyDto {
   basis: 'vaciado_real' | 'proyeccion_24h';
 }
 
+/**
+ * Qué avisos quiere recibir un usuario. Contrato único backend↔móvil.
+ *
+ * Es una RESTA sobre el comportamiento por defecto: sin preferencias guardadas llega todo, igual
+ * que siempre. Se declara lo que se silencia, nunca lo que se permite — así un tipo de aviso nuevo
+ * alcanza a todo el mundo en lugar de quedar invisible hasta que cada uno lo active.
+ */
+export interface NotificationPrefsDto {
+  /** Tipos silenciados. Vacío = ninguno. */
+  mutedKinds: string[];
+  /** Gravedad mínima que llega. `info` = todo. */
+  minSeverity: 'info' | 'warning' | 'critical';
+  /**
+   * Franja de «no molestar» en hora LOCAL del dispositivo, `HH:MM`. `null` = sin silencio.
+   *
+   * Solo calla la notificación del SISTEMA: nunca oculta nada de la bandeja ni descuenta de la
+   * campana. Si algo pasó a las tres de la mañana, por la mañana tiene que seguir ahí.
+   *
+   * `from > to` significa que cruza la medianoche (22:00–06:00), que es el caso normal.
+   */
+  quietFrom: string | null;
+  quietTo: string | null;
+}
+
+/** Lo que llega cuando el usuario nunca ha tocado sus preferencias: todo. */
+export const NOTIFICATION_PREFS_DEFAULT: NotificationPrefsDto = {
+  mutedKinds: [],
+  minSeverity: 'info',
+  quietFrom: null,
+  quietTo: null,
+};
+
+/**
+ * ¿Este aviso debe SONAR en el dispositivo ahora mismo?
+ *
+ * Vive en `shared` porque la decide el cliente —depende del reloj del teléfono, no del servidor— y
+ * aun así tiene que ser la misma regla que el backend documenta. Lo crítico atraviesa el silencio:
+ * un tanque rebosando suena a las cuatro de la mañana, que es justo para lo que sirve distinguir la
+ * gravedad.
+ */
+export function debeSonar(
+  severity: 'critical' | 'warning' | 'info',
+  prefs: NotificationPrefsDto,
+  ahora: Date,
+): boolean {
+  if (severity === 'critical') return true;
+  if (!prefs.quietFrom || !prefs.quietTo) return true;
+  const min = (hhmm: string): number => {
+    const [h, m] = hhmm.split(':').map(Number);
+    return h * 60 + m;
+  };
+  const ahoraMin = ahora.getHours() * 60 + ahora.getMinutes();
+  const desde = min(prefs.quietFrom);
+  const hasta = min(prefs.quietTo);
+  // Franja que cruza la medianoche: dentro es "después de desde O antes de hasta".
+  const enSilencio = desde <= hasta ? ahoraMin >= desde && ahoraMin < hasta : ahoraMin >= desde || ahoraMin < hasta;
+  return !enSilencio;
+}
+
 /** Cambio de liveness para el evento Socket.IO `opc:liveness`. */
 export interface LivenessChange {
   plantId: string;

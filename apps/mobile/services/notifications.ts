@@ -34,8 +34,17 @@ export interface AppNotification {
   seen: boolean;
 }
 
-export async function fetchNotifications(): Promise<{ notifications: AppNotification[]; unseen: number }> {
-  return getJson('/api/notifications');
+/**
+ * Historial reciente. Ya viene filtrado por las preferencias de la cuenta (ver Ajustes).
+ *
+ * `incluirSilenciados` enseña también lo que el usuario decidió no recibir: silenciar NO borra, y
+ * el historial es evidencia. Aun así el contador `unseen` sigue siendo el de siempre —solo lo que
+ * el usuario pidió que le reclamara la atención—, para que la campana no se descuadre.
+ */
+export async function fetchNotifications(
+  incluirSilenciados = false,
+): Promise<{ notifications: AppNotification[]; unseen: number }> {
+  return getJson(`/api/notifications${incluirSilenciados ? '?incluirSilenciados=1' : ''}`);
 }
 
 export async function fetchUnseenCount(): Promise<number> {
@@ -43,9 +52,15 @@ export async function fetchUnseenCount(): Promise<number> {
   return unseen;
 }
 
-/** Marca vistos todos los avisos del historial. Se llama al ABRIR la bandeja. */
-export async function markNotificationsSeen(): Promise<void> {
-  await postJson('/api/notifications/seen', {});
+/**
+ * Marca vistos los avisos del historial. Se llama al ABRIR la bandeja.
+ *
+ * Va con el MISMO ámbito con el que se está mirando: se marca visto lo que se enseñó, ni más ni
+ * menos. Si se marcaran también los silenciados, al dejar de silenciar un tipo sus avisos
+ * aparecerían ya leídos sin que nadie los hubiera visto nunca.
+ */
+export async function markNotificationsSeen(incluirSilenciados = false): Promise<void> {
+  await postJson(`/api/notifications/seen${incluirSilenciados ? '?incluirSilenciados=1' : ''}`, {});
 }
 
 /** "hace 3 h", "ayer 09:14" — el operador necesita saber CUÁNDO, no solo qué. */

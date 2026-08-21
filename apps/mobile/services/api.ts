@@ -69,7 +69,7 @@ async function errorMessage(res: Response, path: string): Promise<string> {
   return `${path} → ${res.status}`;
 }
 
-async function request<T>(method: 'GET' | 'POST' | 'PATCH', path: string, body?: unknown): Promise<T> {
+async function request<T>(method: 'GET' | 'POST' | 'PATCH' | 'PUT', path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = {};
   if (authToken) headers.Authorization = `Bearer ${authToken}`;
   if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -98,6 +98,10 @@ export async function postJson<T>(path: string, body: unknown): Promise<T> {
 
 export async function patchJson<T>(path: string, body: unknown): Promise<T> {
   return request<T>('PATCH', path, body);
+}
+
+export async function putJson<T>(path: string, body: unknown): Promise<T> {
+  return request<T>('PUT', path, body);
 }
 
 // ── Comandos de válvula (canal oficial, Fase 5) ───────────────────────────────────────────────

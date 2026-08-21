@@ -62,6 +62,9 @@ export async function requestPermission(): Promise<PermissionState> {
   if (!isSupported()) return 'unsupported';
   if (isWeb) {
     const result = await window.Notification.requestPermission();
+    // Este es EL gesto del usuario: el único momento garantizado para poder crear el contexto de
+    // audio. Si se deja para cuando llegue la primera alerta crítica, el navegador ya lo bloquea.
+    if (result === 'granted') unlockWebAudio();
     return result as PermissionState;
   }
   const { requestPermissionsAsync } = await nativeModule();
@@ -103,6 +106,45 @@ export async function ensureAndroidChannel(): Promise<void> {
 }
 
 /**
+ * Contexto de audio del navegador, para reforzar lo crítico con un pitido.
+ *
+ * Hace falta porque el sonido de las notificaciones del escritorio depende del sistema y del perfil
+ * de sonido, y en varios equipos sencillamente no suena nada. El navegador solo deja crear el
+ * contexto tras un gesto del usuario, así que se crea al conceder el permiso —que es un gesto— y a
+ * partir de ahí sigue disponible con la pestaña en segundo plano.
+ */
+let audio: AudioContext | null = null;
+
+export function unlockWebAudio(): void {
+  if (!isWeb || audio) return;
+  try {
+    const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (Ctx) audio = new Ctx();
+  } catch {
+    /* sin audio se sigue: la notificación visual es lo esencial */
+  }
+}
+
+/** Dos tonos cortos. Se distingue del sonido genérico del sistema sin llegar a ser una sirena. */
+function pitido(): void {
+  if (!audio) return;
+  try {
+    void audio.resume();
+    [0, 0.28].forEach((retraso) => {
+      const osc = audio!.createOscillator();
+      const vol = audio!.createGain();
+      osc.frequency.value = 880;
+      vol.gain.value = 0.12;
+      osc.connect(vol).connect(audio!.destination);
+      osc.start(audio!.currentTime + retraso);
+      osc.stop(audio!.currentTime + retraso + 0.18);
+    });
+  } catch {
+    /* nunca puede romper el aviso */
+  }
+}
+
+/**
  * Muestra un aviso en el panel del sistema. Silencioso si no hay permiso: nunca lanza.
  *
  * `critica` cambia dos cosas, y las dos importan:
@@ -127,7 +169,12 @@ export async function presentNotification(
         data,
         // Persistente en el escritorio: se queda hasta que alguien la cierra.
         requireInteraction: critica,
+        // Explícito, y no por gusto: con `silent: true` —o con el valor por defecto de algunos
+        // navegadores en pestaña de fondo— la notificación aparece MUDA. Un aviso que no suena en
+        // una sala de control es un aviso que nadie ve.
+        silent: false,
       });
+      if (critica) pitido();
       return;
     }
     const Notifications = await nativeModule();

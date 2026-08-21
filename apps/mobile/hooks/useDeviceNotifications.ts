@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AppState } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import {
   getPermission,
   isSupported,
@@ -19,6 +19,9 @@ import { registerBackgroundSync, syncNotificationsToDevice } from '../services/n
  * navegadores y Android lo cuenta como denegado — y una vez denegado, volver a pedirlo ya no
  * muestra el diálogo. El permiso se pide desde el botón de Ajustes, con un gesto del usuario.
  */
+
+/** Cada cuánto consulta la bandeja la versión web mientras la pestaña esté abierta. */
+const WEB_POLL_MS = 5 * 60 * 1000;
 export function useDeviceNotifications(): {
   supported: boolean;
   reason: string | null;
@@ -49,6 +52,15 @@ export function useDeviceNotifications(): {
       if (state === 'active') void syncNotificationsToDevice();
     });
     return () => sub.remove();
+  }, [permission]);
+
+  // En WEB no hay tarea en segundo plano —WorkManager no existe y el equivalente exige una PWA
+  // instalada—, así que la pestaña abierta es el único canal. Sin esto, quien deja la web abierta en
+  // otra pestaña no recibía nada hasta volver a mirarla, que es justo cuando ya no hace falta.
+  useEffect(() => {
+    if (permission !== 'granted' || Platform.OS !== 'web') return;
+    const id = setInterval(() => void syncNotificationsToDevice(), WEB_POLL_MS);
+    return () => clearInterval(id);
   }, [permission]);
 
   const ask = useCallback(async () => {

@@ -71,6 +71,62 @@ function plantFilter(plantScope: string | null): { sql: string; params: string[]
   return plantScope === null ? { sql: '', params: [] } : { sql: ' AND n.plant_id = ?', params: [plantScope] };
 }
 
+/** Orden de gravedad. `info` no lo emite hoy ningún detector, pero el filtro no debe asumirlo. */
+const ORDEN_SEVERIDAD: Record<NotificationSeverity, number> = { info: 0, warning: 1, critical: 2 };
+
+/** Qué severidades pasan un mínimo dado. Se resuelve a una lista para poder usar `IN` con params. */
+export function severidadesDesde(min: NotificationSeverity): NotificationSeverity[] {
+  const piso = ORDEN_SEVERIDAD[min] ?? 0;
+  return (['info', 'warning', 'critical'] as NotificationSeverity[]).filter((s) => ORDEN_SEVERIDAD[s] >= piso);
+}
+
+/** Ámbito completo de una consulta de bandeja: planta + preferencias del usuario. */
+export interface NotificationScope {
+  plantScope: string | null;
+  /** Tipos que el usuario silenció. Vacío = ninguno. */
+  mutedKinds?: string[];
+  /** Gravedad mínima que quiere ver. Ausente = `info` = todo. */
+  minSeverity?: NotificationSeverity;
+  /**
+   * `true` = enseña también lo silenciado (el interruptor «Ver también los silenciados»).
+   *
+   * Silenciar NO borra: el aviso sigue en la base y se puede consultar. Lo que hace es dejar de
+   * contar en la campana y de aparecer por defecto. La diferencia entre «no me molestes con esto» y
+   * «esto no existió» es justo la que hay que preservar en una planta.
+   */
+  includeMuted?: boolean;
+}
+
+/**
+ * Fragmento `WHERE` compartido por las TRES consultas de la bandeja.
+ *
+ * Está en un solo sitio a propósito. Si el contador y el listado filtraran distinto, la campana
+ * marcaría avisos que la bandeja no muestra y nunca bajaría a cero — el fallo concreto que este
+ * diseño existe para hacer imposible.
+ */
+export function scopeFilter(scope: NotificationScope): { sql: string; params: (string | number)[] } {
+  const planta = plantFilter(scope.plantScope);
+  let sql = planta.sql;
+  const params: (string | number)[] = [...planta.params];
+
+  if (scope.includeMuted) return { sql, params };
+
+  const mudos = (scope.mutedKinds ?? []).filter((k) => typeof k === 'string' && k.length > 0);
+  if (mudos.length > 0) {
+    sql += ` AND n.kind NOT IN (${mudos.map(() => '?').join(',')})`;
+    params.push(...mudos);
+  }
+
+  const permitidas = severidadesDesde(scope.minSeverity ?? 'info');
+  // Solo se añade si de verdad acota: con `info` pasan las tres y la condición sobra.
+  if (permitidas.length < 3) {
+    sql += ` AND n.severity IN (${permitidas.map(() => '?').join(',')})`;
+    params.push(...permitidas);
+  }
+
+  return { sql, params };
+}
+
 /**
  * Bandeja de notificaciones.
  *
@@ -113,11 +169,11 @@ export class NotificationRepository {
    */
   async listRecent(
     userId: string,
-    plantScope: string | null,
+    scope: NotificationScope,
     sinceHours: number,
     limit: number,
   ): Promise<StoredNotification[]> {
-    const planta = plantFilter(plantScope);
+    const planta = scopeFilter(scope);
     const [rows] = await this.pool.query<RowDataPacket[]>(
       `SELECT n.id, n.kind, n.severity, n.plant_id, n.subject, n.title, n.message, n.action, n.created_at,
               (s.user_id IS NOT NULL) AS seen
@@ -147,8 +203,8 @@ export class NotificationRepository {
    * número de la campana). Va acotado igual que `listRecent`: si contara de más, la campana
    * marcaría avisos que la bandeja no llega a mostrar y nunca se podría dejar en cero.
    */
-  async countUnseen(userId: string, plantScope: string | null, sinceHours: number): Promise<number> {
-    const planta = plantFilter(plantScope);
+  async countUnseen(userId: string, scope: NotificationScope, sinceHours: number): Promise<number> {
+    const planta = scopeFilter(scope);
     const [rows] = await this.pool.query<RowDataPacket[]>(
       `SELECT COUNT(*) AS n
          FROM notification n
@@ -166,9 +222,13 @@ export class NotificationRepository {
    *
    * Acotado a propósito: sin el filtro se marcarían como vistos avisos de plantas que la persona
    * nunca vio, y si mañana un admin la reasigna a otra planta llegaría con el historial ya "leído".
+   *
+   * Va con el MISMO ámbito con el que se pintó la bandeja —preferencias incluidas—: se marca visto
+   * exactamente lo que se enseñó. Si alguien deja de silenciar un tipo, esos avisos reaparecen sin
+   * ver, que es la verdad: nunca los vio.
    */
-  async markAllSeen(userId: string, plantScope: string | null, sinceHours: number): Promise<number> {
-    const planta = plantFilter(plantScope);
+  async markAllSeen(userId: string, scope: NotificationScope, sinceHours: number): Promise<number> {
+    const planta = scopeFilter(scope);
     const [res] = await this.pool.query<ResultSetHeader>(
       `INSERT IGNORE INTO notification_seen (notification_id, user_id)
        SELECT n.id, ? FROM notification n

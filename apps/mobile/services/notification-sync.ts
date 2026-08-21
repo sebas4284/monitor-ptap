@@ -1,7 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
+import { debeSonar } from '@ptap/shared';
 import { fetchNotifications, type AppNotification } from './notifications';
 import { ensureAndroidChannel, presentNotification } from './device-notifications';
+import { getNotificationPrefs, loadNotificationPrefs } from './notification-prefs';
 
 /**
  * Lleva los avisos del servidor al panel de notificaciones del dispositivo.
@@ -15,10 +17,18 @@ import { ensureAndroidChannel, presentNotification } from './device-notification
  *
  * Idempotencia: se recuerda el id más alto ya notificado. Un aviso solo salta al panel una vez,
  * aunque la tarea corra veinte veces con él en la lista.
+ *
+ * **Lo que NO se filtra aquí:** el tipo y la gravedad. Eso lo hace el servidor, que es lo que
+ * mantiene de acuerdo a la campana, la bandeja y el panel del sistema. Aquí solo se aplica el
+ * horario de silencio, porque depende del reloj de este teléfono.
  */
 
 const TASK_NAME = 'ptap-notification-sync';
 const LAST_NOTIFIED_KEY = 'ptap_last_notified_id';
+/** Avisos que tocaron durante el "no molestar" y aún no han sonado. */
+const DEFERRED_KEY = 'ptap_deferred_notifications';
+/** Tope de diferidos que se arrastran. Una noche entera de avisos no puede crecer sin límite. */
+const MAX_DIFERIDOS = 30;
 /** Mínimo que Android respeta de verdad; pedir menos no lo acelera. */
 const INTERVAL_MINUTES = 15;
 
@@ -40,6 +50,24 @@ async function rememberNotifiedId(id: number): Promise<void> {
   }
 }
 
+async function diferidos(): Promise<number[]> {
+  try {
+    const raw = await AsyncStorage.getItem(DEFERRED_KEY);
+    const v: unknown = raw ? JSON.parse(raw) : [];
+    return Array.isArray(v) ? v.filter((n): n is number => typeof n === 'number') : [];
+  } catch {
+    return [];
+  }
+}
+
+async function recordarDiferidos(ids: number[]): Promise<void> {
+  try {
+    await AsyncStorage.setItem(DEFERRED_KEY, JSON.stringify(ids.slice(-MAX_DIFERIDOS)));
+  } catch {
+    /* si el storage falla, a lo sumo un aviso diferido no vuelve a intentarse */
+  }
+}
+
 /**
  * Consulta la bandeja y lleva al panel lo que sea nuevo. Devuelve cuántos avisos mostró.
  *
@@ -47,14 +75,26 @@ async function rememberNotifiedId(id: number): Promise<void> {
  * plano): así el aviso aparece aunque Android nunca llegue a ejecutar la tarea en segundo plano.
  */
 export async function syncNotificationsToDevice(): Promise<number> {
-  const previo = await lastNotifiedId();
-  const { notifications } = await fetchNotifications();
+  const [previo, pendientes] = await Promise.all([lastNotifiedId(), diferidos()]);
+  const [{ notifications }] = await Promise.all([fetchNotifications(), loadNotificationPrefs()]);
+  const prefs = getNotificationPrefs();
 
-  // Solo lo NO VISTO y más nuevo que lo ya anunciado. Orden ascendente para que, si hay varios,
-  // el más reciente quede arriba en el panel.
-  const nuevos = notifications
-    .filter((n) => !n.seen && n.id > previo)
+  // Solo lo NO VISTO y más nuevo que lo ya anunciado, MÁS lo que quedó pendiente de una franja de
+  // silencio anterior. Orden ascendente para que, si hay varios, el más reciente quede arriba.
+  const candidatos = notifications
+    .filter((n) => !n.seen && (n.id > previo || pendientes.includes(n.id)))
     .sort((a, b) => a.id - b.id);
+
+  // El "no molestar" no oculta nada: aplaza. Lo crítico lo atraviesa —un tanque rebosando suena a
+  // las cuatro de la mañana— y el resto espera a que termine la franja, sin perderse por el camino.
+  const ahora = new Date();
+  const nuevos = candidatos.filter((n) => debeSonar(n.severity, prefs, ahora));
+  const aplazados = candidatos.filter((n) => !debeSonar(n.severity, prefs, ahora)).map((n) => n.id);
+
+  // El puntero avanza SIEMPRE, incluso con la franja activa: lo aplazado se recuerda aparte, así no
+  // se re-anuncia cada quince minutos lo que ya sonó.
+  const tope = candidatos.length > 0 ? Math.max(previo, ...candidatos.map((n) => n.id)) : previo;
+  await Promise.all([recordarDiferidos(aplazados), tope > previo ? rememberNotifiedId(tope) : Promise.resolve()]);
 
   if (nuevos.length === 0) return 0;
 
@@ -92,7 +132,6 @@ export async function syncNotificationsToDevice(): Promise<number> {
     }
   }
 
-  await rememberNotifiedId(Math.max(...nuevos.map((n) => n.id)));
   return nuevos.length;
 }
 
