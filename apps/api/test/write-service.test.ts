@@ -23,6 +23,8 @@ import type { CommandLogRepository, StoredCommand } from '../src/modules/command
 import type { CommandMappingResolver } from '../src/modules/commands/command-mapping.resolver';
 import { REJECT, FAIL, SENT, httpStatusForCommand, type CommandActor } from '../src/modules/commands/command.dto';
 import { WriteService } from '../src/modules/commands/write.service';
+import type { CommandSignatureService } from '../src/modules/commands/command-signature.service';
+import type { NotificationRepository } from '../src/modules/notifications/notification.repository';
 
 const WRITE: WriteSpec = {
   target: { channel: 'intOut', sourceBuffer: 'INT_OUT_TEST', index: 3 },
@@ -127,6 +129,19 @@ function fakeRepo(): CommandLogRepository {
   } as unknown as CommandLogRepository;
 }
 
+/**
+ * Doble del libro de firmas. Devuelve un sello fijo: aquí se comprueba que la maniobra se firma y
+ * que el sello llega al aviso, no el cálculo del HMAC — eso tiene su propio test, sin base de datos.
+ */
+function fakeFirmas(): CommandSignatureService {
+  return { firmar: async () => 'firma-de-prueba' } as unknown as CommandSignatureService;
+}
+
+/** Doble de la bandeja: cada maniobra deja un aviso, y publicarlo no debe poder romper la orden. */
+function fakeAvisos(): NotificationRepository {
+  return { create: async () => true } as unknown as NotificationRepository;
+}
+
 function fakeAudit(): { service: AuditLogService; calls: AuditEntry[] } {
   const calls: AuditEntry[] = [];
   const service = { record: async (e: AuditEntry) => { calls.push(e); } } as unknown as AuditLogService;
@@ -146,6 +161,8 @@ function build(opts: { secure: boolean; bridge: BridgeStatus; confirms?: boolean
     fakeResolver(opts.write === undefined ? WRITE : opts.write),
     fakeRepo(),
     audit.service,
+    fakeFirmas(),
+    fakeAvisos(),
   );
   return { service, adapter, audit };
 }
@@ -504,6 +521,7 @@ function buildSostenido(lecturasHastaLlegar: number | null) {
   const audit = fakeAudit();
   const service = new WriteService(
     adapter, fakeConfig(true), fakeCache(snap('live')), fakeResolver(WRITE_SOSTENIDO), fakeRepo(), audit.service,
+    fakeFirmas(), fakeAvisos(),
   );
   return { service, adapter, audit };
 }
@@ -570,7 +588,10 @@ test('write-service: el cerrojo se libera al terminar, aunque la orden acabe en 
 test('write-service: idempotencia — misma idempotencyKey NO re-ejecuta', async () => {
   const adapter = fakeAdapter({ secure: true, bridge: 'Connected', confirms: true });
   const audit = fakeAudit();
-  const service = new WriteService(adapter, fakeConfig(true), fakeCache(snap('live')), fakeResolver(WRITE), fakeRepo(), audit.service);
+  const service = new WriteService(
+    adapter, fakeConfig(true), fakeCache(snap('live')), fakeResolver(WRITE), fakeRepo(), audit.service,
+    fakeFirmas(), fakeAvisos(),
+  );
 
   const first = await service.execute('voragine', { command: 'openValve', target: 'valveEV01', idempotencyKey: 'k1' }, OPERADOR);
   const second = await service.execute('voragine', { command: 'openValve', target: 'valveEV01', idempotencyKey: 'k1' }, OPERADOR);

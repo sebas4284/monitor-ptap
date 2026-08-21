@@ -37,6 +37,8 @@ interface SignalCardProps {
   frozen?: boolean;
   /** Modo compacto del tablero: oculta las filas de rango. */
   compact?: boolean;
+  /** Planta de la señal: decide a qué ítem apunta la campana de silencio. */
+  plantId?: string;
 }
 
 /** Para `GaugeCard` y `FlowMeterCard`. */
@@ -46,6 +48,8 @@ export function sameSignalCard(a: SignalCardProps, b: SignalCardProps): boolean 
     a.icon === b.icon &&
     a.frozen === b.frozen &&
     a.compact === b.compact &&
+    // Si cambiara la planta sin cambiar el domainKey, la campana apuntaría al ítem equivocado.
+    a.plantId === b.plantId &&
     sameSignal(a.signal, b.signal)
   );
 }
@@ -53,6 +57,8 @@ export function sameSignalCard(a: SignalCardProps, b: SignalCardProps): boolean 
 interface TankCardProps {
   tank: TankView;
   frozen?: boolean;
+  /** Planta del tanque: decide a qué ítem apunta la campana de silencio. */
+  plantId?: string;
 }
 
 interface ValveItemProps {
@@ -90,7 +96,7 @@ export function sameValveItem(a: ValveItemProps, b: ValveItemProps): boolean {
 
 /** Para `TankGaugeCard`. */
 export function sameTankCard(a: TankCardProps, b: TankCardProps): boolean {
-  if (a.frozen !== b.frozen) return false;
+  if (a.frozen !== b.frozen || a.plantId !== b.plantId) return false;
   const x = a.tank;
   const y = b.tank;
   return (

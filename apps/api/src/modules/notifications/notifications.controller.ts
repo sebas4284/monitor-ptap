@@ -6,7 +6,6 @@ import {
   Inject,
   Post,
   Put,
-  Query,
   Req,
   UnauthorizedException,
   UseGuards,
@@ -66,34 +65,15 @@ export class NotificationsController {
     return { userId: user.id, plantScope: user.plant };
   }
 
-  /**
-   * Ámbito completo: planta + lo que esa persona ha elegido recibir.
-   *
-   * Lo resuelven los tres endpoints por igual, y por eso la campana, la bandeja y lo que marca
-   * "visto" no pueden discrepar: es literalmente el mismo `WHERE`.
-   */
-  private async ambito(req: AuthenticatedRequest, includeMuted: boolean): Promise<{ userId: string; scope: NotificationScope }> {
-    const { userId, plantScope } = this.scopeOf(req);
-    const prefs = await this.prefs.get(userId);
-    return {
-      userId,
-      scope: { plantScope, mutedKinds: prefs.mutedKinds, minSeverity: prefs.minSeverity, includeMuted },
-    };
-  }
-
   /** Historial reciente de SU planta, con el estado de visto DE QUIEN pregunta. */
   @Get()
   @RequirePermission('view_dashboard')
-  async list(
-    @Req() req: AuthenticatedRequest,
-    @Query('incluirSilenciados') incluirSilenciados?: string,
-  ): Promise<{ notifications: StoredNotification[]; unseen: number }> {
-    const { userId, scope } = await this.ambito(req, incluirSilenciados === '1');
+  async list(@Req() req: AuthenticatedRequest): Promise<{ notifications: StoredNotification[]; unseen: number }> {
+    const { userId, plantScope } = this.scopeOf(req);
+    const scope: NotificationScope = { plantScope };
     const [notifications, unseen] = await Promise.all([
       this.repo.listRecent(userId, scope, HISTORY_HOURS, MAX_ITEMS),
-      // El contador NUNCA cuenta lo silenciado, aunque se esté mirando: la campana refleja lo que
-      // el usuario pidió que le reclamara la atención, no lo que está husmeando ahora mismo.
-      this.repo.countUnseen(userId, { ...scope, includeMuted: false }, HISTORY_HOURS),
+      this.repo.countUnseen(userId, scope, HISTORY_HOURS),
     ]);
     return { notifications, unseen };
   }
@@ -102,8 +82,8 @@ export class NotificationsController {
   @Get('unseen-count')
   @RequirePermission('view_dashboard')
   async unseenCount(@Req() req: AuthenticatedRequest): Promise<{ unseen: number }> {
-    const { userId, scope } = await this.ambito(req, false);
-    return { unseen: await this.repo.countUnseen(userId, scope, HISTORY_HOURS) };
+    const { userId, plantScope } = this.scopeOf(req);
+    return { unseen: await this.repo.countUnseen(userId, { plantScope }, HISTORY_HOURS) };
   }
 
   /**
@@ -112,12 +92,9 @@ export class NotificationsController {
    */
   @Post('seen')
   @RequirePermission('view_dashboard')
-  async markSeen(
-    @Req() req: AuthenticatedRequest,
-    @Query('incluirSilenciados') incluirSilenciados?: string,
-  ): Promise<{ marked: number }> {
-    const { userId, scope } = await this.ambito(req, incluirSilenciados === '1');
-    return { marked: await this.repo.markAllSeen(userId, scope, HISTORY_HOURS) };
+  async markSeen(@Req() req: AuthenticatedRequest): Promise<{ marked: number }> {
+    const { userId, plantScope } = this.scopeOf(req);
+    return { marked: await this.repo.markAllSeen(userId, { plantScope }, HISTORY_HOURS) };
   }
 
   /** Qué avisos quiere recibir. Sin nada guardado devuelve el default: todo. */

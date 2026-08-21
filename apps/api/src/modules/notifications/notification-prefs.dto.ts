@@ -17,6 +17,9 @@ const hora = z
 export const notificationPrefsSchema = z
   .object({
     mutedKinds: z.array(z.string().min(1).max(64)).max(32).default([]),
+    // Tope holgado pero real: son señales concretas de una planta, no una lista infinita. Sin
+    // tope, un cliente con un bucle podría hacer crecer la fila sin control.
+    mutedItems: z.array(z.string().min(1).max(128)).max(500).default([]),
     minSeverity: z.enum(['info', 'warning', 'critical']).default('info'),
     quietFrom: hora.default(null),
     quietTo: hora.default(null),

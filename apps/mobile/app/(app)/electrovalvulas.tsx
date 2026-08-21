@@ -42,7 +42,7 @@ export default function ElectrovalvulasScreen() {
 
   const { data: snapshot, isLoading, isError, refetch, isRefetching } = useSnapshot(selectedPlant.id, canView);
   const rawValves = useMemo(() => valvesFromSnapshot(snapshot), [snapshot]);
-  const { valves, events, send, busy, dismiss } = useValveSupervisor(selectedPlant.id, rawValves);
+  const { valves, send, busy } = useValveSupervisor(selectedPlant.id, rawValves);
   const [pendiente, setPendiente] = useState<Pendiente | null>(null);
   /** Veredicto de la última orden, a la espera de acuse de recibo. NUNCA es un toast: ver
    *  `ValveResultDialog`. */
@@ -126,50 +126,16 @@ export default function ElectrovalvulasScreen() {
           )}
         </View>
 
-        {/* Estado del mando: honesto sobre CÓMO se sabrá si la maniobra ocurrió de verdad. */}
-        <View style={[styles.notice, styles.noticeOk]}>
-          <Ionicons name="checkmark-circle-outline" size={18} color={Colors.success} />
-          <Text style={styles.noticeText}>
-            <Text style={{ fontWeight: '700' }}>Mando remoto ACTIVO.</Text> Cada orden va por el canal oficial
-            (pulso por el canal 0, con confirmación y auditoría) y pide una confirmación antes de salir.
-          </Text>
-        </View>
+        {/*
+          Aquí había dos franjas fijas y una lista de avisos efímeros. Se quitaron a petición de
+          operación: TODO lo que tenga que ver con una válvula va a la bandeja de notificaciones,
+          donde queda registrado con quién lo hizo, a qué hora y con la firma de la maniobra — y
+          donde lo ve el resto del equipo, no solo quien tuviera esta pantalla abierta.
 
-        {/* Sin lectura eléctrica, el estado sale solo del caudal: el operador tiene que saberlo. */}
-        {valves.length > 0 && !conLecturaDeEstado && (
-          <View style={[styles.notice, styles.noticeWarn]}>
-            <Ionicons name="alert-circle-outline" size={18} color={Colors.warning} />
-            <Text style={styles.noticeText}>
-              <Text style={{ fontWeight: '700' }}>Esta planta no reporta el estado eléctrico de la válvula.</Text>{' '}
-              El estado que ves se deduce del caudal, y tras una orden puede que el sistema no logre confirmar
-              la maniobra aunque haya ocurrido. Verifique en sitio antes de dar por hecho el resultado.
-            </Text>
-          </View>
-        )}
-
-        {/* Avisos: operación manual detectada y resultados de órdenes. */}
-        {events.map((e) => (
-          <TouchableOpacity
-            key={e.id}
-            style={[styles.event, e.kind === 'manual' ? styles.eventManual : styles.eventCmd]}
-            onPress={() => dismiss(e.id)}
-            activeOpacity={0.8}
-            accessibilityRole="button"
-            accessibilityLabel={`${e.title}. ${e.message} Toca para descartar este aviso.`}
-          >
-            <Ionicons
-              name={e.kind === 'manual' ? 'hand-left-outline' : 'send-outline'}
-              size={16}
-              color={e.kind === 'manual' ? Colors.warning : Colors.primary}
-            />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.eventTitle}>{e.title}</Text>
-              <Text style={styles.eventMsg}>{e.message}</Text>
-            </View>
-            <Ionicons name="close" size={14} color={Colors.textSecondary} />
-          </TouchableOpacity>
-        ))}
-
+          Lo que decían no se ha perdido: la advertencia de que esta planta no confirma
+          eléctricamente la maniobra vive ahora en el diálogo de confirmación, justo antes de que
+          alguien mande la orden, que es cuando sirve para algo.
+        */}
         {isLoading && !snapshot ? (
           <ListSkeleton rows={3} label="Cargando las electroválvulas" />
         ) : showError ? (
@@ -214,6 +180,7 @@ export default function ElectrovalvulasScreen() {
         plantName={plantName}
         verb={pendiente?.verb ?? 'open'}
         busy={pendiente !== null && busy === pendiente.valve.id}
+        conLecturaDeEstado={conLecturaDeEstado}
         onConfirm={() => void onConfirmar()}
         onCancel={() => setPendiente(null)}
       />

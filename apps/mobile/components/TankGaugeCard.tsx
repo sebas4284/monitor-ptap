@@ -3,6 +3,7 @@ import { memo, useEffect, useRef } from 'react';
 import type { TankAutonomyDto } from '../services/api';
 import type { TankView } from '../services/tanks';
 import Colors from '../constants/colors';
+import { BotonSilencio } from './BotonSilencio';
 import { sameTankCard } from './memo-compare';
 
 /** Cambio de nivel por debajo del cual no vale la pena animar (en puntos porcentuales).
@@ -16,6 +17,18 @@ interface Props {
   /** La planta está congelada (sin conexión, mostrando la última lectura). Atenúa la tarjeta,
    *  la marca como congelada y NO anima la barra (los valores son viejos, no deben "moverse"). */
   frozen?: boolean;
+  /** Planta del tanque, para la campana de silencio. Sin ella, la campana no se pinta. */
+  plantId?: string;
+}
+
+/**
+ * Clave con la que llegan los avisos de este tanque (`tank1`, `tank2`…), que no es su `id` de
+ * pantalla (`tank-1`). Silenciar tiene que apuntar exactamente al mismo sujeto que emite el
+ * backend, o el botón no callaría nada y nadie entendería por qué.
+ */
+function sujetoDelTanque(id: string): string | null {
+  const m = /^tank-(\d+)$/.exec(id);
+  return m ? `tank${m[1]}` : null;
 }
 
 function waterColor(pct: number): string {
@@ -30,7 +43,7 @@ function statusLabel(pct: number): string {
   return 'Bajo';
 }
 
-function TankGaugeCardBase({ tank, frozen = false }: Props) {
+function TankGaugeCardBase({ tank, frozen = false, plantId }: Props) {
   // percentage llega null hasta que la planta confirme la capacidad real del tanque;
   // en ese caso NO se dibuja % de llenado (sería inventado), solo nivel y volumen reales.
   //
@@ -49,6 +62,7 @@ function TankGaugeCardBase({ tank, frozen = false }: Props) {
     (hasLevel && (tank.levelM as number) < 0) ||
     (tank.percentage !== null && (tank.percentage < 0 || tank.percentage > 100));
   const autonomia = autonomiaTexto(tank.autonomy);
+  const sujeto = sujetoDelTanque(tank.id);
   const fillAnim = useRef(new Animated.Value(0)).current;
   /** Último valor al que se llevó la barra: permite saltarse los tweens imperceptibles. */
   const shownPct = useRef<number | null>(null);
@@ -82,6 +96,9 @@ function TankGaugeCardBase({ tank, frozen = false }: Props) {
     <View style={[styles.card, frozen && styles.cardFrozen]}>
       <View style={styles.nameRow}>
         <Text style={styles.name}>{tank.name}</Text>
+        {plantId && sujeto ? (
+          <BotonSilencio plantId={plantId} subject={sujeto} etiqueta={tank.name} />
+        ) : null}
         {frozen && (
           <View style={styles.frozenTag}>
             <Text style={styles.frozenTagText}>congelado</Text>

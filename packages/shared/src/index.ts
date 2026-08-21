@@ -276,22 +276,59 @@ export interface TankAutonomyDto {
 }
 
 /**
- * Qué avisos quiere recibir un usuario. Contrato único backend↔móvil.
+ * Tipos de aviso. Fuente de verdad compartida: el backend los emite y el móvil los agrupa.
  *
- * Es una RESTA sobre el comportamiento por defecto: sin preferencias guardadas llega todo, igual
- * que siempre. Se declara lo que se silencia, nunca lo que se permite — así un tipo de aviso nuevo
- * alcanza a todo el mundo en lugar de quedar invisible hasta que cada uno lo active.
+ * `valve_command` y `valve_manual` son la traza de las válvulas y NO se pueden silenciar (ver
+ * `KINDS_NO_SILENCIABLES`).
+ */
+export type NotificationKind =
+  | 'sensor_stale'
+  | 'signal_out_of_range'
+  | 'tank_level'
+  | 'tank_autonomy'
+  | 'valve_command'
+  | 'valve_manual';
+
+export type NotificationSeverity = 'critical' | 'warning' | 'info';
+
+/**
+ * Lo que NO se puede callar, pase lo que pase.
+ *
+ * Las maniobras de válvula son el registro que SUSTITUYE a la confirmación que el PLC no da: en
+ * estas plantas no hay forma electrónica de saber si una válvula se abrió, así que la evidencia es
+ * quién dio la orden y cuándo. Si alguien pudiera apagar ese aviso, dejaría de ser evidencia.
+ */
+export const KINDS_NO_SILENCIABLES: readonly NotificationKind[] = ['valve_command', 'valve_manual'];
+
+export function esSilenciable(kind: string): boolean {
+  return !KINDS_NO_SILENCIABLES.includes(kind as NotificationKind);
+}
+
+/**
+ * Qué avisos SUENAN fuera de la app. Contrato único backend↔móvil.
+ *
+ * **Solo hay dos modos, y valen para todo:** con sonido (llega a la bandeja Y al panel del sistema)
+ * o silenciado (llega a la bandeja, no suena fuera). Silenciar NUNCA esconde nada: el aviso sigue
+ * en el historial y sigue contando en la campana. La diferencia entre «no me molestes con esto» y
+ * «esto no existió» es la que hace falta cuando hay que reclamar algo tres semanas después.
+ *
+ * Se declara lo que se silencia, nunca lo que se permite: así un tipo de aviso nuevo alcanza a todo
+ * el mundo en vez de quedar mudo hasta que cada uno lo active.
  */
 export interface NotificationPrefsDto {
-  /** Tipos silenciados. Vacío = ninguno. */
+  /** Tipos que no suenan fuera de la app. Vacío = todos suenan. */
   mutedKinds: string[];
-  /** Gravedad mínima que llega. `info` = todo. */
-  minSeverity: 'info' | 'warning' | 'critical';
+  /**
+   * Ítems concretos que no suenan fuera, como `plantId:subject` (p. ej. `voragine:tank1Level`).
+   *
+   * Es el silenciado «directo» desde el tablero: el sensor que lleva tres semanas averiado y del
+   * que ya no hace falta que suene el teléfono, sin dejar de recibir el resto de esa planta.
+   */
+  mutedItems: string[];
+  /** Gravedad mínima que suena fuera. `info` = todo suena. */
+  minSeverity: NotificationSeverity;
   /**
    * Franja de «no molestar» en hora LOCAL del dispositivo, `HH:MM`. `null` = sin silencio.
-   *
-   * Solo calla la notificación del SISTEMA: nunca oculta nada de la bandeja ni descuenta de la
-   * campana. Si algo pasó a las tres de la mañana, por la mañana tiene que seguir ahí.
    *
    * `from > to` significa que cruza la medianoche (22:00–06:00), que es el caso normal.
    */
@@ -299,29 +336,53 @@ export interface NotificationPrefsDto {
   quietTo: string | null;
 }
 
-/** Lo que llega cuando el usuario nunca ha tocado sus preferencias: todo. */
+/** Lo que rige cuando el usuario nunca ha tocado sus preferencias: todo suena. */
 export const NOTIFICATION_PREFS_DEFAULT: NotificationPrefsDto = {
   mutedKinds: [],
+  mutedItems: [],
   minSeverity: 'info',
   quietFrom: null,
   quietTo: null,
 };
 
+/** Clave de un ítem silenciable. Planta + señal, porque el mismo `subject` existe en varias plantas. */
+export function claveDeItem(plantId: string, subject: string): string {
+  return `${plantId}:${subject}`;
+}
+
+/** Lo mínimo que hace falta para decidir si un aviso suena. */
+export interface AvisoSonable {
+  kind: string;
+  severity: NotificationSeverity;
+  plantId: string;
+  subject: string | null;
+}
+
 /**
- * ¿Este aviso debe SONAR en el dispositivo ahora mismo?
+ * ¿Este aviso debe SONAR fuera de la app ahora mismo?
  *
- * Vive en `shared` porque la decide el cliente —depende del reloj del teléfono, no del servidor— y
- * aun así tiene que ser la misma regla que el backend documenta. Lo crítico atraviesa el silencio:
- * un tanque rebosando suena a las cuatro de la mañana, que es justo para lo que sirve distinguir la
- * gravedad.
+ * Vive en `shared` porque la decide el cliente —depende del reloj del teléfono— y aun así tiene que
+ * ser la misma regla en móvil y en web. Nunca decide si el aviso EXISTE: eso no se filtra en
+ * ninguna parte.
+ *
+ * El orden de las comprobaciones es el orden de las prioridades:
+ *  1. Las maniobras de válvula suenan siempre. No son silenciables por diseño.
+ *  2. Lo crítico atraviesa el «no molestar» —un tanque rebosando suena a las cuatro de la mañana—
+ *     pero NO atraviesa un silenciado explícito: si alguien calló ese sensor a propósito, se
+ *     respeta.
  */
-export function debeSonar(
-  severity: 'critical' | 'warning' | 'info',
-  prefs: NotificationPrefsDto,
-  ahora: Date,
-): boolean {
-  if (severity === 'critical') return true;
+export function debeSonar(aviso: AvisoSonable, prefs: NotificationPrefsDto, ahora: Date): boolean {
+  if (!esSilenciable(aviso.kind)) return true;
+
+  if (prefs.mutedKinds.includes(aviso.kind)) return false;
+  if (aviso.subject && prefs.mutedItems.includes(claveDeItem(aviso.plantId, aviso.subject))) return false;
+
+  const orden: Record<NotificationSeverity, number> = { info: 0, warning: 1, critical: 2 };
+  if (orden[aviso.severity] < (orden[prefs.minSeverity] ?? 0)) return false;
+
+  if (aviso.severity === 'critical') return true;
   if (!prefs.quietFrom || !prefs.quietTo) return true;
+
   const min = (hhmm: string): number => {
     const [h, m] = hhmm.split(':').map(Number);
     return h * 60 + m;

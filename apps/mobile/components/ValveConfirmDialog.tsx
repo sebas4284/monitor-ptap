@@ -29,11 +29,28 @@ interface Props {
   verb: 'open' | 'close';
   /** Hay una orden en vuelo: se bloquea todo y se muestra el spinner. */
   busy?: boolean;
+  /**
+   * `false` cuando la planta no publica el estado eléctrico de la válvula.
+   *
+   * Este aviso estaba antes como una franja permanente en la pantalla de electroválvulas. Ahí lo
+   * leía uno la primera vez y luego formaba parte del decorado. Aquí aparece en el único momento en
+   * que cambia algo: justo antes de mandar la orden, cuando todavía se puede decidir ir a mirar.
+   */
+  conLecturaDeEstado?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
 
-export function ValveConfirmDialog({ visible, valveName, plantName, verb, busy = false, onConfirm, onCancel }: Props) {
+export function ValveConfirmDialog({
+  visible,
+  valveName,
+  plantName,
+  verb,
+  busy = false,
+  conLecturaDeEstado = true,
+  onConfirm,
+  onCancel,
+}: Props) {
   const [restante, setRestante] = useState(ESPERA_SEGUNDOS);
 
   // El contador se reinicia en CADA apertura: si no, la segunda maniobra de la sesión saldría
@@ -88,6 +105,22 @@ export function ValveConfirmDialog({ visible, valveName, plantName, verb, busy =
               Una maniobra equivocada puede ocasionar daños en la red o dejar sin servicio a un sector.
             </Text>{' '}
             Confirme que es la válvula y la planta correctas antes de continuar.
+          </Text>
+
+          {!conLecturaDeEstado && (
+            <View style={styles.sinEstado}>
+              <Ionicons name="eye-off-outline" size={16} color={Colors.warning} />
+              <Text style={styles.sinEstadoTexto}>
+                Esta planta no reporta el estado eléctrico de la válvula: después de mandar la orden,
+                el sistema no podrá confirmar que se movió.{' '}
+                <Text style={styles.advertenciaFuerte}>Habrá que verificarlo en sitio.</Text>
+              </Text>
+            </View>
+          )}
+
+          <Text style={styles.firma}>
+            La maniobra queda registrada a tu nombre, con la hora y una firma que no se puede
+            alterar. La verá el resto del equipo de la planta.
           </Text>
 
           <View style={styles.botones}>
@@ -178,6 +211,17 @@ const styles = StyleSheet.create({
   detalleValor: { fontSize: 13, fontWeight: '700', color: Colors.textPrimary, flexShrink: 1, textAlign: 'right' },
   advertencia: { fontSize: 12.5, lineHeight: 18, color: Colors.textSecondary },
   advertenciaFuerte: { fontWeight: '700', color: Colors.warning },
+  sinEstado: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: Colors.warning + '14',
+    borderRadius: 10,
+    padding: 10,
+    marginTop: 10,
+  },
+  sinEstadoTexto: { flex: 1, fontSize: 12.5, lineHeight: 17, color: Colors.textSecondary },
+  firma: { fontSize: 11.5, lineHeight: 16, color: Colors.textSecondary, marginTop: 10, fontStyle: 'italic' },
   botones: { flexDirection: 'row', gap: 10, marginTop: 2 },
   btn: {
     flex: 1,

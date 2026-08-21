@@ -18,9 +18,13 @@ import { getNotificationPrefs, loadNotificationPrefs } from './notification-pref
  * Idempotencia: se recuerda el id más alto ya notificado. Un aviso solo salta al panel una vez,
  * aunque la tarea corra veinte veces con él en la lista.
  *
- * **Lo que NO se filtra aquí:** el tipo y la gravedad. Eso lo hace el servidor, que es lo que
- * mantiene de acuerdo a la campana, la bandeja y el panel del sistema. Aquí solo se aplica el
- * horario de silencio, porque depende del reloj de este teléfono.
+ * **Aquí se decide qué SUENA, no qué existe.** La bandeja y la campana las sirve el servidor sin
+ * filtrar: lo silenciado sigue estando ahí. Lo que se aplica en este punto son las preferencias del
+ * usuario —tipos y señales callados, gravedad mínima y franja de «no molestar»—, porque dependen
+ * del reloj de este teléfono y porque el silencio no debe borrarle el historial a nadie.
+ *
+ * Las maniobras de válvula atraviesan todo eso: son el registro que sustituye a la confirmación
+ * eléctrica que estas plantas no dan, y no se pueden callar.
  */
 
 const TASK_NAME = 'ptap-notification-sync';
@@ -88,8 +92,9 @@ export async function syncNotificationsToDevice(): Promise<number> {
   // El "no molestar" no oculta nada: aplaza. Lo crítico lo atraviesa —un tanque rebosando suena a
   // las cuatro de la mañana— y el resto espera a que termine la franja, sin perderse por el camino.
   const ahora = new Date();
-  const nuevos = candidatos.filter((n) => debeSonar(n.severity, prefs, ahora));
-  const aplazados = candidatos.filter((n) => !debeSonar(n.severity, prefs, ahora)).map((n) => n.id);
+  const suena = (n: AppNotification): boolean => debeSonar(n, prefs, ahora);
+  const nuevos = candidatos.filter(suena);
+  const aplazados = candidatos.filter((n) => !suena(n)).map((n) => n.id);
 
   // El puntero avanza SIEMPRE, incluso con la franja activa: lo aplazado se recuerda aparte, así no
   // se re-anuncia cada quince minutos lo que ya sonó.

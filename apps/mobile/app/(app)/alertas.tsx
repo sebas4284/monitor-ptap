@@ -1,12 +1,18 @@
-import { memo, useEffect, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, RefreshControl } from 'react-native';
+import { memo, useEffect, useMemo, useState } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, TextInput, StyleSheet, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useNotifications } from '../../hooks/useNotifications';
-import { useNotificationPrefs } from '../../services/notification-prefs';
 import { usePlant, PLANTS } from '../../context/PlantContext';
-import { formatWhen, type AppNotification } from '../../services/notifications';
+import {
+  FAMILIAS,
+  familiaDe,
+  filtrarAvisos,
+  formatWhen,
+  type AppNotification,
+  type FamiliaAviso,
+} from '../../services/notifications';
 import { ListSkeleton } from '../../components/Skeleton';
 import { OfflineNotice } from '../../components/OfflineNotice';
 import Colors from '../../constants/colors';
@@ -24,6 +30,15 @@ import Colors from '../../constants/colors';
  *  3. **Tocar un aviso lleva a la planta afectada**, seleccionándola primero.
  */
 function severityOf(n: AppNotification): { color: string; icon: keyof typeof Ionicons.glyphMap } {
+  // Una maniobra correcta NO es una alarma: pintarla de rojo con un triangulo ensenaria a leer el
+  // registro de valvulas como un problema, cuando casi siempre es el registro de que alguien hizo
+  // su trabajo.
+  if (n.kind === 'valve_command') {
+    return n.severity === 'info'
+      ? { color: Colors.primary, icon: 'git-commit-outline' }
+      : { color: Colors.warning, icon: 'git-commit-outline' };
+  }
+  if (n.kind === 'valve_manual') return { color: Colors.warning, icon: 'hand-left-outline' };
   if (n.kind === 'sensor_stale') return { color: Colors.danger, icon: 'pulse-outline' };
   if (n.severity === 'critical') return { color: Colors.danger, icon: 'alert-circle' };
   if (n.severity === 'warning') return { color: Colors.warning, icon: 'warning-outline' };
@@ -61,22 +76,58 @@ const NotificationRow = memo(function NotificationRow({
   );
 });
 
+/** Pestaña de familia. Lleva el número: un filtro que no dice cuántos hay obliga a probarlo. */
+function Pestania({
+  etiqueta,
+  cuantos,
+  activa,
+  onPress,
+}: {
+  etiqueta: string;
+  cuantos: number;
+  activa: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <TouchableOpacity
+      style={[styles.pestania, activa && styles.pestaniaActiva]}
+      onPress={onPress}
+      activeOpacity={0.7}
+      accessibilityRole="tab"
+      accessibilityState={{ selected: activa }}
+      accessibilityLabel={`${etiqueta}, ${cuantos} avisos`}
+    >
+      <Text style={[styles.pestaniaTexto, activa && styles.pestaniaTextoActiva]}>{etiqueta}</Text>
+      <Text style={styles.pestaniaNum}>{cuantos}</Text>
+    </TouchableOpacity>
+  );
+}
+
 export default function AlertasScreen() {
-  const [verSilenciados, setVerSilenciados] = useState(false);
-  const { notifications, unseen, isLoading, isError, refetch, markSeen } = useNotifications(verSilenciados);
-  const { prefs } = useNotificationPrefs();
+  const { notifications, unseen, isLoading, isError, refetch, markSeen } = useNotifications();
   const { setSelectedPlant } = usePlant();
+  const [familia, setFamilia] = useState<FamiliaAviso | null>(null);
+  const [busqueda, setBusqueda] = useState('');
 
-  // ¿Tiene sentido ofrecer el interruptor? Solo si esta persona está callando algo. A quien no
-  // filtra nada, un interruptor de "ver también lo silenciado" no le dice nada.
-  const filtra = prefs.mutedKinds.length > 0 || prefs.minSeverity !== 'info';
+  const visibles = useMemo(() => filtrarAvisos(notifications, familia, busqueda), [notifications, familia, busqueda]);
 
-  // Entrar aquí ES verlas. Se marca al montar y cada vez que cambia lo que se está mirando: si se
-  // destapan los silenciados, esos también quedan vistos — se acaban de enseñar.
+  // Cuántos hay de cada familia, para que las pestañas digan si vale la pena entrar. Un filtro que
+  // lleva a una lista vacía sin avisar antes es peor que no tenerlo.
+  const conteos = useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const n of notifications) {
+      const f = familiaDe(n.kind);
+      if (f) c[f] = (c[f] ?? 0) + 1;
+    }
+    return c;
+  }, [notifications]);
+
+  // Entrar aquí ES verlas. Se marca TODO, no solo lo que el filtro deja ver: el filtro sirve para
+  // buscar, no para leer a medias.
   useEffect(() => {
     markSeen();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [verSilenciados]);
+  }, []);
 
   function abrir(n: AppNotification) {
     // Seleccionar la planta primero: el tablero muestra la que esté activa, así que sin esto el
@@ -101,26 +152,47 @@ export default function AlertasScreen() {
               ? 'Historial de los últimos 3 días'
               : `${notifications.length} en los últimos 3 días${unseen > 0 ? ` · ${unseen} sin ver` : ''}`}
           </Text>
-          {filtra ? (
-            <TouchableOpacity
-              style={styles.filtro}
-              onPress={() => setVerSilenciados((v) => !v)}
-              activeOpacity={0.7}
-              accessibilityRole="switch"
-              accessibilityState={{ checked: verSilenciados }}
-              accessibilityLabel="Ver también los avisos silenciados"
-            >
-              <Ionicons
-                name={verSilenciados ? 'eye-outline' : 'eye-off-outline'}
-                size={15}
-                color={verSilenciados ? Colors.primary : Colors.textSecondary}
-              />
-              <Text style={[styles.filtroTexto, verSilenciados && styles.filtroActivo]}>
-                {verSilenciados ? 'Mostrando también los silenciados' : 'Ver también los silenciados'}
-              </Text>
-            </TouchableOpacity>
-          ) : null}
         </View>
+
+        {notifications.length > 0 && (
+          <>
+            <View style={styles.buscador}>
+              <Ionicons name="search-outline" size={16} color={Colors.textSecondary} />
+              <TextInput
+                style={styles.buscadorInput}
+                value={busqueda}
+                onChangeText={setBusqueda}
+                placeholder="Buscar por válvula, sensor o persona"
+                placeholderTextColor={Colors.textSecondary}
+                accessibilityLabel="Buscar dentro de las notificaciones"
+                returnKeyType="search"
+              />
+              {busqueda.length > 0 && (
+                <TouchableOpacity onPress={() => setBusqueda('')} hitSlop={10} accessibilityLabel="Borrar la búsqueda">
+                  <Ionicons name="close-circle" size={16} color={Colors.textSecondary} />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pestanias}>
+              <Pestania
+                etiqueta="Todo"
+                cuantos={notifications.length}
+                activa={familia === null}
+                onPress={() => setFamilia(null)}
+              />
+              {FAMILIAS.map((f) => (
+                <Pestania
+                  key={f.id}
+                  etiqueta={f.etiqueta}
+                  cuantos={conteos[f.id] ?? 0}
+                  activa={familia === f.id}
+                  onPress={() => setFamilia(familia === f.id ? null : f.id)}
+                />
+              ))}
+            </ScrollView>
+          </>
+        )}
 
         {isLoading ? (
           <ListSkeleton rows={3} label="Cargando las notificaciones" />
@@ -136,13 +208,33 @@ export default function AlertasScreen() {
             <Ionicons name="checkmark-circle-outline" size={44} color={Colors.success} />
             <Text style={styles.emptyTitle}>Sin novedades</Text>
             <Text style={styles.emptyText}>
-              No se ha registrado ningún aviso en los últimos 3 días. Aquí aparecerán las señales
-              fuera de rango y los sensores que dejen de refrescarse.
+              No se ha registrado ningún aviso en los últimos 3 días. Aquí aparecerán las maniobras de
+              válvula, las señales fuera de rango y los sensores que dejen de refrescarse.
             </Text>
+          </View>
+        ) : visibles.length === 0 ? (
+          <View style={styles.empty}>
+            <Ionicons name="search-outline" size={40} color={Colors.textSecondary} />
+            <Text style={styles.emptyTitle}>Nada con ese filtro</Text>
+            <Text style={styles.emptyText}>
+              Hay {notifications.length} avisos en los últimos 3 días, pero ninguno coincide con lo que
+              estás buscando.
+            </Text>
+            <TouchableOpacity
+              style={styles.limpiar}
+              onPress={() => {
+                setFamilia(null);
+                setBusqueda('');
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Quitar el filtro y ver todos los avisos"
+            >
+              <Text style={styles.limpiarTexto}>Quitar el filtro</Text>
+            </TouchableOpacity>
           </View>
         ) : (
           <>
-            {notifications.map((n) => (
+            {visibles.map((n) => (
               <NotificationRow key={n.id} notification={n} onPress={abrir} />
             ))}
             <Text style={styles.pie}>
@@ -160,9 +252,37 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.surface },
   content: { padding: 16 },
   head: { marginBottom: 14 },
-  filtro: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 10, marginTop: 2 },
-  filtroTexto: { fontSize: 12.5, color: Colors.textSecondary },
-  filtroActivo: { color: Colors.primary, fontWeight: '600' },
+  buscador: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: Colors.bg,
+    borderWidth: 1,
+    borderColor: Colors.divider,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    // 44 px de alto: se usa de pie y a veces con guantes.
+    minHeight: 44,
+    marginBottom: 10,
+  },
+  buscadorInput: { flex: 1, fontSize: 14, color: Colors.textPrimary, paddingVertical: 10 },
+  pestanias: { gap: 8, paddingBottom: 12 },
+  pestania: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: Colors.divider,
+  },
+  pestaniaActiva: { borderColor: Colors.primary, backgroundColor: Colors.primary + '22' },
+  pestaniaTexto: { fontSize: 12.5, fontWeight: '600', color: Colors.textSecondary },
+  pestaniaTextoActiva: { color: Colors.primary },
+  pestaniaNum: { fontSize: 11, color: Colors.textSecondary },
+  limpiar: { marginTop: 12, paddingHorizontal: 16, paddingVertical: 10 },
+  limpiarTexto: { fontSize: 13, fontWeight: '600', color: Colors.primary },
   heading: { fontSize: 20, fontWeight: '800', color: Colors.textPrimary },
   sub: { fontSize: 13, color: Colors.textSecondary, marginTop: 2 },
   card: {

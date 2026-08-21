@@ -4,9 +4,12 @@ import type { Pool, RowDataPacket } from 'mysql2/promise';
 import { MYSQL_POOL } from '../../infrastructure/database/database.tokens';
 
 /**
- * Qué avisos quiere recibir cada usuario.
+ * Qué avisos SUENAN fuera de la app para cada usuario.
  *
- * Sin fila guardada devuelve el default: **todo llega**. Nadie tiene que configurar nada para que
+ * Vive en el servidor —y no en el teléfono— porque el usuario lo pidió explícitamente: la
+ * configuración tiene que sobrevivir a cerrar sesión y a cambiar de dispositivo.
+ *
+ * Sin fila guardada devuelve el default: **todo suena**. Nadie tiene que configurar nada para que
  * el sistema siga comportándose como hasta ahora, y un tipo de aviso nuevo alcanza a todo el mundo
  * en vez de quedar invisible hasta que cada uno lo active.
  */
@@ -19,13 +22,14 @@ export class NotificationPrefsRepository {
   async get(userId: string): Promise<NotificationPrefsDto> {
     try {
       const [rows] = await this.pool.query<RowDataPacket[]>(
-        'SELECT kinds_silenciados, min_severidad, silencio_desde, silencio_hasta FROM notification_prefs WHERE user_id = ?',
+        'SELECT kinds_silenciados, items_silenciados, min_severidad, silencio_desde, silencio_hasta FROM notification_prefs WHERE user_id = ?',
         [userId],
       );
       const r = rows[0];
       if (!r) return NOTIFICATION_PREFS_DEFAULT;
       return {
-        mutedKinds: parseKinds(r.kinds_silenciados),
+        mutedKinds: parseLista(r.kinds_silenciados),
+        mutedItems: parseLista(r.items_silenciados),
         minSeverity: parseSeverity(r.min_severidad),
         quietFrom: horaCorta(r.silencio_desde),
         quietTo: horaCorta(r.silencio_hasta),
@@ -41,16 +45,18 @@ export class NotificationPrefsRepository {
 
   async save(userId: string, prefs: NotificationPrefsDto): Promise<void> {
     await this.pool.query(
-      `INSERT INTO notification_prefs (user_id, kinds_silenciados, min_severidad, silencio_desde, silencio_hasta)
-       VALUES (?, ?, ?, ?, ?)
+      `INSERT INTO notification_prefs (user_id, kinds_silenciados, items_silenciados, min_severidad, silencio_desde, silencio_hasta)
+       VALUES (?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          kinds_silenciados = VALUES(kinds_silenciados),
+         items_silenciados = VALUES(items_silenciados),
          min_severidad     = VALUES(min_severidad),
          silencio_desde    = VALUES(silencio_desde),
          silencio_hasta    = VALUES(silencio_hasta)`,
       [
         userId,
         JSON.stringify(prefs.mutedKinds ?? []),
+        JSON.stringify(prefs.mutedItems ?? []),
         prefs.minSeverity,
         prefs.quietFrom,
         prefs.quietTo,
@@ -60,7 +66,7 @@ export class NotificationPrefsRepository {
 }
 
 /** MySQL devuelve JSON ya parseado o como texto según versión y driver; se cubren ambos. */
-function parseKinds(raw: unknown): string[] {
+function parseLista(raw: unknown): string[] {
   if (Array.isArray(raw)) return raw.filter((k): k is string => typeof k === 'string');
   if (typeof raw === 'string') {
     try {

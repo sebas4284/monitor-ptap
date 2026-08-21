@@ -24,6 +24,8 @@ import { CommandLogRepository, type StoredCommand } from '../src/modules/command
 import { CommandMappingResolver } from '../src/modules/commands/command-mapping.resolver';
 import { CommandsController } from '../src/modules/commands/commands.controller';
 import { WriteService } from '../src/modules/commands/write.service';
+import { CommandSignatureService } from '../src/modules/commands/command-signature.service';
+import { NotificationRepository } from '../src/modules/notifications/notification.repository';
 import type { WriteSpec } from '../src/infrastructure/connectivity/mapping/opc-mapping.loader';
 
 process.env.JWT_SECRET = process.env.JWT_SECRET ?? 'test-secret-commands-e2e';
@@ -90,6 +92,10 @@ async function buildApp(secure: boolean): Promise<{ app: INestApplication; jwt: 
       { provide: CommandLogRepository, useValue: fakeRepo() },
       { provide: UsersRepository, useValue: usersDouble },
       { provide: AuditLogService, useValue: { record: async () => undefined } },
+      // La maniobra se firma y deja un aviso en la bandeja. Aquí se doblan las dos: lo que este
+      // test protege es el camino HTTP y el RBAC, no el libro de firmas.
+      { provide: CommandSignatureService, useValue: { firmar: async () => 'firma-de-prueba' } },
+      { provide: NotificationRepository, useValue: { create: async () => true } },
     ],
   })
   class CommandsE2eModule {}
