@@ -174,3 +174,20 @@ test('sin nombre, el aviso cae al correo antes que a un identificador ilegible',
   // Ojo con la comprobación ingenua: "confirmada" CONTIENE "firma". Se busca el sello de verdad.
   assert.ok(!/firma [0-9a-f]{6,}/.test(a.message), 'sin firma no se inventa un sello');
 });
+
+test('un nombre larguísimo no puede tumbar el registro de la maniobra', () => {
+  // `notification.title` es VARCHAR(160). Si el título se pasara, MySQL rechazaría la fila y la
+  // maniobra quedaría sin registro — justo lo contrario de lo que esto existe para garantizar.
+  const a = avisoDeManiobra({
+    userName: 'Wolfeschlegelsteinhausenbergerdorff'.repeat(4),
+    userEmail: null,
+    valveName: 'Válvula de entrada del tanque de contacto número tres',
+    command: 'open',
+    status: 'confirmed',
+    at: '2026-08-22T10:00:00',
+    firma: 'a3f9c2d10e4b',
+    estadoVerificado: true,
+  });
+  assert.ok(a.title.length <= 160, `el título mide ${a.title.length}`);
+  assert.match(a.title, /Wolfeschlegel/, 'se recorta, pero sigue identificando a la persona');
+});

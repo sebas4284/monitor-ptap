@@ -60,8 +60,19 @@ export interface ManiobraInput {
   estadoVerificado: boolean;
 }
 
+/**
+ * `notification.title` es `VARCHAR(160)`. Un nombre largo más el nombre de la válvula pueden
+ * pasarse, y MySQL en modo estricto rechazaría la fila entera: la maniobra se ejecutaría y su
+ * registro se perdería. Se recorta el nombre, que es lo prescindible, en vez de arriesgar el aviso.
+ */
+const MAX_NOMBRE = 48;
+
+function recortar(nombre: string): string {
+  return nombre.length <= MAX_NOMBRE ? nombre : `${nombre.slice(0, MAX_NOMBRE - 1).trimEnd()}…`;
+}
+
 export function avisoDeManiobra(m: ManiobraInput): ManiobraNotice {
-  const quien = m.userName?.trim() || m.userEmail?.trim() || 'Un usuario';
+  const quien = recortar(m.userName?.trim() || m.userEmail?.trim() || 'Un usuario');
   const cuando = hora(m.at);
   const sello = m.firma ? ` · firma ${m.firma}` : '';
 
