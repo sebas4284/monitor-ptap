@@ -80,7 +80,9 @@ export function formatWhen(iso: string, now = new Date()): string {
 export type FamiliaAviso = 'valvulas' | 'tanques' | 'sensores' | 'senales';
 
 export const FAMILIAS: { id: FamiliaAviso; etiqueta: string; kinds: NotificationKind[] }[] = [
-  { id: 'valvulas', etiqueta: 'Válvulas', kinds: ['valve_command', 'valve_manual'] },
+  // `signature_broken` va con válvulas porque habla del registro DE las válvulas: es donde lo
+  // buscaría quien está revisando quién movió qué.
+  { id: 'valvulas', etiqueta: 'Válvulas', kinds: ['valve_command', 'valve_manual', 'signature_broken'] },
   { id: 'tanques', etiqueta: 'Tanques', kinds: ['tank_level', 'tank_autonomy'] },
   { id: 'sensores', etiqueta: 'Sensores', kinds: ['sensor_stale'] },
   { id: 'senales', etiqueta: 'Señales', kinds: ['signal_out_of_range'] },

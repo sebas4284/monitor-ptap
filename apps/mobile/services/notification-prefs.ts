@@ -94,30 +94,52 @@ function set(next: NotificationPrefsDto): void {
   emit();
 }
 
+/** Cuánto vale la copia recién traída antes de volver a preguntar al servidor. */
+const FRESCURA_MS = 60_000;
+
+let traidoEnMs = 0;
+/** Petición en vuelo, para que N llamadas a la vez compartan UNA sola. */
+let enVuelo: Promise<NotificationPrefsDto> | null = null;
+
 /**
  * Copia local primero, servidor después.
  *
  * En ese orden a propósito: la pantalla se pinta al instante con lo último conocido en vez de
  * parpadear con los valores por defecto, y cuando el servidor contesta se corrige si hace falta.
+ *
+ * **Deduplicada, y no por elegancia.** La campana de silencio vive en CADA tarjeta del tablero y
+ * cada una llama aquí al montarse: en La Sirena son 23 señales más 4 tanques, o sea 27 peticiones
+ * idénticas y simultáneas cada vez que se abre el tablero o se cambia de planta. Compartiendo la
+ * petición en vuelo y respetando un minuto de frescura, queda en una.
  */
 export async function loadNotificationPrefs(force = false): Promise<NotificationPrefsDto> {
-  if (!hidratado || force) {
+  if (!hidratado) {
     hidratado = true;
     try {
       const raw = await AsyncStorage.getItem(KEY);
       if (raw) set(sanear(JSON.parse(raw) as Partial<NotificationPrefsDto>));
     } catch {
-      /* copia corrupta: se sigue con el default, que es "todo llega" */
+      /* copia corrupta: se sigue con el default, que es "todo suena" */
     }
   }
-  try {
-    const remoto = sanear(await getJson<NotificationPrefsDto>('/api/notifications/preferences'));
-    set(remoto);
-  } catch {
-    // Sin red se usa la copia. Nunca se lanza: no poder leer las preferencias no puede impedir
-    // abrir Ajustes ni, mucho menos, que suenen los avisos.
-  }
-  return prefs;
+
+  if (enVuelo) return enVuelo;
+  if (!force && Date.now() - traidoEnMs < FRESCURA_MS) return prefs;
+
+  enVuelo = (async () => {
+    try {
+      set(sanear(await getJson<NotificationPrefsDto>('/api/notifications/preferences')));
+      traidoEnMs = Date.now();
+    } catch {
+      // Sin red se usa la copia. Nunca se lanza: no poder leer las preferencias no puede impedir
+      // abrir Ajustes ni, mucho menos, que suenen los avisos. Tampoco se marca como fresca, para
+      // que el siguiente intento vuelva a preguntar en vez de esperar el minuto.
+    } finally {
+      enVuelo = null;
+    }
+    return prefs;
+  })();
+  return enVuelo;
 }
 
 /**
@@ -130,6 +152,7 @@ export async function saveNotificationPrefs(next: NotificationPrefsDto): Promise
   set(next);
   try {
     set(sanear(await putJson<NotificationPrefsDto>('/api/notifications/preferences', next)));
+    traidoEnMs = Date.now();
   } catch (err) {
     set(previo);
     throw err;

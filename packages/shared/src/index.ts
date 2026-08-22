@@ -287,7 +287,8 @@ export type NotificationKind =
   | 'tank_level'
   | 'tank_autonomy'
   | 'valve_command'
-  | 'valve_manual';
+  | 'valve_manual'
+  | 'signature_broken';
 
 export type NotificationSeverity = 'critical' | 'warning' | 'info';
 
@@ -297,8 +298,15 @@ export type NotificationSeverity = 'critical' | 'warning' | 'info';
  * Las maniobras de válvula son el registro que SUSTITUYE a la confirmación que el PLC no da: en
  * estas plantas no hay forma electrónica de saber si una válvula se abrió, así que la evidencia es
  * quién dio la orden y cuándo. Si alguien pudiera apagar ese aviso, dejaría de ser evidencia.
+ *
+ * `signature_broken` va por lo mismo llevado al extremo: avisa de que ESE registro fue alterado.
+ * Poder silenciarlo sería poder tapar la manipulación.
  */
-export const KINDS_NO_SILENCIABLES: readonly NotificationKind[] = ['valve_command', 'valve_manual'];
+export const KINDS_NO_SILENCIABLES: readonly NotificationKind[] = [
+  'valve_command',
+  'valve_manual',
+  'signature_broken',
+];
 
 export function esSilenciable(kind: string): boolean {
   return !KINDS_NO_SILENCIABLES.includes(kind as NotificationKind);

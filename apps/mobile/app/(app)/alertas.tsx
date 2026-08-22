@@ -15,6 +15,7 @@ import {
 } from '../../services/notifications';
 import { ListSkeleton } from '../../components/Skeleton';
 import { OfflineNotice } from '../../components/OfflineNotice';
+import { RegistroIntegridadCard } from '../../components/RegistroIntegridadCard';
 import Colors from '../../constants/colors';
 
 /**
@@ -39,6 +40,7 @@ function severityOf(n: AppNotification): { color: string; icon: keyof typeof Ion
       : { color: Colors.warning, icon: 'git-commit-outline' };
   }
   if (n.kind === 'valve_manual') return { color: Colors.warning, icon: 'hand-left-outline' };
+  if (n.kind === 'signature_broken') return { color: Colors.danger, icon: 'shield-outline' };
   if (n.kind === 'sensor_stale') return { color: Colors.danger, icon: 'pulse-outline' };
   if (n.severity === 'critical') return { color: Colors.danger, icon: 'alert-circle' };
   if (n.severity === 'warning') return { color: Colors.warning, icon: 'warning-outline' };
@@ -153,6 +155,10 @@ export default function AlertasScreen() {
               : `${notifications.length} en los últimos 3 días${unseen > 0 ? ` · ${unseen} sin ver` : ''}`}
           </Text>
         </View>
+
+        {/* El estado del libro de firmas va ARRIBA del todo: quien quiere saber si puede fiarse de
+            lo que está leyendo lo quiere saber mientras lo lee. */}
+        <RegistroIntegridadCard />
 
         {notifications.length > 0 && (
           <>

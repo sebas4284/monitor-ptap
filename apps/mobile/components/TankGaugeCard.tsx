@@ -200,7 +200,9 @@ function humanHoras(horas: number): string {
  */
 function autonomiaTexto(a: TankAutonomyDto | null): { texto: string; pie: string; basis: TankAutonomyDto['basis'] } | null {
   if (!a || a.hoursTo0 === null) return null;
-  const hasta50 = a.hoursTo50 !== null && a.hoursTo50 > 0 ? `, ${humanHoras(a.hoursTo50)} al 50 %` : '';
+  // Separador de punto medio y no una coma: «15 h 58 min, 7 h 58 min» con coma se lee como una sola
+  // cifra con decimales, y son dos duraciones distintas.
+  const hasta50 = a.hoursTo50 !== null && a.hoursTo50 > 0 ? ` · ${humanHoras(a.hoursTo50)} al 50 %` : '';
   return {
     basis: a.basis,
     texto: `${humanHoras(a.hoursTo0)}${hasta50}`,
@@ -286,8 +288,25 @@ const styles = StyleSheet.create({
   },
   barFill: { height: '100%', borderRadius: 5 },
   info: { gap: 4 },
-  infoRow: { flexDirection: 'row', justifyContent: 'space-between' },
-  infoLabel: { fontSize: 11, color: Colors.textSecondary },
-  infoValue: { fontSize: 11, fontWeight: '600', color: Colors.textPrimary },
+  /**
+   * Etiqueta a la izquierda, valor a la derecha — y si no caben juntos, el valor baja ENTERO a su
+   * propia línea.
+   *
+   * Sin `gap` y sin control de encogido se leía «Autonomía si cierras15 h 58 min»: los dos textos
+   * pegados y el valor partido por la mitad. `flexWrap` + un `minWidth` en el valor es lo que hace
+   * que salte de línea en bloque en vez de romperse; el `gap` garantiza que nunca se toquen.
+   */
+  infoRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 8 },
+  infoLabel: { fontSize: 11, color: Colors.textSecondary, flexShrink: 1 },
+  infoValue: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: Colors.textPrimary,
+    flexGrow: 1,
+    // Por debajo de esto no se comprime: prefiere bajar de línea antes que quedar en una columna
+    // de dos caracteres.
+    minWidth: 96,
+    textAlign: 'right',
+  },
   infoHint: { fontSize: 10, color: Colors.textSecondary, opacity: 0.75, marginTop: -2, marginBottom: 2 },
 });
