@@ -1,9 +1,9 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { Pool, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
+import type { NotificationKind, NotificationSeverity } from '@ptap/shared';
 import { MYSQL_POOL } from '../../infrastructure/database/database.tokens';
 
-export type NotificationKind = 'sensor_stale' | 'signal_out_of_range' | 'tank_level' | 'tank_autonomy';
-export type NotificationSeverity = 'critical' | 'warning' | 'info';
+export type { NotificationKind, NotificationSeverity };
 
 export interface NewNotification {
   kind: NotificationKind;
@@ -26,6 +26,15 @@ export interface NewNotification {
   action?: string | null;
   /** Día al que se ancla la deduplicación (YYYY-MM-DD). */
   day: string;
+  /**
+   * Discriminante para avisos que son SUCESOS, no estados.
+   *
+   * La deduplicación existe para no repetir «este sensor sigue caído» cada diez minutos. Pero una
+   * maniobra de válvula no es un estado que persiste: si el jefe abre a las 9 y cierra a las 14,
+   * son dos hechos y los dos tienen que quedar. Sin esto, el segundo se perdía por tener la misma
+   * clave que el primero.
+   */
+  eventId?: string;
 }
 
 export interface StoredNotification {
@@ -58,7 +67,8 @@ const DUP_ENTRY = 'ER_DUP_ENTRY';
  * eso es información útil («va a mejor») que antes tampoco llegaba.
  */
 function dedupeKeyOf(n: NewNotification): string {
-  return [n.kind, n.plantId, n.subject ?? '-', n.severity, n.day].join(':');
+  const base = [n.kind, n.plantId, n.subject ?? '-', n.severity, n.day];
+  return (n.eventId ? [...base, n.eventId] : base).join(':');
 }
 
 /**
@@ -71,60 +81,23 @@ function plantFilter(plantScope: string | null): { sql: string; params: string[]
   return plantScope === null ? { sql: '', params: [] } : { sql: ' AND n.plant_id = ?', params: [plantScope] };
 }
 
-/** Orden de gravedad. `info` no lo emite hoy ningún detector, pero el filtro no debe asumirlo. */
-const ORDEN_SEVERIDAD: Record<NotificationSeverity, number> = { info: 0, warning: 1, critical: 2 };
-
-/** Qué severidades pasan un mínimo dado. Se resuelve a una lista para poder usar `IN` con params. */
-export function severidadesDesde(min: NotificationSeverity): NotificationSeverity[] {
-  const piso = ORDEN_SEVERIDAD[min] ?? 0;
-  return (['info', 'warning', 'critical'] as NotificationSeverity[]).filter((s) => ORDEN_SEVERIDAD[s] >= piso);
-}
-
-/** Ámbito completo de una consulta de bandeja: planta + preferencias del usuario. */
+/**
+ * Ámbito de una consulta de bandeja. Hoy es SOLO la planta, y conviene entender por qué.
+ *
+ * Hubo aquí un filtro por tipo y gravedad, para que el usuario pudiera limpiarse la bandeja. Se
+ * quitó al unificar el silenciado en dos modos: **silenciar significa que no suena fuera de la
+ * app, nunca que el aviso desaparece.** El historial es evidencia —sobre todo el de las válvulas—
+ * y algo que se puede ocultar sin querer deja de servir para reclamar nada.
+ *
+ * El filtro por preferencias vive ahora en el cliente, en el momento de decidir si suena
+ * (`debeSonar` en `@ptap/shared`). Aquí no se filtra: se sirve todo lo de la planta.
+ */
 export interface NotificationScope {
   plantScope: string | null;
-  /** Tipos que el usuario silenció. Vacío = ninguno. */
-  mutedKinds?: string[];
-  /** Gravedad mínima que quiere ver. Ausente = `info` = todo. */
-  minSeverity?: NotificationSeverity;
-  /**
-   * `true` = enseña también lo silenciado (el interruptor «Ver también los silenciados»).
-   *
-   * Silenciar NO borra: el aviso sigue en la base y se puede consultar. Lo que hace es dejar de
-   * contar en la campana y de aparecer por defecto. La diferencia entre «no me molestes con esto» y
-   * «esto no existió» es justo la que hay que preservar en una planta.
-   */
-  includeMuted?: boolean;
 }
 
-/**
- * Fragmento `WHERE` compartido por las TRES consultas de la bandeja.
- *
- * Está en un solo sitio a propósito. Si el contador y el listado filtraran distinto, la campana
- * marcaría avisos que la bandeja no muestra y nunca bajaría a cero — el fallo concreto que este
- * diseño existe para hacer imposible.
- */
 export function scopeFilter(scope: NotificationScope): { sql: string; params: (string | number)[] } {
-  const planta = plantFilter(scope.plantScope);
-  let sql = planta.sql;
-  const params: (string | number)[] = [...planta.params];
-
-  if (scope.includeMuted) return { sql, params };
-
-  const mudos = (scope.mutedKinds ?? []).filter((k) => typeof k === 'string' && k.length > 0);
-  if (mudos.length > 0) {
-    sql += ` AND n.kind NOT IN (${mudos.map(() => '?').join(',')})`;
-    params.push(...mudos);
-  }
-
-  const permitidas = severidadesDesde(scope.minSeverity ?? 'info');
-  // Solo se añade si de verdad acota: con `info` pasan las tres y la condición sobra.
-  if (permitidas.length < 3) {
-    sql += ` AND n.severity IN (${permitidas.map(() => '?').join(',')})`;
-    params.push(...permitidas);
-  }
-
-  return { sql, params };
+  return plantFilter(scope.plantScope);
 }
 
 /**

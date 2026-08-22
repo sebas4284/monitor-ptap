@@ -33,6 +33,7 @@ export class CommandsController {
   ): Promise<void> {
     const actor: CommandActor = {
       userId: request.user?.id ?? null,
+      userName: request.user?.name ?? null,
       userEmail: request.user?.email ?? null,
       role: request.user?.role ?? null,
       ip: request.ip ?? request.socket?.remoteAddress ?? null,

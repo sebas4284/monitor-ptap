@@ -5,6 +5,7 @@ import Colors from '../constants/colors';
 import type { SignalDto, UnusableReason } from '../services/api';
 import { directionFor } from '../services/signal-kind';
 import { sameSignalCard } from './memo-compare';
+import { BotonSilencio } from './BotonSilencio';
 
 const REASON_TEXT: Record<UnusableReason, string> = {
   BAD_QUALITY: 'calidad OPC no buena',
@@ -29,11 +30,17 @@ function GaugeCardBase({
   icon,
   frozen = false,
   compact = false,
+  plantId,
 }: {
   signal: SignalDto;
   name: string;
   icon: string;
   frozen?: boolean;
+  /**
+   * Planta a la que pertenece la señal. Solo para la campana de silencio: el silenciado es por
+   * planta Y señal, porque `outletFlow1` existe en las doce.
+   */
+  plantId?: string;
   /** Tablero en modo compacto: oculta la fila Mín/Máx, que es la que más ruido aporta por tarjeta. */
   compact?: boolean;
 }) {
@@ -48,8 +55,11 @@ function GaugeCardBase({
 
   return (
     <View style={[styles.card, frozen && styles.cardFrozen]}>
-      <View style={styles.iconWrap}>
-        <Ionicons name={icon as never} size={20} color={Colors.primary} />
+      <View style={styles.cabecera}>
+        <View style={styles.iconWrap}>
+          <Ionicons name={icon as never} size={20} color={Colors.primary} />
+        </View>
+        {plantId ? <BotonSilencio plantId={plantId} subject={name} etiqueta={signal.label ?? name} /> : null}
       </View>
       <Text style={styles.name} numberOfLines={2}>
         {signal.label ?? name}
@@ -115,6 +125,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   cardFrozen: { opacity: 0.55 },
+  // La cabecera empuja la campana a la derecha sin mover el icono de su sitio.
+  cabecera: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', alignSelf: 'stretch' },
   iconWrap: {
     width: 36,
     height: 36,

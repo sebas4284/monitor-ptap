@@ -172,7 +172,7 @@ export default function TableroScreen() {
               <View style={styles.grid}>
                 {tanks.map((tank) => (
                   <View key={tank.id} style={styles.cell}>
-                    <TankGaugeCard tank={tank} frozen={frozen} />
+                    <TankGaugeCard tank={tank} frozen={frozen} plantId={selectedPlant.id} />
                   </View>
                 ))}
               </View>
@@ -207,6 +207,7 @@ export default function TableroScreen() {
                               icon={icon}
                               frozen={frozen}
                               compact={prefs.compact}
+                              plantId={selectedPlant.id}
                             />
                           </View>
                         );

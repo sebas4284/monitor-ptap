@@ -6,8 +6,12 @@ import type { ConnectivityConfig } from '../../infrastructure/connectivity/conne
 import { motivoSecuenciaInvalida, type WriteSpec, type WriteStep } from '../../infrastructure/connectivity/mapping/opc-mapping.loader';
 import { PlantCache } from '../../infrastructure/connectivity/pipeline/plant-cache';
 import type { BufferElementTarget, ConnectivityAdapter } from '../../infrastructure/connectivity/ports/connectivity-adapter.port';
+import { NotificationRepository } from '../notifications/notification.repository';
+import { diaLocal } from '../../infrastructure/connectivity/pipeline/dia-operativo';
 import { CommandLogRepository, type CommandValue, type StoredCommand } from './command-log.repository';
 import { CommandMappingResolver } from './command-mapping.resolver';
+import { CommandSignatureService } from './command-signature.service';
+import { avisoDeManiobra } from './valve-notice';
 import {
   FAIL,
   REJECT,
@@ -56,6 +60,8 @@ export class WriteService {
     @Inject(CommandMappingResolver) private readonly resolver: CommandMappingResolver,
     @Inject(CommandLogRepository) private readonly repo: CommandLogRepository,
     @Inject(AuditLogService) private readonly auditLog: AuditLogService,
+    @Inject(CommandSignatureService) private readonly firmas: CommandSignatureService,
+    @Inject(NotificationRepository) private readonly avisos: NotificationRepository,
   ) {}
 
   /**
@@ -291,7 +297,10 @@ export class WriteService {
       interlockSequence: result.interlockSequence,
     });
 
-    return this.audit(actor, req, result, escritos);
+    return this.audit(actor, req, result, escritos, {
+      commandLogId: reservation.id,
+      estadoVerificado: write.readBack.stateVerified !== false,
+    });
   }
 
   /** Interlock: BridgeStatus Connected + snapshot fresco (liveness live) + connection OK si está mapeada. */
@@ -514,7 +523,12 @@ export class WriteService {
     req: CommandRequest,
     result: CommandResult,
     escritos?: WriteStep[],
+    traza?: { commandLogId: number | null; estadoVerificado: boolean },
   ): Promise<CommandResult> {
+    // La firma y el aviso van ANTES de la auditoría porque la firma cambia lo que se registra: el
+    // detalle de auditoría lleva el sello, y sin él la auditoría no diría qué maniobra es cuál.
+    const firma = traza?.commandLogId ? await this.firmas.firmar(traza.commandLogId, actor.userName) : null;
+    await this.publicarManiobra(actor, result, firma, traza?.estadoVerificado ?? false);
     await this.auditLog.record({
       eventType: 'command.execute',
       userId: actor.userId,
@@ -542,8 +556,74 @@ export class WriteService {
         interlockSequence: result.interlockSequence,
         idempotencyKey: req.idempotencyKey ?? null,
         idempotent: result.idempotent,
+        firma,
       },
     });
     return result;
+  }
+
+  /**
+   * Deja la maniobra en la BANDEJA, no en la pantalla de válvulas.
+   *
+   * Antes esto era un aviso efímero dentro de la propia pantalla: se descartaba con un toque, solo
+   * lo veía quien lo hizo y desaparecía al recargar. En una planta donde el equipo NO confirma
+   * eléctricamente que la válvula se movió, saber quién la movió y cuándo es la única evidencia que
+   * hay — y esa evidencia la tienen que ver el resto de operarios, el jefe y el administrador.
+   *
+   * No deduplica: cada maniobra es un hecho distinto. Si alguien abre a las 9 y cierra a las 14,
+   * tienen que quedar las dos.
+   *
+   * Silencioso ante fallos: la maniobra ya ocurrió y la respuesta al operador no puede depender de
+   * que la bandeja acepte una fila.
+   */
+  private async publicarManiobra(
+    actor: CommandActor,
+    result: CommandResult,
+    firma: string | null,
+    estadoVerificado: boolean,
+  ): Promise<void> {
+    // Una respuesta idempotente no es una maniobra nueva: es la MISMA orden contestada otra vez.
+    // Publicarla duplicaría el registro de un hecho que solo ocurrió una vez.
+    if (result.idempotent) return;
+    try {
+      const aviso = avisoDeManiobra({
+        userName: actor.userName,
+        userEmail: actor.userEmail,
+        valveName: this.nombreDeValvula(result.plantId, result.target),
+        command: result.command,
+        status: result.status,
+        at: result.at,
+        firma,
+        estadoVerificado,
+      });
+      await this.avisos.create({
+        kind: 'valve_command',
+        severity: aviso.severity,
+        plantId: result.plantId,
+        subject: result.target,
+        title: aviso.title,
+        message: aviso.message,
+        action: aviso.action,
+        day: diaLocal(new Date(result.at)),
+        // Cada orden es un suceso irrepetible: sin esto, la segunda maniobra del día sobre la misma
+        // válvula se descartaría por duplicada.
+        eventId: `${result.at}#${firma ?? result.status}`,
+      });
+    } catch (err) {
+      this.logger.error(`no se pudo publicar la maniobra en la bandeja: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  /**
+   * Nombre legible de la válvula. Sale del snapshot, que es donde vive la etiqueta del mapping.
+   *
+   * Si no hay snapshot cae a la clave técnica: es feo, pero un aviso que dice `valveInlet` sigue
+   * siendo mejor que uno que no se publica.
+   */
+  private nombreDeValvula(plantId: string, target: string): string {
+    const snap = this.cache.get(plantId);
+    // `signals` es un mapa por domainKey, no una lista: el target ES la clave.
+    const senal = snap?.signals?.[target];
+    return senal?.label?.trim() || target;
   }
 }

@@ -91,6 +91,14 @@ export interface CommandResult {
 /** Actor autenticado que emite el comando (de request.user + IP). */
 export interface CommandActor {
   userId: string | null;
+  /**
+   * Nombre de la persona, congelado en la maniobra.
+   *
+   * Se arrastra hasta el registro firmado a propósito: el aviso que verán los demás operarios y el
+   * jefe de planta tiene que decir «Ana Ruiz abrió la válvula de entrada», no un identificador de
+   * cuenta. Y tiene que seguir diciéndolo si mañana esa cuenta se renombra o se da de baja.
+   */
+  userName: string | null;
   userEmail: string | null;
   role: string | null;
   ip: string | null;

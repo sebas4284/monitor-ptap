@@ -6,6 +6,7 @@ import { AuthModule } from '../auth/auth.module';
 import { FlowHourlyRepository } from './flow-hourly.repository';
 import { NotificationRepository } from './notification.repository';
 import { NotificationPrefsRepository } from './notification-prefs.repository';
+import { CommandLogRepository } from '../commands/command-log.repository';
 import { NotificationsController } from './notifications.controller';
 import { StaleDataDetector } from './stale-data.detector';
 import { TankAutonomyDetector } from './tank-autonomy.detector';
@@ -33,6 +34,10 @@ import { ValveStateObserver } from './valve-state.observer';
     TankOverflowDetector,
     TankAutonomyDetector,
     ValveStateObserver,
+    // Se provee aquí en vez de importar CommandsModule: ese módulo ya importa este (las maniobras
+    // publican en la bandeja), y cerrar el círculo obligaría a un forwardRef por un solo repositorio
+    // sin estado. Es un repositorio contra el pool, no un singleton con vida propia.
+    CommandLogRepository,
   ],
   exports: [NotificationRepository],
 })

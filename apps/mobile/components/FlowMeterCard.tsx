@@ -6,6 +6,7 @@ import type { SignalDto } from '../services/api';
 import { directionFor } from '../services/signal-kind';
 import { GaugeCard } from './GaugeCard';
 import { sameSignalCard } from './memo-compare';
+import { BotonSilencio } from './BotonSilencio';
 
 /** Formato numérico es-CO (coma decimal + separador de miles), coherente con el reloj del tablero. */
 const fmt = (n: number, d = 2): string =>
@@ -23,11 +24,17 @@ function FlowMeterCardBase({
   icon,
   frozen = false,
   compact = false,
+  plantId,
 }: {
   signal: SignalDto;
   name: string;
   icon: string;
   frozen?: boolean;
+  /**
+   * Planta a la que pertenece la señal. Solo para la campana de silencio: el silenciado es por
+   * planta Y señal, porque `outletFlow1` existe en las doce.
+   */
+  plantId?: string;
   /** Tablero en modo compacto: oculta las etiquetas 0%/N%/100% bajo la barra. */
   compact?: boolean;
 }) {

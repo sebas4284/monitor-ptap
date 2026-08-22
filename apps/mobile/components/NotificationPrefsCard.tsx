@@ -9,21 +9,20 @@ import {
 } from '../services/notification-prefs';
 
 /**
- * Elegir qué avisa la aplicación.
+ * Elegir qué SUENA fuera de la aplicación.
  *
- * Hasta ahora avisaba de TODO y no había forma de opinar. Con 110 señales en doce plantas, un mal
- * día llena la bandeja de decenas de avisos de los que uno o dos exigen moverse — y cuando todo
- * grita, no se lee nada.
+ * Solo hay dos modos, y valen para todo: con sonido (bandeja + panel del teléfono) o silenciado
+ * (bandeja, sin sonar fuera). Cuatro decisiones que conviene no revertir:
  *
- * Tres decisiones que conviene no revertir:
- *
- *  - **El ajuste es de la CUENTA, no del teléfono.** Se guarda en el servidor, que es quien cuenta
- *    los no vistos de la campana; si viviera solo aquí, la campana diría «3» sobre una bandeja que
- *    muestra dos.
- *  - **Silenciar no borra.** El aviso se sigue guardando y se puede ver pidiéndolo. La diferencia
- *    entre «no me molestes con esto» y «esto no existió» importa cuando hay que reclamar algo.
- *  - **Lo crítico atraviesa el horario de silencio.** Un tanque rebosando suena a las cuatro de la
- *    mañana; para eso se distingue la gravedad.
+ *  - **Silenciar no esconde.** El aviso sigue en la bandeja y sigue contando en la campana. La
+ *    diferencia entre «no me molestes con esto» y «esto no existió» es la que hace falta cuando hay
+ *    que reclamar algo tres semanas después.
+ *  - **El ajuste es de la CUENTA, no del teléfono.** Se guarda en el servidor: sobrevive a cerrar
+ *    sesión y a cambiar de dispositivo.
+ *  - **Las maniobras de válvula no se pueden callar.** Son el registro que sustituye a la
+ *    confirmación eléctrica que estas plantas no dan; por eso no aparecen entre los interruptores.
+ *  - **Lo crítico atraviesa el horario de silencio**, pero no un silencio explícito: si alguien
+ *    calló ese sensor a propósito, se respeta.
  *
  * El ámbito por planta NO se toca aquí: cada quien sigue recibiendo solo lo de su planta, y eso no
  * es una preferencia sino un permiso.
@@ -38,19 +37,21 @@ const FRANJAS: { etiqueta: string; desde: string | null; hasta: string | null }[
 ];
 
 export function NotificationPrefsCard() {
-  const { prefs, guardando, error, alternarTipo, fijarGravedad, fijarSilencio } = useNotificationPrefs();
+  const { prefs, guardando, error, alternarTipo, fijarGravedad, fijarSilencio, reactivarItems } =
+    useNotificationPrefs();
   const activos = TIPOS_DE_AVISO.filter((t) => !prefs.mutedKinds.includes(t.kind)).length;
 
   return (
     <View style={styles.card}>
       <View style={styles.cabecera}>
-        <Text style={styles.titulo}>Qué quieres que te avise</Text>
+        <Text style={styles.titulo}>Qué te suena en el dispositivo</Text>
         {guardando ? <ActivityIndicator size="small" color={Colors.primary} /> : null}
       </View>
       <Text style={styles.ayuda}>
         {activos === TIPOS_DE_AVISO.length
-          ? 'Ahora mismo te llega todo. Apaga lo que no te interese.'
-          : `Te llegan ${activos} de ${TIPOS_DE_AVISO.length} tipos. Lo apagado se sigue guardando en el historial.`}
+          ? 'Ahora mismo te suena todo. Apaga lo que no quieras que te suene fuera de la app.'
+          : `Te suenan ${activos} de ${TIPOS_DE_AVISO.length} tipos.`}{' '}
+        Lo silenciado sigue apareciendo en la bandeja: no se pierde nada.
       </Text>
 
       {TIPOS_DE_AVISO.map((t) => (
@@ -63,6 +64,14 @@ export function NotificationPrefsCard() {
           disabled={guardando}
         />
       ))}
+
+      <View style={styles.nota}>
+        <Ionicons name="git-commit-outline" size={15} color={Colors.primary} />
+        <Text style={styles.notaTexto}>
+          Las maniobras de válvula siempre suenan. Como el equipo no confirma eléctricamente que la
+          válvula se movió, saber quién la movió y cuándo es la única constancia que queda.
+        </Text>
+      </View>
 
       <View style={styles.separador} />
 
@@ -118,6 +127,40 @@ export function NotificationPrefsCard() {
         </Text>
       </View>
 
+      {prefs.mutedItems.length > 0 && (
+        <>
+          <View style={styles.separador} />
+          <Text style={styles.subtitulo}>Señales silenciadas una a una</Text>
+          <Text style={styles.ayuda}>
+            Has callado {prefs.mutedItems.length}{' '}
+            {prefs.mutedItems.length === 1 ? 'señal' : 'señales'} desde el tablero, con la campana de
+            su tarjeta. Siguen apareciendo en la bandeja.
+          </Text>
+          <View style={styles.opciones}>
+            {prefs.mutedItems.slice(0, 8).map((clave) => (
+              <View key={clave} style={styles.silenciado}>
+                <Ionicons name="notifications-off" size={13} color={Colors.warning} />
+                {/* La clave es `planta:senal`; se enseña tal cual porque es lo que permite
+                    reconocerla, y quien la calló sabe cuál es. */}
+                <Text style={styles.silenciadoTexto}>{clave}</Text>
+              </View>
+            ))}
+            {prefs.mutedItems.length > 8 && (
+              <Text style={styles.ayuda}>y {prefs.mutedItems.length - 8} más</Text>
+            )}
+          </View>
+          <Pressable
+            style={styles.reactivar}
+            onPress={reactivarItems}
+            disabled={guardando}
+            accessibilityRole="button"
+            accessibilityLabel="Devolver el sonido a todas las señales silenciadas"
+          >
+            <Text style={styles.reactivarTexto}>Devolverles el sonido a todas</Text>
+          </Pressable>
+        </>
+      )}
+
       {error ? (
         <View style={styles.error}>
           <Ionicons name="cloud-offline-outline" size={15} color={Colors.danger} />
@@ -156,6 +199,18 @@ const styles = StyleSheet.create({
   chipTextoActivo: { color: Colors.primary },
   nota: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, marginTop: 10 },
   notaTexto: { flex: 1, fontSize: 11.5, lineHeight: 16, color: Colors.textSecondary },
+  silenciado: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: Colors.warning + '18',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  silenciadoTexto: { fontSize: 11.5, color: Colors.textSecondary },
+  reactivar: { marginTop: 10, paddingVertical: 10 },
+  reactivarTexto: { fontSize: 13, fontWeight: '600', color: Colors.primary },
   error: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10 },
   errorTexto: { flex: 1, fontSize: 12, color: Colors.danger },
 });

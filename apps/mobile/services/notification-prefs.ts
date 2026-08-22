@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { NOTIFICATION_PREFS_DEFAULT, type NotificationPrefsDto } from '@ptap/shared';
+import { claveDeItem, NOTIFICATION_PREFS_DEFAULT, type NotificationPrefsDto } from '@ptap/shared';
 import { getJson, putJson } from './api';
 import type { NotificationKind } from './notifications';
 
@@ -23,8 +23,11 @@ const KEY = 'ptap_notification_prefs';
  * Los tipos que el usuario puede callar, con el nombre que entiende quien está en planta.
  *
  * El orden es el de la pantalla y está puesto a mano: primero lo que más ruido hace. Las señales
- * fuera de rango son más de la mitad de los avisos de un día malo, así que es el interruptor que de
- * verdad limpia la bandeja y va arriba.
+ * fuera de rango son más de la mitad de los avisos de un día malo, así que es el interruptor que
+ * más silencio compra y va arriba.
+ *
+ * Las maniobras de válvula NO están en esta lista, y no es un olvido: son el registro que sustituye
+ * a la confirmación eléctrica que estas plantas no dan, y no se pueden silenciar.
  */
 export const TIPOS_DE_AVISO: { kind: NotificationKind; titulo: string; detalle: string }[] = [
   {
@@ -78,6 +81,7 @@ function sanear(raw: Partial<NotificationPrefsDto> | null | undefined): Notifica
   const sev = raw.minSeverity;
   return {
     mutedKinds: Array.isArray(raw.mutedKinds) ? raw.mutedKinds.filter((k) => typeof k === 'string') : [],
+    mutedItems: Array.isArray(raw.mutedItems) ? raw.mutedItems.filter((k) => typeof k === 'string') : [],
     minSeverity: sev === 'warning' || sev === 'critical' ? sev : 'info',
     quietFrom: typeof raw.quietFrom === 'string' ? raw.quietFrom : null,
     quietTo: typeof raw.quietTo === 'string' ? raw.quietTo : null,
@@ -132,6 +136,42 @@ export async function saveNotificationPrefs(next: NotificationPrefsDto): Promise
   }
 }
 
+/**
+ * Estado de la campana de UN ítem, con su propia suscripción.
+ *
+ * Se separa del hook grande porque lo usan las tarjetas del tablero, que están memoizadas: si el
+ * estado llegara como prop de la tarjeta se quedaría congelado. Con suscripción propia, el botón se
+ * entera del cambio aunque la tarjeta no se vuelva a renderizar.
+ */
+export function useItemSilenciado(
+  plantId: string,
+  subject: string,
+): { silenciado: boolean; guardando: boolean; alternar: () => void } {
+  const actual = useSyncExternalStore(subscribe, getNotificationPrefs, getNotificationPrefs);
+  const [guardando, setGuardando] = useState(false);
+  const clave = claveDeItem(plantId, subject);
+  const silenciado = actual.mutedItems.includes(clave);
+
+  useEffect(() => {
+    void loadNotificationPrefs();
+  }, []);
+
+  const alternar = useCallback(() => {
+    setGuardando(true);
+    const next: NotificationPrefsDto = {
+      ...actual,
+      mutedItems: silenciado ? actual.mutedItems.filter((k) => k !== clave) : [...actual.mutedItems, clave],
+    };
+    // Si el servidor rechaza, `saveNotificationPrefs` revierte y el botón vuelve solo a su sitio:
+    // dejarlo mostrando un silencio que no se guardó sería peor que el propio fallo.
+    saveNotificationPrefs(next)
+      .catch(() => undefined)
+      .finally(() => setGuardando(false));
+  }, [actual, clave, silenciado]);
+
+  return { silenciado, guardando, alternar };
+}
+
 export interface NotificationPrefsControl {
   prefs: NotificationPrefsDto;
   guardando: boolean;
@@ -139,6 +179,8 @@ export interface NotificationPrefsControl {
   alternarTipo: (kind: NotificationKind) => void;
   fijarGravedad: (min: NotificationPrefsDto['minSeverity']) => void;
   fijarSilencio: (desde: string | null, hasta: string | null) => void;
+  /** Devuelve la voz a TODAS las señales calladas una por una desde el tablero. */
+  reactivarItems: () => void;
 }
 
 /**
@@ -184,5 +226,6 @@ export function useNotificationPrefs(): NotificationPrefsControl {
       (quietFrom: string | null, quietTo: string | null) => guardar({ ...actual, quietFrom, quietTo }),
       [actual, guardar],
     ),
+    reactivarItems: useCallback(() => guardar({ ...actual, mutedItems: [] }), [actual, guardar]),
   };
 }

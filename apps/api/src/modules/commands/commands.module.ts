@@ -3,7 +3,10 @@ import { AuditModule } from '../../infrastructure/audit/audit.module';
 import { ConnectivityModule } from '../../infrastructure/connectivity/connectivity.module';
 import { DatabaseModule } from '../../infrastructure/database/database.module';
 import { AuthModule } from '../auth/auth.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { CommandLogRepository } from './command-log.repository';
+import { CommandSignatureController } from './command-signature.controller';
+import { CommandSignatureService } from './command-signature.service';
 import { CommandMappingResolver } from './command-mapping.resolver';
 import { CommandsController } from './commands.controller';
 import { WriteService } from './write.service';
@@ -17,8 +20,10 @@ import { WriteService } from './write.service';
  * el WriteService exige sesión cifrada, y el mapping de producción no tiene señales writable.
  */
 @Module({
-  imports: [ConnectivityModule, AuthModule, AuditModule, DatabaseModule],
-  controllers: [CommandsController],
-  providers: [WriteService, CommandMappingResolver, CommandLogRepository],
+  // NotificationsModule: cada maniobra deja un aviso en la bandeja, que es el registro que
+  // sustituye a la confirmación eléctrica que estas plantas no dan.
+  imports: [ConnectivityModule, AuthModule, AuditModule, DatabaseModule, NotificationsModule],
+  controllers: [CommandsController, CommandSignatureController],
+  providers: [WriteService, CommandMappingResolver, CommandLogRepository, CommandSignatureService],
 })
 export class CommandsModule {}

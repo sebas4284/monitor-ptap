@@ -110,6 +110,23 @@ export class CommandLogRepository {
     }
   }
 
+  /**
+   * ¿Salió de la app alguna orden sobre esa válvula en los últimos `minutos`?
+   *
+   * Lo usa el detector de maniobras manuales para no acusar de "alguien la movió a mano" un cambio
+   * de caudal que provocamos nosotros. Cuenta CUALQUIER estado, incluido `rejected`: una orden
+   * rechazada no tocó el equipo, pero sí explica que alguien estuviera operando ahí en ese momento.
+   */
+  async huboOrdenReciente(plantId: string, target: string, minutos: number): Promise<boolean> {
+    const [rows] = await this.pool.query<RowDataPacket[]>(
+      `SELECT 1 FROM command_log
+        WHERE plant_id = ? AND target = ? AND at >= NOW() - INTERVAL ? MINUTE
+        LIMIT 1`,
+      [plantId, target, minutos],
+    );
+    return rows.length > 0;
+  }
+
   async findByIdempotencyKey(key: string): Promise<StoredCommand | null> {
     const [rows] = await this.pool.query<RowDataPacket[]>(
       `SELECT id, status, reason, previous_value, written_value, confirmed_value, interlock_sequence

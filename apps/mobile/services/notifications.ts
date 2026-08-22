@@ -1,3 +1,4 @@
+import type { NotificationKind, NotificationSeverity } from '@ptap/shared';
 import { getJson, postJson } from './api';
 
 /**
@@ -8,12 +9,11 @@ import { getJson, postJson } from './api';
  */
 
 /**
- * Tipos que emite el backend. Estuvo desincronizado: le faltaba `tank_level`, que es el aviso MÁS
- * accionable de todos, y por eso se pintaba con el icono genérico. La fuente de verdad es
- * `apps/api/src/modules/notifications/notification.repository.ts`.
+ * Tipos que emite el backend. Estuvo desincronizado —le faltaba `tank_level`, el aviso MÁS
+ * accionable de todos, que por eso se pintaba con el icono genérico— así que ahora la definición
+ * vive en `@ptap/shared` y la comparten backend y móvil. Aquí solo se reexporta.
  */
-export type NotificationKind = 'sensor_stale' | 'signal_out_of_range' | 'tank_level' | 'tank_autonomy';
-export type NotificationSeverity = 'critical' | 'warning' | 'info';
+export type { NotificationKind, NotificationSeverity } from '@ptap/shared';
 
 export interface AppNotification {
   id: number;
@@ -35,16 +35,14 @@ export interface AppNotification {
 }
 
 /**
- * Historial reciente. Ya viene filtrado por las preferencias de la cuenta (ver Ajustes).
+ * Historial reciente, SIN filtrar.
  *
- * `incluirSilenciados` enseña también lo que el usuario decidió no recibir: silenciar NO borra, y
- * el historial es evidencia. Aun así el contador `unseen` sigue siendo el de siempre —solo lo que
- * el usuario pidió que le reclamara la atención—, para que la campana no se descuadre.
+ * Las preferencias del usuario no recortan esto: silenciar significa que no suena fuera de la app,
+ * nunca que el aviso desaparece. Lo que se filtra —y solo para decidir si suena— es la notificación
+ * del sistema, en `notification-sync`.
  */
-export async function fetchNotifications(
-  incluirSilenciados = false,
-): Promise<{ notifications: AppNotification[]; unseen: number }> {
-  return getJson(`/api/notifications${incluirSilenciados ? '?incluirSilenciados=1' : ''}`);
+export async function fetchNotifications(): Promise<{ notifications: AppNotification[]; unseen: number }> {
+  return getJson('/api/notifications');
 }
 
 export async function fetchUnseenCount(): Promise<number> {
@@ -52,15 +50,9 @@ export async function fetchUnseenCount(): Promise<number> {
   return unseen;
 }
 
-/**
- * Marca vistos los avisos del historial. Se llama al ABRIR la bandeja.
- *
- * Va con el MISMO ámbito con el que se está mirando: se marca visto lo que se enseñó, ni más ni
- * menos. Si se marcaran también los silenciados, al dejar de silenciar un tipo sus avisos
- * aparecerían ya leídos sin que nadie los hubiera visto nunca.
- */
-export async function markNotificationsSeen(incluirSilenciados = false): Promise<void> {
-  await postJson(`/api/notifications/seen${incluirSilenciados ? '?incluirSilenciados=1' : ''}`, {});
+/** Marca vistos todos los avisos del historial. Se llama al ABRIR la bandeja. */
+export async function markNotificationsSeen(): Promise<void> {
+  await postJson('/api/notifications/seen', {});
 }
 
 /** "hace 3 h", "ayer 09:14" — el operador necesita saber CUÁNDO, no solo qué. */
@@ -75,4 +67,51 @@ export function formatWhen(iso: string, now = new Date()): string {
   const hhmm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   if (hours < 48) return `ayer ${hhmm}`;
   return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')} ${hhmm}`;
+}
+
+/**
+ * Familias con las que se filtra la bandeja.
+ *
+ * Existen porque con 139 avisos en tres días la lista deja de ser consultable: para saber quién
+ * movió una válvula había que bajar por decenas de «señal fuera de rango». Agrupar por familia y no
+ * por `kind` es deliberado — al operario le da igual si el aviso vino del detector de nivel o del
+ * de autonomía; lo que busca es «lo del tanque».
+ */
+export type FamiliaAviso = 'valvulas' | 'tanques' | 'sensores' | 'senales';
+
+export const FAMILIAS: { id: FamiliaAviso; etiqueta: string; kinds: NotificationKind[] }[] = [
+  { id: 'valvulas', etiqueta: 'Válvulas', kinds: ['valve_command', 'valve_manual'] },
+  { id: 'tanques', etiqueta: 'Tanques', kinds: ['tank_level', 'tank_autonomy'] },
+  { id: 'sensores', etiqueta: 'Sensores', kinds: ['sensor_stale'] },
+  { id: 'senales', etiqueta: 'Señales', kinds: ['signal_out_of_range'] },
+];
+
+export function familiaDe(kind: NotificationKind): FamiliaAviso | null {
+  return FAMILIAS.find((f) => f.kinds.includes(kind))?.id ?? null;
+}
+
+/**
+ * Filtra la bandeja por familia y por texto.
+ *
+ * En el cliente y no en el servidor: la bandeja son como mucho 200 filas ya descargadas, y filtrar
+ * aquí responde al instante mientras se escribe. Pedirlo al servidor añadiría una espera a cada
+ * pulsación para no ahorrar nada.
+ */
+export function filtrarAvisos(
+  avisos: AppNotification[],
+  familia: FamiliaAviso | null,
+  texto: string,
+): AppNotification[] {
+  const q = texto.trim().toLowerCase();
+  return avisos.filter((n) => {
+    if (familia && familiaDe(n.kind) !== familia) return false;
+    if (!q) return true;
+    // Se busca también en el sujeto: es como se encuentra «valve1» o «tank1Level» cuando alguien
+    // llega desde un dato del tablero y quiere ver su historia.
+    return (
+      n.title.toLowerCase().includes(q) ||
+      n.message.toLowerCase().includes(q) ||
+      (n.subject ?? '').toLowerCase().includes(q)
+    );
+  });
 }

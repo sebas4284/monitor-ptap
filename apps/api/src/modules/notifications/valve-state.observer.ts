@@ -3,6 +3,9 @@ import type { SignalDto } from '@ptap/shared';
 import { AuditLogService } from '../../infrastructure/audit/audit-log.service';
 import { PlantCache } from '../../infrastructure/connectivity/pipeline/plant-cache';
 import { PlantPipelineService } from '../../infrastructure/connectivity/pipeline/plant-pipeline.service';
+import { diaLocal } from '../../infrastructure/connectivity/pipeline/dia-operativo';
+import { CommandLogRepository } from '../commands/command-log.repository';
+import { NotificationRepository } from './notification.repository';
 
 /**
  * Acumula EVIDENCIA sobre la palabra de estado de las válvulas, que es el conocimiento que le falta
@@ -28,13 +31,25 @@ import { PlantPipelineService } from '../../infrastructure/connectivity/pipeline
  * También registra el caso inverso, que es el que delata los movimientos MANUALES: el caudal cruza
  * el umbral y la palabra NO se mueve. Eso prueba que ese registro no sigue a la válvula.
  *
- * Va a `audit_log` (mismo patrón que `opc.route_probe`), no a la bandeja: es material de
- * diagnóstico para quien investiga, no un aviso para el operario de turno.
+ * El material de diagnóstico va a `audit_log` (mismo patrón que `opc.route_probe`): es para quien
+ * investiga la convención de bits, no para el operario de turno.
+ *
+ * **La excepción es el movimiento sin orden.** Si el caudal cruza el umbral y nadie mandó nada desde
+ * la app, alguien movió esa válvula a mano en el sitio. Eso SÍ es un aviso para todo el equipo de
+ * la planta y va a la bandeja: es la otra mitad del registro de válvulas —quién la movió desde la
+ * app queda firmado; lo que se mueve sin app, al menos, queda anotado.
  */
 
 export const VALVE_STATE_EVENT = 'opc.valve_state_sample';
 /** Umbral de caudal que separa "hay paso" de "no hay paso". El mismo que usa el front. */
 const CAUDAL_ABIERTA_LPS = 0.1;
+/**
+ * Cuánto rato después de una orden nuestra se sigue atribuyendo el cambio a esa orden.
+ *
+ * Media hora y no cinco minutos: el barrido corre cada diez, así que un cambio provocado por una
+ * orden puede detectarse bastante después de haberla dado.
+ */
+const VENTANA_ORDEN_NUESTRA_MIN = 30;
 
 interface Observacion {
   /** Valores de la palabra ya vistos, para no repetir el registro en cada barrido. */
@@ -56,6 +71,8 @@ export class ValveStateObserver implements OnModuleInit, OnModuleDestroy {
     private readonly pipeline: PlantPipelineService,
     private readonly cache: PlantCache,
     private readonly auditLog: AuditLogService,
+    private readonly avisos: NotificationRepository,
+    private readonly comandos: CommandLogRepository,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -122,6 +139,7 @@ export class ValveStateObserver implements OnModuleInit, OnModuleDestroy {
             obs.ultimaPalabra === palabra
           ) {
             await this.registrar('caudal_cambio_palabra_no', clave, plant.displayName, palabra, caudal, abierto, signal);
+            await this.avisarManiobraManual(plant.plantId, valveKey, signal, abierto, caudal);
             registrados++;
           }
 
@@ -187,6 +205,49 @@ export class ValveStateObserver implements OnModuleInit, OnModuleDestroy {
         ? `valor NUEVO ${palabra} {${bits.join(',')}}`
         : `el caudal cambió de lado y la palabra siguió en ${palabra}`;
     this.logger.warn(`${clave}: ${que} · caudal ${caudal ?? '—'} l/s`);
+  }
+
+  /**
+   * Avisa de una maniobra que NO salió de la app.
+   *
+   * Solo se publica si no hubo ninguna orden nuestra sobre esa válvula en la última media hora. Sin
+   * esa comprobación, cada maniobra legítima generaría además un falso «alguien la movió a mano», y
+   * dos avisos contradictorios del mismo hecho enseñan a no leer ninguno.
+   *
+   * Se declara como probable, no como certeza: el caudal puede cruzar el umbral por otras causas
+   * —una bomba que arranca, un vertedero— y afirmar que alguien tocó la válvula cuando no es
+   * seguro sería exactamente el tipo de aviso que nadie vuelve a creerse.
+   */
+  private async avisarManiobraManual(
+    plantId: string,
+    valveKey: string,
+    signal: SignalDto,
+    abierto: boolean,
+    caudal: number | null,
+  ): Promise<void> {
+    try {
+      if (await this.comandos.huboOrdenReciente(plantId, valveKey, VENTANA_ORDEN_NUESTRA_MIN)) return;
+
+      const nombre = signal.label?.trim() || valveKey;
+      const ahora = new Date();
+      await this.avisos.create({
+        kind: 'valve_manual',
+        severity: 'warning',
+        plantId,
+        subject: valveKey,
+        title: `${nombre}: probable maniobra manual`,
+        message:
+          `El caudal pasó a ${abierto ? 'PASAR' : 'NO pasar'} (${caudal ?? '—'} l/s) sin que saliera ninguna orden ` +
+          `desde la aplicación en los últimos ${VENTANA_ORDEN_NUESTRA_MIN} minutos. Lo más probable es que alguien ` +
+          `haya movido la válvula en el sitio.`,
+        action: `Confirmar quién operó ${nombre} y anotarlo, para que el registro de la planta cuadre.`,
+        day: diaLocal(ahora),
+        // Un suceso, no un estado: dos maniobras manuales el mismo día son dos avisos.
+        eventId: ahora.toISOString(),
+      });
+    } catch (err) {
+      this.logger.warn(`no se pudo avisar de la maniobra manual en ${plantId}/${valveKey}: ${err instanceof Error ? err.message : err}`);
+    }
   }
 
   private ensure(clave: string): Observacion {

@@ -9,8 +9,13 @@ import { detectManual, interpretCommand, type CommandVerdict, type ValveState, t
  * Dos problemas que resuelve, ambos reportados desde planta:
  *  1. **Operación manual.** A veces la válvula se abre/cierra a mano. Entonces el caudal cruza el
  *     umbral (0.1) pero la lectura eléctrica del PLC no reporta nada. Si la app no lo detecta,
- *     acabaría mandando "abrir" a una válvula ya abierta. Aquí se detecta, se AVISA y el estado
- *     mostrado pasa a seguir al caudal (override) hasta que la lectura eléctrica coincida.
+ *     acabaría mandando "abrir" a una válvula ya abierta. Aquí se detecta y el estado mostrado pasa
+ *     a seguir al caudal (override) hasta que la lectura eléctrica coincida.
+ *
+ *     **Ya no genera avisos en pantalla.** Los llevaba dentro de esta pantalla, se descartaban con
+ *     un toque, solo los veía quien estuviera mirando y desaparecían al recargar. Todo lo que tenga
+ *     que ver con una válvula va ahora a la bandeja de notificaciones, donde lo ve el resto del
+ *     equipo y donde queda. Aquí solo se corrige lo que se MUESTRA.
  *  2. **Saber qué pasó de verdad tras una orden.** Se distingue "la señal salió" de "el equipo
  *     respondió" (ver interpretCommand) y, tras enviar, se vigila unos segundos si el estado real
  *     cambió — así el operador no se queda con un "listo" que no ocurrió.
@@ -25,15 +30,6 @@ import { detectManual, interpretCommand, type CommandVerdict, type ValveState, t
  */
 const COMMAND_WINDOW_MS = 60_000;
 
-export interface ValveEvent {
-  id: string;
-  at: string;
-  valveId: string;
-  kind: 'manual' | 'command';
-  title: string;
-  message: string;
-}
-
 export interface SupervisedValve extends ValveView {
   /** Estado que la app muestra: sigue al caudal si se detectó operación manual. */
   effectiveState: ValveState;
@@ -42,7 +38,6 @@ export interface SupervisedValve extends ValveView {
 }
 
 export function useValveSupervisor(plantId: string, valves: ValveView[]) {
-  const [events, setEvents] = useState<ValveEvent[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [overrides, setOverrides] = useState<Record<string, ValveState>>({});
 
@@ -55,12 +50,7 @@ export function useValveSupervisor(plantId: string, valves: ValveView[]) {
     prev.current = {};
     lastCommandAt.current = {};
     setOverrides({});
-    setEvents([]);
   }, [plantId]);
-
-  const pushEvent = useCallback((e: Omit<ValveEvent, 'id' | 'at'>) => {
-    setEvents((list) => [{ ...e, id: `${e.valveId}-${Date.now()}-${list.length}`, at: new Date().toISOString() }, ...list].slice(0, 20));
-  }, []);
 
   // Detección de operación manual + limpieza del override cuando el PLC ya coincide.
   useEffect(() => {
@@ -73,22 +63,10 @@ export function useValveSupervisor(plantId: string, valves: ValveView[]) {
       const manual = detectManual(before.flow, v.byFlow, before.state, v.byState, commandRecently);
 
       if (manual) {
-        const nuevo: ValveState = manual === 'opened' ? 'open' : 'closed';
-        setOverrides((o) => ({ ...o, [v.id]: nuevo }));
-        // En una válvula SIN canal de mando, que la manejen a mano no es una anomalía: es la única
-        // forma que hay de manejarla. El aviso existe para delatar maniobras que la app no ordenó
-        // en válvulas que la app SÍ podría ordenar; aquí solo sería ruido cada vez que el caudal
-        // cruza el umbral. El estado mostrado sí se actualiza, que es lo que interesa.
-        if (v.commandable) {
-          pushEvent({
-            valveId: v.id,
-            kind: 'manual',
-            title: manual === 'opened' ? 'Válvula abierta manualmente' : 'Válvula cerrada manualmente',
-            message:
-              `${v.name}: el caudal indica que ahora está ${nuevo === 'open' ? 'ABIERTA' : 'CERRADA'}, ` +
-              `pero el PLC no reportó ninguna maniobra eléctrica. Se asume operación MANUAL y se actualiza el estado.`,
-          });
-        }
+        // El estado mostrado pasa a seguir al caudal. El AVISO de que alguien la movió a mano lo
+        // publica el servidor en la bandeja (`valve_manual`): así lo ve todo el equipo de la planta
+        // y no solo quien tuviera esta pantalla abierta.
+        setOverrides((o) => ({ ...o, [v.id]: manual === 'opened' ? 'open' : 'closed' }));
       } else if (v.byState !== null && overrides[v.id] && v.byState === overrides[v.id]) {
         // La lectura eléctrica ya coincide con el override: se deja de forzar.
         setOverrides((o) => {
@@ -99,7 +77,7 @@ export function useValveSupervisor(plantId: string, valves: ValveView[]) {
     }
     // `overrides` se lee para poder limpiarlo; no debe re-disparar el efecto por sí mismo.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [valves, pushEvent]);
+  }, [valves]);
 
   // Memoizado: sin esto se creaba un array (y N objetos) nuevos en CADA render, rompiendo la
   // identidad de las props de todas las `ValveItem` y anulando su memo.
@@ -136,16 +114,13 @@ export function useValveSupervisor(plantId: string, valves: ValveView[]) {
             return rest;
           });
         }
-        pushEvent({ valveId: valve.id, kind: 'command', title: verdict.title, message });
         return { ...verdict, message };
       } finally {
         setBusy(null);
       }
     },
-    [plantId, pushEvent],
+    [plantId],
   );
 
-  const dismiss = useCallback((id: string) => setEvents((l) => l.filter((e) => e.id !== id)), []);
-
-  return { valves: supervised, events, send, busy, dismiss };
+  return { valves: supervised, send, busy };
 }

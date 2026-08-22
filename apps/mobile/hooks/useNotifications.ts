@@ -39,7 +39,7 @@ export function useUnseenNotifications(): number {
  * `markSeen` NO borra nada: escribe la marca de visto de este usuario. Se invoca al abrir la
  * pantalla, que es lo que el requisito define como "verlas".
  */
-export function useNotifications(incluirSilenciados = false): {
+export function useNotifications(): {
   notifications: AppNotification[];
   unseen: number;
   isLoading: boolean;
@@ -52,16 +52,14 @@ export function useNotifications(incluirSilenciados = false): {
   const canSee = hasPermission('view_dashboard');
 
   const query = useQuery({
-    // El ámbito forma parte de la clave: si no, ver los silenciados serviría la lista cacheada de
-    // los no silenciados y el interruptor parecería no hacer nada.
-    queryKey: [...LIST_KEY, incluirSilenciados],
-    queryFn: () => fetchNotifications(incluirSilenciados),
+    queryKey: LIST_KEY,
+    queryFn: fetchNotifications,
     enabled: canSee,
     staleTime: 15_000,
   });
 
   const seenMutation = useMutation({
-    mutationFn: () => markNotificationsSeen(incluirSilenciados),
+    mutationFn: markNotificationsSeen,
     onSuccess: () => {
       // El contador de la campana debe apagarse de inmediato; el listado se re-pide para que las
       // filas pierdan el resalte de "nuevo".
@@ -74,7 +72,7 @@ export function useNotifications(incluirSilenciados = false): {
     if (!canSee) return;
     seenMutation.mutate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canSee, incluirSilenciados]);
+  }, [canSee]);
 
   return {
     notifications: query.data?.notifications ?? [],
