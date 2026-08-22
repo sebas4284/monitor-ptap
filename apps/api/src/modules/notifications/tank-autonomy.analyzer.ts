@@ -28,13 +28,20 @@ import type { PlantSnapshotDto, SignalDto } from '@ptap/shared';
 const LPS_A_M3H = 3.6;
 
 /**
- * Banda muerta: por debajo de este cambio de caudal el temporizador NO se toca (l/s).
- * Es lo que impide que el número parpadee con el ruido normal de un caudalímetro.
+ * Banda muerta: mientras el caudal de salida no se aparte MÁS de esto del caudal de referencia con
+ * el que se fijó el temporizador, el número no se vuelve a calcular (l/s).
+ *
+ * 0,3 l/s por decisión de operación (2026-08-22). Antes eran 0,2 y el temporizador se refijaba con
+ * demasiada frecuencia: la autonomía es un número para decidir si cerrar la entrada, y uno que se
+ * mueve cada minuto no sirve para decidir nada.
+ *
+ * Hubo aquí un segundo umbral (0,6 l/s) que forzaba recálculo «inmediato» sin esperar al minuto. Se
+ * retiró porque era inalcanzable: `intervaloMinimoMs` ES el periodo del barrido
+ * (`tank-autonomy.detector.ts`), así que en cada pasada el minuto ya venció y la rama del tick
+ * decidía siempre lo mismo. Una constante que aparenta gobernar algo y no gobierna nada es peor que
+ * no tenerla.
  */
-export const BANDA_MUERTA_LPS = 0.2;
-
-/** Salto de caudal que fuerza recálculo INMEDIATO, sin esperar al siguiente minuto (l/s). */
-export const SALTO_INMEDIATO_LPS = 0.6;
+export const BANDA_MUERTA_LPS = 0.3;
 
 /** Caudal por debajo del cual se considera que la entrada está cerrada (l/s). */
 export const ENTRADA_CERRADA_LPS = 0.1;
@@ -105,18 +112,12 @@ function numeric(sig: SignalDto | undefined): number | null {
 /**
  * ¿Hay que volver a fijar el temporizador?
  *
- * Traduce las dos cifras que dio el cliente, que no son redundantes sino dos cosas distintas:
- *
- *  - **0,2 l/s es la banda muerta.** Mientras el caudal se mueva menos que eso respecto al que fijó
- *    el temporizador, no se recalcula nada: el reloj sigue corriendo. Es lo que hace que el número
- *    sea utilizable.
- *  - **0,6 l/s es un cambio de régimen.** Un salto así ya no es ruido, y esperar al siguiente minuto
- *    sería enseñar una autonomía que se sabe falsa.
- *
- * Entre ambos valores se recalcula en el tick del minuto, que es el comportamiento por defecto.
+ * Una sola regla, que es la que dio operación: **cada minuto se mira el caudal de salida y solo se
+ * recalcula si se aparta más de 0,3 l/s del caudal de referencia** con el que se fijó el número.
+ * Por debajo de eso el reloj sigue corriendo, que es lo que lo hace utilizable para decidir.
  *
  * La comparación va SIEMPRE contra el caudal con el que se fijó el temporizador, nunca contra el del
- * minuto anterior: si se comparase con el anterior, una deriva lenta de 0,15 l/s por minuto nunca
+ * minuto anterior: si se comparase con el anterior, una deriva lenta de 0,2 l/s por minuto nunca
  * dispararía el recálculo y en media hora el número sería pura ficción.
  */
 export function debeRecalcular(
@@ -124,11 +125,10 @@ export function debeRecalcular(
   caudalActualLps: number,
   ahoraMs: number,
   intervaloMinimoMs: number,
-): { recalcular: boolean; motivo: 'primera_vez' | 'salto_de_regimen' | 'tick' | 'banda_muerta' } {
+): { recalcular: boolean; motivo: 'primera_vez' | 'tick' | 'banda_muerta' } {
   if (!previo) return { recalcular: true, motivo: 'primera_vez' };
 
   const delta = Math.abs(caudalActualLps - previo.caudalFijadoLps);
-  if (delta >= SALTO_INMEDIATO_LPS - EPSILON_LPS) return { recalcular: true, motivo: 'salto_de_regimen' };
   if (delta <= BANDA_MUERTA_LPS + EPSILON_LPS) return { recalcular: false, motivo: 'banda_muerta' };
 
   const vencido = ahoraMs - previo.fijadoEnMs >= intervaloMinimoMs;

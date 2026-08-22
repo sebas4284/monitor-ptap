@@ -15,7 +15,6 @@ import {
   horasHasta,
   humanHoras,
   BANDA_MUERTA_LPS,
-  SALTO_INMEDIATO_LPS,
   type TemporizadorTanque,
 } from '../src/modules/notifications/tank-autonomy.analyzer';
 
@@ -103,14 +102,22 @@ test('CLAVE: dentro de la banda muerta el reloj sigue corriendo, no se recalcula
   }
 });
 
-test('CLAVE: un salto de 0,6 l/s recalcula YA, sin esperar al minuto', () => {
-  const r = debeRecalcular(PREVIO, 2 + SALTO_INMEDIATO_LPS, PREVIO.fijadoEnMs + 1, UN_MINUTO);
-  assert.equal(r.recalcular, true);
-  assert.equal(r.motivo, 'salto_de_regimen', 'esperar un minuto sería enseñar un número que ya se sabe falso');
+test('CLAVE: los bordes exactos de los 0,3 l/s que pidió operación', () => {
+  // La banda es INCLUSIVA: exactamente 0,3 todavía no recalcula. Se fija aquí porque es la clase de
+  // detalle que se cambia sin querer al tocar una comparación, y el usuario dio la cifra exacta.
+  const enElBorde = debeRecalcular(PREVIO, 2.3, PREVIO.fijadoEnMs + 10 * UN_MINUTO, UN_MINUTO);
+  assert.equal(enElBorde.recalcular, false, '0,30 exacto sigue dentro de la banda');
+
+  assert.equal(debeRecalcular(PREVIO, 2.29, PREVIO.fijadoEnMs + 10 * UN_MINUTO, UN_MINUTO).recalcular, false);
+  assert.equal(debeRecalcular(PREVIO, 1.71, PREVIO.fijadoEnMs + 10 * UN_MINUTO, UN_MINUTO).recalcular, false);
+
+  // Y justo al otro lado, arriba y abajo: la regla es simétrica.
+  assert.equal(debeRecalcular(PREVIO, 2.31, PREVIO.fijadoEnMs + 10 * UN_MINUTO, UN_MINUTO).recalcular, true);
+  assert.equal(debeRecalcular(PREVIO, 1.69, PREVIO.fijadoEnMs + 10 * UN_MINUTO, UN_MINUTO).recalcular, true);
 });
 
-test('entre la banda muerta y el salto, se recalcula en el tick del minuto', () => {
-  const caudal = 2.4; // delta 0,4: ni ruido ni cambio de régimen
+test('fuera de la banda, se recalcula en el tick del minuto', () => {
+  const caudal = 2.4; // delta 0,4: fuera de la banda muerta
   const antes = debeRecalcular(PREVIO, caudal, PREVIO.fijadoEnMs + 30_000, UN_MINUTO);
   assert.equal(antes.recalcular, false, 'aún no ha pasado el minuto');
 

@@ -7,6 +7,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { CommandLogRepository } from './command-log.repository';
 import { CommandSignatureController } from './command-signature.controller';
 import { CommandSignatureService } from './command-signature.service';
+import { SignatureIntegrityDetector } from './signature-integrity.detector';
 import { CommandMappingResolver } from './command-mapping.resolver';
 import { CommandsController } from './commands.controller';
 import { WriteService } from './write.service';
@@ -24,6 +25,12 @@ import { WriteService } from './write.service';
   // sustituye a la confirmación eléctrica que estas plantas no dan.
   imports: [ConnectivityModule, AuthModule, AuditModule, DatabaseModule, NotificationsModule],
   controllers: [CommandsController, CommandSignatureController],
-  providers: [WriteService, CommandMappingResolver, CommandLogRepository, CommandSignatureService],
+  providers: [
+    WriteService,
+    CommandMappingResolver,
+    CommandLogRepository,
+    CommandSignatureService,
+    SignatureIntegrityDetector,
+  ],
 })
 export class CommandsModule {}

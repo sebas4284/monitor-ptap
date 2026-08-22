@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from 'react';
-import { View, Text, ScrollView, RefreshControl, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, ScrollView, RefreshControl, StyleSheet, TouchableOpacity, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useSnapshot } from '../../hooks/useSnapshot';
@@ -54,6 +54,19 @@ export default function TableroScreen() {
 
   // Preferencias de presentación (densidad y grupos plegados), persistidas en el dispositivo.
   const prefs = useDashboardPrefs();
+
+  /**
+   * Los tanques ocupan la fila entera en pantallas estrechas.
+   *
+   * El tablero imponía dos columnas siempre. En un teléfono de 360 dp eso deja ~168 dp por tarjeta,
+   * y la de tanque es la que más texto lleva: «Autonomía si cierras · 15 h 58 min · 7 h 58 min al
+   * 50 %» no cabe ahí de ninguna manera, se pegaba a la etiqueta y se partía en tres líneas.
+   *
+   * Las tarjetas de señal se quedan en dos columnas a propósito: «6.84 l/s» cabe de sobra, y una
+   * sola columna convertiría La Sirena —23 señales— en un scroll interminable.
+   */
+  const { width } = useWindowDimensions();
+  const tanqueAnchoCompleto = width < 400;
 
   const tanks = useMemo(() => tanksFromSnapshot(snapshot), [snapshot]);
 
@@ -171,7 +184,7 @@ export default function TableroScreen() {
             {tanks.length > 0 && (
               <View style={styles.grid}>
                 {tanks.map((tank) => (
-                  <View key={tank.id} style={styles.cell}>
+                  <View key={tank.id} style={tanqueAnchoCompleto ? styles.cellFull : styles.cell}>
                     <TankGaugeCard tank={tank} frozen={frozen} plantId={selectedPlant.id} />
                   </View>
                 ))}
@@ -259,6 +272,8 @@ const styles = StyleSheet.create({
   clock: { fontSize: 13, fontWeight: '600', color: Colors.textSecondary, fontVariant: ['tabular-nums'] },
   grid: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 8 },
   cell: { width: '50%' },
+  /** Fila entera: para los tanques en pantallas estrechas, donde el texto largo no cabe a la mitad. */
+  cellFull: { width: '100%' },
   info: { paddingVertical: 48, alignItems: 'center', gap: 6 },
   infoText: { color: Colors.textSecondary, fontSize: 14, textAlign: 'center' },
   infoSub: { color: Colors.textSecondary, fontSize: 12, marginTop: 6, textAlign: 'center', paddingHorizontal: 20 },

@@ -76,6 +76,16 @@ export function selloCoincide(a: string, b: string): boolean {
 export interface EslabonRoto {
   id: number;
   motivo: 'firma_no_coincide' | 'eslabon_no_encaja';
+  /**
+   * Planta de la maniobra afectada.
+   *
+   * La cadena es global, pero el aviso no puede serlo: quien tiene que enterarse de que le tocaron
+   * el registro es el equipo de ESA planta. Sin este campo habría que elegir una planta arbitraria
+   * o inventar uno global que no le llegaría a nadie en concreto.
+   */
+  plantId: string;
+  /** Cuándo ocurrió la maniobra, para poder situarla sin abrir la base. */
+  at: string;
 }
 
 /**
@@ -94,12 +104,13 @@ export function verificarCadena(
   let esperado: string | null = null;
 
   for (const fila of filas) {
+    const donde = { id: fila.id, plantId: fila.plantId, at: fila.at };
     if ((fila.prevSignature ?? null) !== esperado) {
-      rotos.push({ id: fila.id, motivo: 'eslabon_no_encaja' });
+      rotos.push({ ...donde, motivo: 'eslabon_no_encaja' });
     }
     const recalculado = sellar(fila, fila.prevSignature ?? null, secreto);
     if (!selloCoincide(recalculado, fila.signature)) {
-      rotos.push({ id: fila.id, motivo: 'firma_no_coincide' });
+      rotos.push({ ...donde, motivo: 'firma_no_coincide' });
     }
     // Se sigue con el sello GUARDADO, no con el recalculado: así un fallo no arrastra al resto de
     // la cadena y se ve exactamente qué filas están mal, en vez de "todas a partir de la 40".

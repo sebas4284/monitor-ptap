@@ -64,13 +64,15 @@ test('cambiar QUIÉN dio la orden rompe la firma de esa fila', () => {
   // de otra persona. Es exactamente lo que la firma tiene que impedir que pase inadvertido.
   filas[1].userName = 'Otro Nombre';
   const rotos = verificarCadena(filas, SECRETO);
-  assert.deepEqual(rotos, [{ id: 2, motivo: 'firma_no_coincide' }]);
+  assert.deepEqual(rotos, [{ id: 2, motivo: 'firma_no_coincide', plantId: 'voragine', at: maniobra(2).at }]);
 });
 
 test('cambiar la maniobra (abrir por cerrar) también se detecta', () => {
   const filas = cadena([maniobra(1), maniobra(2)]);
   filas[0].command = 'close';
-  assert.deepEqual(verificarCadena(filas, SECRETO), [{ id: 1, motivo: 'firma_no_coincide' }]);
+  assert.deepEqual(verificarCadena(filas, SECRETO), [
+    { id: 1, motivo: 'firma_no_coincide', plantId: 'voragine', at: maniobra(1).at },
+  ]);
 });
 
 test('BORRAR una maniobra del medio rompe el eslabón siguiente', () => {
@@ -78,7 +80,9 @@ test('BORRAR una maniobra del medio rompe el eslabón siguiente', () => {
   const sinLaDelMedio = [filas[0], filas[2]];
   // Es el caso que un sello por fila NO detectaría: las dos que quedan siguen siendo válidas por
   // separado. Lo que delata el borrado es que la tercera apunta a un sello que ya no está.
-  assert.deepEqual(verificarCadena(sinLaDelMedio, SECRETO), [{ id: 3, motivo: 'eslabon_no_encaja' }]);
+  assert.deepEqual(verificarCadena(sinLaDelMedio, SECRETO), [
+    { id: 3, motivo: 'eslabon_no_encaja', plantId: 'voragine', at: maniobra(3).at },
+  ]);
 });
 
 test('COLAR una maniobra inventada no cuela', () => {
