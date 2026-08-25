@@ -1,52 +1,29 @@
-import { useCallback, useMemo, useState } from 'react';
-import { View, Text, ScrollView, RefreshControl, StyleSheet, TouchableOpacity } from 'react-native';
+import { useMemo } from 'react';
+import { View, Text, ScrollView, RefreshControl, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useSnapshot } from '../../hooks/useSnapshot';
 import { usePlant } from '../../context/PlantContext';
 import { useAuth } from '../../context/AuthContext';
 import { ValveItem } from '../../components/ValveItem';
-import { ValveConfirmDialog } from '../../components/ValveConfirmDialog';
-import { ValveResultDialog } from '../../components/ValveResultDialog';
 import { PlantSelector } from '../../components/PlantSelector';
 import { ConnectionBanner } from '../../components/ConnectionBanner';
 import { LiveBadge } from '../../components/LiveBadge';
 import { ListSkeleton } from '../../components/Skeleton';
 import { OfflineNotice } from '../../components/OfflineNotice';
-import { valvesFromSnapshot, type CommandVerdict } from '../../services/valves';
-import { useValveSupervisor, type SupervisedValve } from '../../hooks/useValveSupervisor';
+import { valvesFromSnapshot } from '../../services/valves';
+import { useValveSupervisor } from '../../hooks/useValveSupervisor';
 import { useDashboardPrefs } from '../../services/dashboard-prefs';
 import Colors from '../../constants/colors';
-
-/**
- * El mando remoto está habilitado en TODAS las plantas que tengan válvula mapeada. Antes solo
- * La Sirena estaba autorizada, por ser la única verificada en campo de punta a punta
- * (docs/PRUEBA_VALVULA_SIRENA.md). Esa lista blanca se retiró por decisión de operación.
- *
- * La protección pasó a ser la doble confirmación (ValveConfirmDialog): ninguna orden sale de un
- * solo toque. El resto de las defensas del backend siguen intactas — RBAC, interlock, idempotencia,
- * read-back y auditoría; ninguna se relajó aquí.
- */
-
-/** Maniobra a la espera de que el operador confirme en el diálogo. */
-interface Pendiente {
-  valve: SupervisedValve;
-  verb: 'open' | 'close';
-}
 
 export default function ElectrovalvulasScreen() {
   const { selectedPlant } = usePlant();
   const { hasPermission } = useAuth();
   const canView = hasPermission('view_dashboard'); // el Civil no ve electroválvulas
-  const canControl = hasPermission('control_valves');
 
   const { data: snapshot, isLoading, isError, refetch, isRefetching } = useSnapshot(selectedPlant.id, canView);
   const rawValves = useMemo(() => valvesFromSnapshot(snapshot), [snapshot]);
-  const { valves, send, busy } = useValveSupervisor(selectedPlant.id, rawValves);
-  const [pendiente, setPendiente] = useState<Pendiente | null>(null);
-  /** Veredicto de la última orden, a la espera de acuse de recibo. NUNCA es un toast: ver
-   *  `ValveResultDialog`. */
-  const [resultado, setResultado] = useState<(CommandVerdict & { valveName: string }) | null>(null);
+  const { valves } = useValveSupervisor(selectedPlant.id, rawValves);
   const livenessState = snapshot?.liveness.state ?? 'frozen';
   const frozen = livenessState === 'frozen';
   const apiReachable = !isError || (!!snapshot && !snapshot.pending);
@@ -55,26 +32,16 @@ export default function ElectrovalvulasScreen() {
 
   // El hook hidrata además del almacenamiento: antes solo el tablero lo hacía, así que entrar
   // directo a esta pantalla (recarga web en /electrovalvulas) ignoraba la preferencia guardada.
-  const { compact } = useDashboardPrefs();
+  useDashboardPrefs();
 
-  // Memoizados: eran tres recorridos completos del array en CADA render.
-  const { openCount, closedCount, conLecturaDeEstado } = useMemo(
+  // Memoizado: eran dos recorridos completos del array en CADA render.
+  const { openCount, closedCount } = useMemo(
     () => ({
       openCount: valves.filter((v) => v.effectiveState === 'open').length,
       closedCount: valves.filter((v) => v.effectiveState === 'closed').length,
-      // Sin señal de estado eléctrico el read-back no puede confirmar la maniobra: hay que avisarlo.
-      conLecturaDeEstado: valves.some((v) => v.byState !== null),
     }),
     [valves],
   );
-
-  /** El toque en la lista ya NO ejecuta: solo propone la maniobra y abre la confirmación.
-   *  Estable (`useCallback`) para que las N filas compartan la MISMA función y su memo funcione. */
-  const onToggle = useCallback((valve: SupervisedValve) => {
-    // Si el estado es desconocido no se adivina: se ofrece explícitamente qué mandar.
-    const verb: 'open' | 'close' = valve.effectiveState === 'open' ? 'close' : 'open';
-    setPendiente({ valve, verb });
-  }, []);
 
   // Guard de rol de pantalla (coherente con tablero/reportes). Va tras TODOS los hooks: si a
   // alguien le retiran el permiso con la pantalla abierta, el número de hooks no puede cambiar.
@@ -88,17 +55,6 @@ export default function ElectrovalvulasScreen() {
         </View>
       </SafeAreaView>
     );
-  }
-
-  /** Segundo paso: el operador aceptó en el diálogo. Recién aquí sale la orden al PLC. */
-  async function onConfirmar() {
-    if (!pendiente) return;
-    const { valve, verb } = pendiente;
-    setPendiente(null);
-    const verdict = await send(valve, verb);
-    // A un diálogo con acuse de recibo, NO a un toast: aquí se movió un actuador físico y el
-    // veredicto puede ser "enviado pero sin confirmar", que el operador debe leer sí o sí.
-    setResultado({ ...verdict, valveName: valve.name });
   }
 
   return (
@@ -126,16 +82,6 @@ export default function ElectrovalvulasScreen() {
           )}
         </View>
 
-        {/*
-          Aquí había dos franjas fijas y una lista de avisos efímeros. Se quitaron a petición de
-          operación: TODO lo que tenga que ver con una válvula va a la bandeja de notificaciones,
-          donde queda registrado con quién lo hizo, a qué hora y con la firma de la maniobra — y
-          donde lo ve el resto del equipo, no solo quien tuviera esta pantalla abierta.
-
-          Lo que decían no se ha perdido: la advertencia de que esta planta no confirma
-          eléctricamente la maniobra vive ahora en el diálogo de confirmación, justo antes de que
-          alguien mande la orden, que es cuando sirve para algo.
-        */}
         {isLoading && !snapshot ? (
           <ListSkeleton rows={3} label="Cargando las electroválvulas" />
         ) : showError ? (
@@ -155,37 +101,9 @@ export default function ElectrovalvulasScreen() {
             </Text>
           </View>
         ) : (
-          valves.map((valve) => (
-            <ValveItem
-              key={valve.id}
-              valve={valve}
-              frozen={frozen}
-              busy={busy === valve.id}
-              compact={compact}
-              // Sin canal de comando no hay botón: hacer confirmar una maniobra que solo puede
-              // acabar en 404 es peor que no ofrecerla. ValveItem pone la nota en su lugar.
-              onToggle={canControl && valve.commandable ? onToggle : undefined}
-            />
-          ))
-        )}
-
-        {valves.length > 0 && !canControl && (
-          <Text style={styles.note}>Tu rol puede ver el estado, pero no operar válvulas.</Text>
+          valves.map((valve) => <ValveItem key={valve.id} valve={valve} frozen={frozen} />)
         )}
       </ScrollView>
-
-      <ValveConfirmDialog
-        visible={pendiente !== null}
-        valveName={pendiente?.valve.name ?? ''}
-        plantName={plantName}
-        verb={pendiente?.verb ?? 'open'}
-        busy={pendiente !== null && busy === pendiente.valve.id}
-        conLecturaDeEstado={conLecturaDeEstado}
-        onConfirm={() => void onConfirmar()}
-        onCancel={() => setPendiente(null)}
-      />
-
-      <ValveResultDialog verdict={resultado} onClose={() => setResultado(null)} />
 
       <LiveBadge state={livenessState} loading={isLoading && !snapshot} />
     </SafeAreaView>
@@ -232,5 +150,4 @@ const styles = StyleSheet.create({
   loadingWrap: { paddingVertical: 44, alignItems: 'center', gap: 8 },
   loadingText: { color: Colors.textSecondary, fontSize: 14, textAlign: 'center' },
   loadingSub: { color: Colors.textSecondary, fontSize: 12, textAlign: 'center', paddingHorizontal: 20 },
-  note: { fontSize: 12, color: Colors.textSecondary, textAlign: 'center', marginTop: 12, fontStyle: 'italic' },
 });

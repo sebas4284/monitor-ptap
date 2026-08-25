@@ -63,34 +63,19 @@ interface TankCardProps {
 
 interface ValveItemProps {
   valve: SupervisedValve;
-  onToggle?: (valve: SupervisedValve) => void;
   frozen?: boolean;
-  busy?: boolean;
-  compact?: boolean;
 }
 
-/**
- * Para `ValveItem`. `onToggle` se compara por referencia a propósito: la pantalla lo entrega
- * envuelto en `useCallback`, así que es estable, y si dejara de serlo esta comparación lo delata
- * con un re-render de más — nunca con una acción obsoleta.
- */
+/** Para `ValveItem`. Solo compara lo que la tarjeta pinta (ver la regla arriba). */
 export function sameValveItem(a: ValveItemProps, b: ValveItemProps): boolean {
-  if (a.frozen !== b.frozen || a.busy !== b.busy || a.compact !== b.compact) return false;
-  if (a.onToggle !== b.onToggle) return false;
+  if (a.frozen !== b.frozen) return false;
   const x = a.valve;
   const y = b.valve;
   return (
     x.id === y.id &&
     x.name === y.name &&
     x.effectiveState === y.effectiveState &&
-    x.manualOverride === y.manualOverride &&
-    x.source === y.source &&
-    x.byState === y.byState &&
-    x.byFlow === y.byFlow &&
-    x.flowValue === y.flowValue &&
-    x.flowUnit === y.flowUnit &&
-    x.disagreement === y.disagreement &&
-    x.rawState === y.rawState
+    x.manualOverride === y.manualOverride
   );
 }
 
