@@ -163,7 +163,7 @@ const styles = StyleSheet.create({
   hero: { alignItems: 'center', marginBottom: 20 },
   logo: {
     width: 152,
-    aspectRatio: 545 / 459,
+    height: (152 * 459) / 545,
     marginBottom: 4,
   },
   subtitle: {
