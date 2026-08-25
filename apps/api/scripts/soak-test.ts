@@ -30,6 +30,7 @@ import 'reflect-metadata';
 import { appendFileSync, writeFileSync } from 'node:fs';
 import { SimulatorBridgeAdapter } from '../src/infrastructure/connectivity/adapters/simulator/simulator-bridge.adapter';
 import { PlantPipelineService } from '../src/infrastructure/connectivity/pipeline/plant-pipeline.service';
+import { TankAutonomyStore } from '../src/infrastructure/connectivity/pipeline/tank-autonomy.store';
 import { PlantCache } from '../src/infrastructure/connectivity/pipeline/plant-cache';
 import { loadMapping } from '../src/infrastructure/connectivity/mapping/opc-mapping.loader';
 import type { ConnectivityConfig, OpcUaConfig } from '../src/infrastructure/connectivity/connectivity.config';
@@ -67,7 +68,14 @@ function makeConfig(): ConnectivityConfig {
     writesEnabled: false,
     allowInsecureWrites: false,
   };
-  return { provider: 'simulator', opcua, liveness: { liveSec: 10, windowSec: 300, sweepMs: 1000 } };
+  return {
+    provider: 'simulator',
+    opcua,
+    liveness: { liveSec: 10, windowSec: 300, sweepMs: 1000 },
+    // El soak vigila que el dead letter quede ACOTADO: el tope tiene que ser el de produccion
+    // (OPC_DEAD_LETTER_CAPACITY), no uno inventado, o el criterio no probaria nada.
+    deadLetterCapacity: Number(process.env.OPC_DEAD_LETTER_CAPACITY ?? 500),
+  };
 }
 
 interface Muestra {
@@ -89,7 +97,11 @@ async function main(): Promise<void> {
   const config = makeConfig();
   const adapter = new SimulatorBridgeAdapter(config.opcua, mapping);
   const cache = new PlantCache();
-  const pipeline = new PlantPipelineService(adapter, config, cache);
+  // El 4.o argumento (TankAutonomyStore) NO es opcional: sin el, el barrido de liveness muere
+  // en el primer tick con `Cannot read properties of undefined (reading 'get')`. Faltaba desde
+  // que el pipeline gano ese parametro, y es lo que tumbaba la corrida de 24 h a los pocos
+  // minutos dejando el JSONL sin linea de veredicto.
+  const pipeline = new PlantPipelineService(adapter, config, cache, new TankAutonomyStore());
 
   let snapshots = 0;
   // El pipeline es un provider de Nest: su ciclo de vida son onModuleInit/onModuleDestroy, y los
@@ -196,9 +208,21 @@ async function main(): Promise<void> {
   muestrear();
 
   let cortado = false;
+  let motivoCorte: string | null = null;
   const cortar = (): void => { cortado = true; };
   process.on('SIGINT', cortar);
   process.on('SIGTERM', cortar);
+  // Una excepcion suelta (un timer, una promesa sin catch) mataba el proceso dejando el JSONL
+  // sin veredicto y sin rastro de POR QUE. Ahora se anota en el archivo y se cierra el informe:
+  // un soak que se cae es un resultado, pero solo si queda escrito.
+  const fatal = (err: unknown): void => {
+    motivoCorte = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+    appendFileSync(OUT, JSON.stringify({ tipo: 'fatal', t: new Date().toISOString(), error: motivoCorte, stack: err instanceof Error ? err.stack : null }) + '\n');
+    console.error(`\n  FATAL: ${motivoCorte}\n  Se cierra el informe con lo medido hasta aqui.`);
+    cortado = true;
+  };
+  process.on('uncaughtException', fatal);
+  process.on('unhandledRejection', fatal);
 
   while (Date.now() < finMs && !cortado) await delay(1000);
 
@@ -223,13 +247,18 @@ async function main(): Promise<void> {
 
   const okRss = variacion < 10;
   const okHandles = hLast <= hFirst + 5;
-  const veredicto = { horas: Math.round(horas * 100) / 100, muestras: muestras.length, rssMin, rssMax, variacionPct: Math.round(variacion * 100) / 100, handlesInicio: hFirst, handlesFin: hLast, deadLetterFinal: dlLast, snapshots, ciclosDeCaos: ciclo, okRss, okHandles, cortadoAntes: cortado };
+  // El criterio de la Fase 6 dice "soak de MINIMO 24 h". Sin esta comprobacion un ensayo de
+  // 2 minutos imprimia 'CUMPLE' con las mismas letras que una corrida real, y ese verde es
+  // justo el que termina copiado en el doc como si valiera.
+  const okDuracion = horas >= 24;
+  const veredicto = { horas: Math.round(horas * 100) / 100, muestras: muestras.length, rssMin, rssMax, variacionPct: Math.round(variacion * 100) / 100, handlesInicio: hFirst, handlesFin: hLast, deadLetterFinal: dlLast, snapshots, ciclosDeCaos: ciclo, okRss, okHandles, okDuracion, cortadoAntes: cortado, motivoCorte };
   appendFileSync(OUT, JSON.stringify({ tipo: 'veredicto', ...veredicto }) + '\n');
 
   console.log('\n' + '='.repeat(74));
   console.log(' VEREDICTO — Fase 6 §4');
   console.log('='.repeat(74));
   console.log(`  duración real      ${veredicto.horas} h ${cortado ? '(CORTADO antes de tiempo)' : ''}`);
+  if (motivoCorte) console.log(`  motivo del corte   ${motivoCorte}`);
   console.log(`  muestras           ${muestras.length}   ·   ciclos de caos: ${ciclo}`);
   console.log(`  snapshots totales  ${snapshots}`);
   console.log('');
@@ -237,7 +266,9 @@ async function main(): Promise<void> {
   console.log(`  handles activos    ${hFirst} → ${hLast}   ${okHandles ? '✅ sin fuga' : '❌ crecimiento sostenido'}`);
   console.log(`  dead letter final  ${dlLast}   (debe estar acotado por el ring buffer)`);
   console.log('');
-  console.log(`  ${okRss && okHandles ? '✅ CUMPLE los criterios de la Fase 6 §4' : '❌ NO cumple — revisar el JSONL'}`);
+  console.log(`  duración >= 24 h   ${veredicto.horas} h   ${okDuracion ? '✅' : '❌ ensayo, NO vale como soak (el criterio pide 24-72 h)'}`);
+  console.log('');
+  console.log(`  ${okRss && okHandles && okDuracion ? '✅ CUMPLE los criterios de la Fase 6 §4' : '❌ NO cumple / incompleto — revisar el JSONL'}`);
   console.log(`  detalle: ${OUT}`);
   console.log('='.repeat(74));
 }
