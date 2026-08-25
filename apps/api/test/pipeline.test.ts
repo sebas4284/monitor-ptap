@@ -356,3 +356,73 @@ test('dead-letter: capacidad inválida → lanza (nunca un ring que se traga tod
   assert.throws(() => new DeadLetterBuffer(0), /capacity/);
   assert.throws(() => new DeadLetterBuffer(-1), /capacity/);
 });
+
+// ── FASE 1: los verbos de la válvula viajan al DTO ───────────────────────────────────────────
+//
+// `commands` es estático del mapping y solo sirve si llega ENTERO hasta el DTO, igual que
+// `stateEncoding`: el front decide con él si ofrece "cerrar". El fallo típico es calcularlo y
+// olvidar copiarlo, así que se prueba el recorrido completo (mapping → engine → snapshot).
+//
+// Lo que protege: hoy solo Vorágine y Sirena declaran `close`. En las otras ocho un "cerrar"
+// llegaría al backend para volver con UNKNOWN_COMMAND tras hacer confirmar la maniobra.
+
+/** WriteSpec mínimo válido; `commands` es lo único que varía entre los casos. */
+function writeSpec(commands: Record<string, number>) {
+  return {
+    target: { channel: 'intOut', sourceBuffer: 'INT_OUT_T', index: 0 },
+    commands,
+    mode: 'bitmask' as const,
+    pulse: { holdMs: 300 },
+    readBack: { channel: 'intIn', sourceBuffer: 'INT_IN_T', index: 0, confirmsWrittenValue: false, stateVerified: false },
+    timeoutMs: 5000,
+    rollbackValue: 0,
+    permission: 'control_valves',
+  };
+}
+
+function mappingConVerbos(plantId: string, commands: Record<string, number>): LoadedMapping {
+  return {
+    version: '0.3.0', protocolVersion: 'v2', dtoVersion: 'v1',
+    plants: [{ plantId, displayName: plantId, livenessWindowSec: null }],
+    targets: [],
+    signals: [
+      { plantId, buffer: 'intOut', sourceBuffer: 'INT_OUT_T', index: 0, domainKey: 'valve1', label: 'Válvula 1', unit: null, min: null, max: null, mappingStatus: 'mapped', confidence: 'confirmed', writable: true, write: writeSpec(commands) },
+      { plantId, buffer: 'realIn', index: 0, domainKey: 'outletFlow1', label: 'Caudal', unit: 'l/s', min: 0, max: 1000, mappingStatus: 'mapped', confidence: 'confirmed', writable: false },
+    ],
+    raw: {},
+  };
+}
+
+function snapshotDe(mapping: LoadedMapping, plantId: string) {
+  const dl = new DeadLetterBuffer();
+  const latest = new Map<string, RawBufferSample>();
+  latest.set('INT_OUT_T', buf('INT_OUT_T', 'intOut', [0, 0, 0]));
+  latest.set('REAL_IN_T', buf('REAL_IN_T', 'realIn', [12.5, 0, 0]));
+  const extracted = new MappingEngine(mapping).extract(plantId, latest, dl);
+  return {
+    extracted,
+    snapshot: buildSnapshot({
+      plantId, displayName: plantId, protocolVersion: 'v2', dtoVersion: 'v1',
+      sequence: 1, bridgeStatus: 'Connected',
+      liveness: { state: 'live', lastChangeAt: null, windowSec: 300 },
+      extracted, deadLetter: dl,
+    }),
+  };
+}
+
+test('valvulas: una planta con open y close publica AMBOS verbos en el DTO (Voragine/Sirena)', () => {
+  const { extracted, snapshot } = snapshotDe(mappingConVerbos('voragine', { open: 4096, close: 8192 }), 'voragine');
+  assert.deepEqual(extracted.find((e) => e.domainKey === 'valve1')?.commands, ['open', 'close'], 'el engine debe leerlos del write spec');
+  assert.deepEqual(snapshot.signals.valve1?.commands, ['open', 'close'], 'y el DTO también');
+});
+
+test('valvulas: una planta que solo declara open NO publica close (las otras ocho)', () => {
+  const { snapshot } = snapshotDe(mappingConVerbos('cascajal', { open: 4096 }), 'cascajal');
+  assert.deepEqual(snapshot.signals.valve1?.commands, ['open']);
+  assert.equal(snapshot.signals.valve1?.commands?.includes('close'), false, 'ofrecer cerrar aquí devolvería UNKNOWN_COMMAND');
+});
+
+test('valvulas: una señal que NO es válvula no lleva el campo commands', () => {
+  const { snapshot } = snapshotDe(mappingConVerbos('cascajal', { open: 4096 }), 'cascajal');
+  assert.equal('commands' in (snapshot.signals.outletFlow1 ?? {}), false, 'el DTO viaja en cada barrido: no se pagan bytes sin significado');
+});

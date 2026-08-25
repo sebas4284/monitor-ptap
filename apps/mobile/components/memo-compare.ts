@@ -63,20 +63,45 @@ interface TankCardProps {
 
 interface ValveItemProps {
   valve: SupervisedValve;
+  onToggle?: (valve: SupervisedValve) => void;
   frozen?: boolean;
+  busy?: boolean;
+  compact?: boolean;
 }
 
-/** Para `ValveItem`. Solo compara lo que la tarjeta pinta (ver la regla arriba). */
+/**
+ * Para `ValveItem`. `onToggle` se compara por referencia a propósito: la pantalla lo entrega
+ * envuelto en `useCallback`, así que es estable, y si dejara de serlo esta comparación lo delata
+ * con un re-render de más — nunca con una acción obsoleta.
+ */
 export function sameValveItem(a: ValveItemProps, b: ValveItemProps): boolean {
-  if (a.frozen !== b.frozen) return false;
+  if (a.frozen !== b.frozen || a.busy !== b.busy || a.compact !== b.compact) return false;
+  if (a.onToggle !== b.onToggle) return false;
+  // NO se comparan `source`/`byState`/`byFlow`/`flowValue`/`disagreement`/`rawState`: el
+  // razonamiento estado-vs-caudal dejó de pintarse (184b350) y comparar lo que no se muestra
+  // solo hace creer al siguiente que sí se muestra. `manualOverride`, que SÍ se pinta, está abajo.
+  // La regla de este archivo es la inversa y es la peligrosa: un campo PINTADO y no comparado se
+  // queda congelado en pantalla.
   const x = a.valve;
   const y = b.valve;
   return (
     x.id === y.id &&
     x.name === y.name &&
     x.effectiveState === y.effectiveState &&
-    x.manualOverride === y.manualOverride
+    x.manualOverride === y.manualOverride &&
+    // Los verbos deciden si se dibuja el control y cuál: si cambian (recarga del mapping) la
+    // tarjeta TIENE que repintarse. Se compara la lista elemento a elemento porque
+    // `valvesFromSnapshot` construye un array nuevo en cada snapshot y la identidad nunca coincide.
+    mismosVerbos(x.commands, y.commands) &&
+    x.commandable === y.commandable
   );
+}
+
+/** Igualdad por VALOR de los verbos. Son 1-2 elementos: comparar es más barato que repintar. */
+function mismosVerbos(a: string[], b: string[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  return a.every((v, i) => v === b[i]);
 }
 
 /** Para `TankGaugeCard`. */

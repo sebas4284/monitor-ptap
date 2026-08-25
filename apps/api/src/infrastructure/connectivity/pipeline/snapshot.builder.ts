@@ -60,6 +60,11 @@ export function buildSnapshot(input: SnapshotInput): PlantSnapshotDto {
     // barrido, así que un `commandable: true` en las decenas de señales que no son válvulas serían
     // bytes repetidos sin significado. Ausente = accionable, que es el caso de todas las de hoy.
     if (!ex.commandable && /^valve\d+$/.test(ex.domainKey)) dto.commandable = false;
+    // Los verbos, con la MISMA guarda y por el mismo motivo: solo tienen sentido en una válvula, y
+    // publicarlos en las 110 señales serían bytes repetidos en cada emisión. Aquí sí se emite
+    // aunque haya verbos (no solo en el caso negativo): el front necesita SABER cuáles hay para no
+    // ofrecer un "cerrar" que en ocho plantas vuelve como UNKNOWN_COMMAND.
+    if (ex.commands.length > 0 && /^valve\d+$/.test(ex.domainKey)) dto.commands = ex.commands;
     signals[ex.domainKey] = dto;
   }
 

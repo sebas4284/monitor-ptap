@@ -201,6 +201,19 @@ export interface SignalDto {
    * `CurrentWrite` aunque la válvula no tenga comando definido.
    */
   commandable?: boolean;
+  /**
+   * Solo en señales de VÁLVULA: qué VERBOS declara su mapping, p. ej. `['open', 'close']`.
+   *
+   * Es `commandable` un nivel más abajo, y nace del mismo error. `commandable` evitó ofrecer botón
+   * en una válvula sin canal de mando; esto evita ofrecer un VERBO que ese canal no tiene: hoy solo
+   * La Vorágine y La Sirena declaran `close`, así que en las otras ocho un "cerrar" sale al backend
+   * para volver con `UNKNOWN_COMMAND`. Hacerle confirmar al operador una maniobra que no puede
+   * salir es exactamente lo que el campo anterior se propuso terminar.
+   *
+   * **Ausente significa que la señal NO es una válvula.** Un array vacío no debería ocurrir: una
+   * señal `writable` sin verbos no pasa la validación del mapping.
+   */
+  commands?: string[];
 }
 
 /**

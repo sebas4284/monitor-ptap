@@ -6,6 +6,11 @@
  * entera y obliga a un clic para seguir; para "informe generado" o "rol actualizado" es un peaje
  * absurdo.
  *
+ * ⚠️ **Lo que NO debe pasar por aquí: el veredicto de un comando de válvula.** Un toast se cierra
+ * solo y puede perderse, y ahí se está moviendo un actuador físico: ese resultado exige acuse de
+ * recibo explícito (ver `ValveResultDialog`). El tipo `ToastKind` no incluye nada de mando a
+ * propósito.
+ *
  * Store de módulo + `useSyncExternalStore`: así no hace falta otro Context envolviendo el árbol.
  */
 

@@ -1,14 +1,22 @@
 import { memo } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { accionDisponible } from '../services/valves';
 import type { SupervisedValve } from '../hooks/useValveSupervisor';
 import Colors from '../constants/colors';
 import { sameValveItem } from './memo-compare';
 
 interface Props {
   valve: SupervisedValve;
+  /** Acción de mando; recibe la válvula. Si falta, la fila es de solo lectura (rol sin permiso).
+   *  Recibe la válvula en vez de cerrarse sobre ella para que la pantalla pueda pasar UNA función
+   *  estable a todas las filas y el `memo` sirva de algo. */
+  onToggle?: (valve: SupervisedValve) => void;
   /** La planta perdió la conexión: los valores mostrados son la última lectura. */
   frozen?: boolean;
+  /** Hay una orden en vuelo para esta válvula. */
+  busy?: boolean;
+  compact?: boolean;
 }
 
 const STATE_LABEL: Record<SupervisedValve['state'], string> = {
@@ -17,17 +25,40 @@ const STATE_LABEL: Record<SupervisedValve['state'], string> = {
   unknown: 'Sin dato',
 };
 
-function ValveItemBase({ valve, frozen = false }: Props) {
-  // Se muestra el estado EFECTIVO: el que sigue al caudal si se detectó operación manual, para no
-  // dar por abierto/cerrado algo que ya se movió a mano.
+/**
+ * Una fila de electroválvula: su estado, y el mando SOLO si de verdad puede salir.
+ *
+ * **La regla que gobierna este componente:** el icono con forma de interruptor se dibuja
+ * únicamente cuando la válvula se puede accionar. Antes era un `Ionicons name="toggle"` usado como
+ * indicador de estado — un dibujo de interruptor, en verde, del tamaño de uno, que no respondía al
+ * pulsarlo. Engañó incluso a quien había quitado el mando cinco horas antes; un operario habría
+ * concluido que la app está rota o, peor, que la orden salió. Cuando no hay acción se usa un icono
+ * que no invita a tocarlo y se dice POR QUÉ.
+ *
+ * Qué acción hay disponible lo decide `accionDisponible` en `services/valves.ts`, que está probada
+ * sin UI: aquí solo se pinta su veredicto.
+ */
+function ValveItemBase({ valve, onToggle, frozen = false, busy = false }: Props) {
+  // Estado EFECTIVO: el que sigue al caudal si se detectó operación manual, para no mandar "abrir"
+  // a algo que ya abrieron a mano.
   const shown = valve.effectiveState;
   const color = shown === 'open' ? Colors.success : shown === 'closed' ? Colors.danger : Colors.neutral;
-  const iconName = shown === 'open' ? 'toggle' : 'toggle-outline';
+
+  const accion = accionDisponible(valve, frozen);
+  // El mando exige LAS DOS cosas: que la válvula lo permita y que el rol tenga el permiso (sin
+  // `onToggle` la pantalla ya decidió que esta persona no acciona).
+  const accionable = accion.kind === 'command' && Boolean(onToggle);
 
   return (
     <View style={[styles.row, frozen && styles.rowFrozen]}>
       <View style={[styles.iconWrap, { backgroundColor: color + '18' }]}>
-        <Ionicons name={iconName} size={22} color={color} />
+        <Ionicons
+          // Forma de interruptor SOLO si se puede pulsar (ver cabecera). Si no, un icono de
+          // lectura: informa del estado sin prometer que se puede cambiar desde aquí.
+          name={accionable ? (shown === 'open' ? 'toggle' : 'toggle-outline') : 'water-outline'}
+          size={22}
+          color={color}
+        />
       </View>
 
       <View style={styles.info}>
@@ -50,6 +81,43 @@ function ValveItemBase({ valve, frozen = false }: Props) {
         <View style={[styles.badge, { backgroundColor: color + '18' }]}>
           <Text style={[styles.badgeText, { color }]}>{STATE_LABEL[shown]}</Text>
         </View>
+
+        {accionable && onToggle && accion.kind === 'command' && (
+          <TouchableOpacity
+            style={[styles.toggleBtn, { backgroundColor: Colors.primary + '15' }]}
+            onPress={() => onToggle(valve)}
+            activeOpacity={0.7}
+            disabled={busy}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: busy }}
+            accessibilityLabel={
+              busy
+                ? `Enviando orden a ${valve.name}`
+                : `${accion.verb === 'close' ? 'Cerrar' : 'Abrir'} ${valve.name}. Pedirá confirmación.`
+            }
+          >
+            {busy ? (
+              <ActivityIndicator size="small" color={Colors.primary} />
+            ) : (
+              <Ionicons
+                name={accion.verb === 'close' ? 'close-circle-outline' : 'checkmark-circle-outline'}
+                size={16}
+                color={Colors.primary}
+              />
+            )}
+            <Text style={[styles.toggleText, { color: Colors.primary }]}>
+              {busy ? 'Enviando…' : accion.verb === 'close' ? 'Cerrar' : 'Abrir'}
+            </Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Sin acción: se dice el motivo. Un hueco mudo se lee como un fallo de la app o como un
+            permiso que falta, y casi nunca es ninguna de las dos cosas. */}
+        {accion.kind === 'blocked' && (
+          <Text style={styles.sinMando} numberOfLines={3}>
+            {accion.explain}
+          </Text>
+        )}
       </View>
     </View>
   );
@@ -67,8 +135,6 @@ const styles = StyleSheet.create({
     padding: 14,
     marginBottom: 8,
     borderWidth: 1,
-    // Antes '#E5E7EB' (gris claro), resto de la paleta clara que nunca se usó: sobre el fondo
-    // oscuro real se veía como un borde blanco fuera de sistema.
     borderColor: Colors.divider,
   },
   rowFrozen: { opacity: 0.55 },
@@ -101,7 +167,19 @@ const styles = StyleSheet.create({
     paddingVertical: 1,
   },
   tagNeutralText: { fontSize: 11, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.3 },
-  right: { alignItems: 'flex-end', gap: 6 },
+  right: { alignItems: 'flex-end', gap: 6, maxWidth: '46%' },
   badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
   badgeText: { fontSize: 12, fontWeight: '700' },
+  toggleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    gap: 4,
+  },
+  toggleText: { fontSize: 12, fontWeight: '700' },
+  // Discreta a propósito: informa de una limitación, no de un problema. Compite con el badge de
+  // estado, que es lo que el operador viene a mirar.
+  sinMando: { fontSize: 10, color: Colors.textSecondary, marginTop: 2, textAlign: 'right' },
 });

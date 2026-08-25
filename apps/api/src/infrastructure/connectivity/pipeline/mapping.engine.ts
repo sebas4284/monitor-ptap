@@ -19,6 +19,8 @@ export interface ExtractedSignal {
   stateTrusted?: boolean;
   /** ¿La señal tiene canal de comando? Viaja al front para no ofrecer un botón que no puede salir. */
   commandable: boolean;
+  /** Verbos que declara el mapping de esa válvula. Vacío si no es writable. Ver `SignalDto.commands`. */
+  commands: string[];
   mappingStatus: 'mapped' | 'unmapped';
   confidence: 'confirmed' | 'inferred' | 'estimated';
   value: number | boolean | null; // crudo; puede ser no-finito (lo evalúa QualityService)
@@ -99,6 +101,9 @@ export class MappingEngine {
       flowDomainKey: sig.flowDomainKey,
       stateTrusted: sig.stateTrusted,
       commandable: sig.writable,
+      // Los verbos salen del mapping, nunca de una lista en el código (regla 2). Sin write spec
+      // queda vacío, y el builder solo lo publica en las señales de válvula.
+      commands: Object.keys(sig.write?.commands ?? {}),
       mappingStatus: sig.mappingStatus,
       confidence: sig.confidence,
     };

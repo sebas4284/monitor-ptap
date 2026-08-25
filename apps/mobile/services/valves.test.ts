@@ -7,8 +7,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { valvesFromSnapshot, isValveSignal, FLOW_CLOSED_THRESHOLD, detectManual } from './valves';
-import type { PlantSnapshotDto, SignalDto } from './api';
+import { valvesFromSnapshot, isValveSignal, FLOW_CLOSED_THRESHOLD, interpretCommand, detectManual, accionDisponible } from './valves';
+import type { PlantSnapshotDto, SignalDto, ValveCommandResult } from './api';
 
 function sig(value: number | null, over: Partial<SignalDto> = {}): SignalDto {
   return {
@@ -153,6 +153,57 @@ test('valves: isValveSignal reconoce comando y estado (para no duplicar en el ta
   assert.equal(isValveSignal('valve1'), true);
   assert.equal(isValveSignal('valve1State'), true);
   assert.equal(isValveSignal('inletFlow1'), false);
+});
+
+// ── Interpretación del resultado de un comando ──
+// Lo crítico: distinguir "la señal salió" de "el equipo respondió". Un 502 con eco verificado NO es
+// "no funcionó" — es "salió y el equipo no acusó el cambio" (probable falla física).
+function res(over: Partial<ValveCommandResult>): ValveCommandResult {
+  return {
+    http: 200, status: 'confirmed', reason: null, previousValue: 0, writtenValue: 4096,
+    confirmedValue: 16385, writeEcho: 4096, writeVerified: true, ...over,
+  };
+}
+
+test('interpretCommand: confirmado → ok y señal enviada', () => {
+  const v = interpretCommand(res({}), 'open', 'Válvula 1');
+  assert.equal(v.ok, true);
+  assert.equal(v.signalSent, true);
+});
+
+test('interpretCommand: 502 con eco verificado → la señal SÍ salió, avisa de posible falla física', () => {
+  const v = interpretCommand(
+    res({ http: 502, status: 'failed', reason: 'READBACK_UNCONFIRMED', confirmedValue: 16384, writeVerified: true }),
+    'open',
+    'Válvula 1',
+  );
+  assert.equal(v.ok, false, 'no se puede afirmar que la válvula se movió');
+  assert.equal(v.signalSent, true, 'pero la orden salió: eso NO es un fallo del canal');
+  assert.match(v.message, /trabada o sin energía/, 'se dice la causa probable en cristiano');
+  assert.equal(v.tone, 'danger');
+  assert.match(String(v.technical), /verificado/, 'el detalle técnico existe, pero fuera de la frase');
+});
+
+test('interpretCommand: WRITE_REJECTED → la señal NO salió', () => {
+  const v = interpretCommand(res({ http: 502, status: 'failed', reason: 'WRITE_REJECTED', writeVerified: null, writtenValue: null }), 'close', 'Válvula 1');
+  assert.equal(v.signalSent, false);
+  assert.match(v.message, /RECHAZÓ/);
+});
+
+test('interpretCommand: interlock y permisos se explican sin culpar al equipo', () => {
+  const il = interpretCommand(res({ http: 409, status: 'rejected', reason: 'INTERLOCK_FAILED: snapshot frozen' }), 'open', 'V1');
+  assert.equal(il.signalSent, false);
+  assert.match(il.title, /dato fresco/i, 'sin la palabra «enclavamiento», que no está en el vocabulario de nadie');
+  assert.equal(il.technical, 'INTERLOCK_FAILED: snapshot frozen', 'el código va aparte, para reportarlo');
+  assert.doesNotMatch(il.message, /INTERLOCK_FAILED/, 'y NUNCA dentro de la frase');
+  const fb = interpretCommand(res({ http: 403, status: 'rejected', reason: 'FORBIDDEN' }), 'open', 'V1');
+  assert.match(fb.title, /permiso/i);
+});
+
+test('interpretCommand: fallo de red NO afirma que la orden salió', () => {
+  const v = interpretCommand(res({ http: 0, status: 'error', reason: 'NETWORK' }), 'close', 'V1');
+  assert.equal(v.ok, false);
+  assert.equal(v.signalSent, false);
 });
 
 // ── Detección de operación manual ──
@@ -303,4 +354,91 @@ test('valves: commandable false solo en la que no tiene mando; ausente = acciona
   const [salida, entrada] = valvesFromSnapshot(snap(DOS_VALVULAS));
   assert.equal(salida.commandable, true, 'sin el campo, la válvula se acciona como siempre');
   assert.equal(entrada.commandable, false);
+});
+
+// El operario no tiene por qué saber qué es un bit, un PLC ni un enclavamiento. Este test recorre
+// TODOS los desenlaces y bloquea la jerga en el texto visible; los códigos siguen disponibles en
+// `technical`, que es donde sirven para reportar una incidencia por teléfono.
+test('interpretCommand: ningún desenlace suelta jerga en el texto que se lee', () => {
+  const casos: ValveCommandResult[] = [
+    res({ http: 200, status: 'confirmed', confirmedValue: 16385 }),
+    res({ http: 202, status: 'sent', writeVerified: true, writtenValue: 4096 }),
+    res({ http: 502, status: 'failed', reason: 'WRITE_REJECTED' }),
+    res({ http: 502, status: 'failed', reason: 'READBACK_UNCONFIRMED', writeVerified: true }),
+    res({ http: 409, status: 'rejected', reason: 'INTERLOCK_FAILED: snapshot frozen' }),
+    res({ http: 429, status: 'rejected', reason: 'RATE_LIMITED' }),
+    res({ http: 0, status: 'error', reason: 'NETWORK' }),
+  ];
+  const prohibido = /bit|PLC|enclavamiento|read-?back|snapshot|[A-Z]{4,}_[A-Z_]+/;
+  for (const r of casos) {
+    const v = interpretCommand(r, 'open', 'Válvula 1');
+    assert.doesNotMatch(v.title, prohibido, `título con jerga: ${v.title}`);
+    assert.doesNotMatch(v.message, prohibido, `mensaje con jerga: ${v.message}`);
+    assert.ok(['success', 'warning', 'danger'].includes(v.tone));
+  }
+});
+
+// El desenlace que motivó el tercer color: la orden salió y nadie puede confirmar que la válvula se
+// movió. Con `ok` booleano se pintaba VERDE con un tick sobre un texto que pedía ir a comprobarlo en
+// planta. El semáforo ganaba y nadie iba.
+test('interpretCommand: «no se pudo confirmar» es ÁMBAR, nunca verde', () => {
+  const v = interpretCommand(res({ http: 202, status: 'sent', writeVerified: true, writtenValue: 4096 }), 'open', 'V1');
+  assert.equal(v.tone, 'warning');
+  assert.notEqual(v.tone, 'success', 'un tick verde convierte «ve a mirar» en «ya está»');
+  assert.match(v.title, /[Vv]erifique/);
+});
+
+// ── FASE 1: qué acción se ofrece, y por qué NO cuando no se ofrece ───────────────────────────
+//
+// Lo que protege: hasta ahora el botón se pintaba para toda válvula con canal de mando, así que en
+// las ocho plantas sin `close` el operador confirmaba un cierre en un diálogo y solo después
+// recibía UNKNOWN_COMMAND. Y al quitar el botón entero quedó un icono con forma de interruptor que
+// no respondía, sin decir por qué.
+
+/** Válvula mínima para probar la puerta; solo varían estado, verbos y canal. */
+function valvula(over: Partial<ReturnType<typeof valvesFromSnapshot>[number]> = {}) {
+  return {
+    id: 'valve1', name: 'Válvula 1', state: 'closed' as const, source: 'estado' as const,
+    byState: 'closed' as const, byFlow: null, flowValue: null, flowUnit: null, flowLabel: null,
+    disagreement: false, commandable: true, commands: ['open', 'close'], rawState: null, ts: null,
+    effectiveState: 'closed' as const, manualOverride: false,
+    ...over,
+  } as ReturnType<typeof valvesFromSnapshot>[number];
+}
+
+test('accion: cerrada con open declarado → ofrece abrir (las 10 plantas)', () => {
+  const a = accionDisponible(valvula({ state: 'closed', commands: ['open'] }), false);
+  assert.deepEqual(a, { kind: 'command', verb: 'open' });
+});
+
+test('accion: abierta con close declarado → ofrece cerrar (solo Voragine y Sirena)', () => {
+  const a = accionDisponible(valvula({ state: 'open', commands: ['open', 'close'] }), false);
+  assert.deepEqual(a, { kind: 'command', verb: 'close' });
+});
+
+test('accion: abierta SIN close declarado → sin control, y lo explica', () => {
+  const a = accionDisponible(valvula({ state: 'open', commands: ['open'] }), false);
+  assert.equal(a.kind, 'blocked');
+  assert.equal(a.kind === 'blocked' && a.reason, 'verb-missing');
+  assert.match(a.kind === 'blocked' ? a.explain : '', /no declara canal de cierre/);
+});
+
+test('accion: sin canal de mando → sin control (la de ENTRADA de La Voragine)', () => {
+  const a = accionDisponible(valvula({ commandable: false }), false);
+  assert.equal(a.kind === 'blocked' && a.reason, 'no-channel');
+});
+
+test('accion: planta congelada → sin control, porque el interlock lo rechazaria igual', () => {
+  const a = accionDisponible(valvula({ state: 'closed', commands: ['open'] }), true);
+  assert.equal(a.kind === 'blocked' && a.reason, 'frozen');
+});
+
+test('accion: estado desconocido → sin control (no se sabe hacia donde moverla)', () => {
+  const a = accionDisponible(valvula({ state: 'unknown', commands: ['open', 'close'] }), false);
+  assert.equal(a.kind === 'blocked' && a.reason, 'unknown-state');
+});
+
+test('accion: congelada manda sobre todo lo demas (no revela otro motivo antes)', () => {
+  const a = accionDisponible(valvula({ commandable: false, state: 'unknown', commands: [] }), true);
+  assert.equal(a.kind === 'blocked' && a.reason, 'frozen');
 });

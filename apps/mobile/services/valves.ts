@@ -1,4 +1,4 @@
-import type { PlantSnapshotDto, SignalDto } from './api';
+import type { PlantSnapshotDto, SignalDto, ValveCommandResult } from './api';
 
 /**
  * Electroválvulas REALES derivadas del snapshot de dominio (PLC → mapping → snapshot.signals).
@@ -50,6 +50,15 @@ export interface ValveView {
    * diálogo, solo podía devolver un 404.
    */
   commandable: boolean;
+  /**
+   * Verbos que ESTA válvula acepta, según su mapping (`SignalDto.commands`).
+   *
+   * No es lo mismo que `commandable`. Ese dice si hay canal de mando; esto dice QUÉ se puede
+   * mandar por él: hoy solo La Vorágine y La Sirena declaran `close`, así que en las otras ocho
+   * un "cerrar" sale al backend para volver con `UNKNOWN_COMMAND` después de que el operador
+   * confirmara la maniobra. Vacío = el mapping no declara ninguno (no debería ocurrir).
+   */
+  commands: string[];
   /** Valor crudo de la palabra de estado (diagnóstico). */
   rawState: number | null;
   ts: string | null;
@@ -163,6 +172,7 @@ export function valvesFromSnapshot(snapshot: PlantSnapshotDto | undefined): Valv
       // Ausente ⇒ accionable: el backend solo manda el campo cuando vale false, y así una válvula
       // de las de siempre se comporta igual que antes de que este campo existiera.
       commandable: cmd?.commandable !== false,
+      commands: cmd?.commands ?? [],
       rawState,
       ts: stateSig?.ts ?? cmd?.ts ?? null,
     });
@@ -170,9 +180,221 @@ export function valvesFromSnapshot(snapshot: PlantSnapshotDto | undefined): Valv
   return out;
 }
 
+/**
+ * ¿Qué se puede hacer con esta válvula AHORA, y si no se puede, por qué?
+ *
+ * Vive aquí y no en el componente porque es la regla que decide si se dibuja un control sobre un
+ * actuador físico: se prueba sin UI. Y devuelve el MOTIVO además del veredicto, porque un control
+ * que desaparece sin explicación se lee como una app rota — fue justo lo que pasó al quitar el
+ * mando entero: había un icono con forma de interruptor que no respondía y nadie sabía por qué.
+ *
+ * Orden de las puertas, de la más dura a la más específica:
+ *
+ *  1. `frozen` — la planta no reporta. El interlock del backend rechazaría la orden de todas
+ *     formas (`snapshot frozen`), así que ofrecerla es prometer algo que no va a pasar.
+ *  2. Sin canal de mando (`commandable:false`) — la válvula existe y se muestra, pero su mapping
+ *     no tiene por dónde escribir. Es la de ENTRADA de La Vorágine.
+ *  3. Estado desconocido — no se sabe si está abierta o cerrada, así que no se sabe hacia dónde
+ *     moverla. Accionar a ciegas un actuador es peor que no ofrecerlo; y en la práctica este caso
+ *     casi siempre coincide con el 1, porque el estado se deduce del caudal y un caudal inusable
+ *     es justo lo que deja la planta congelada.
+ *  4. El verbo que TOCA no está declarado — el caso de las ocho plantas sin `close`. Antes esto
+ *     llegaba al backend y volvía `UNKNOWN_COMMAND` DESPUÉS de que el operador confirmara.
+ */
+export type ValveAction =
+  | { kind: 'command'; verb: 'open' | 'close' }
+  | { kind: 'blocked'; reason: 'frozen' | 'no-channel' | 'unknown-state' | 'verb-missing'; explain: string };
+
+export function accionDisponible(valve: ValveView, frozen: boolean): ValveAction {
+  if (frozen) {
+    return { kind: 'blocked', reason: 'frozen', explain: 'La planta no está reportando: no se puede accionar sin lecturas recientes.' };
+  }
+  if (!valve.commandable) {
+    return { kind: 'blocked', reason: 'no-channel', explain: 'Esta válvula no tiene canal de mando configurado; solo se muestra su estado.' };
+  }
+  // Se usa el estado EFECTIVO (el que sigue al caudal si se detectó operación manual): mandar
+  // "abrir" a algo que ya se abrió a mano no es inofensivo, es una orden redundante en un equipo.
+  const estado = valve.state;
+  if (estado === 'unknown') {
+    return { kind: 'blocked', reason: 'unknown-state', explain: 'No se sabe si está abierta o cerrada, así que no se puede saber hacia dónde moverla.' };
+  }
+  const verbo = estado === 'open' ? 'close' : 'open';
+  if (!valve.commands.includes(verbo)) {
+    return {
+      kind: 'blocked',
+      reason: 'verb-missing',
+      explain:
+        verbo === 'close'
+          ? 'Esta planta no declara canal de cierre: solo puede accionarse la apertura.'
+          : 'Esta planta no declara canal de apertura.',
+    };
+  }
+  return { kind: 'command', verb: verbo };
+}
+
 /** true si el domainKey lo consume la pantalla de válvulas (para no duplicarlo en el tablero). */
 export function isValveSignal(domainKey: string): boolean {
   return /^valve\d+(State)?$/.test(domainKey);
+}
+
+// ── Interpretación del resultado de un comando ────────────────────────────────────────────────
+
+export interface CommandVerdict {
+  /** Éxito real: el equipo confirmó el cambio de estado. */
+  ok: boolean;
+  /** La orden salió al PLC (el bit se escribió), aunque el equipo no haya respondido. */
+  signalSent: boolean;
+  /**
+   * Cómo se pinta el resultado. Tres estados, no dos, y esa es la corrección que importa.
+   *
+   * Con un booleano, el desenlace «la señal salió pero nadie puede confirmar que la válvula se
+   * movió» devolvía `ok: true` y el diálogo lo pintaba **verde con un tick**, sobre un texto que
+   * decía «Verifique en sitio». El semáforo afirmaba éxito y la letra pequeña pedía ir a mirar:
+   * nadie va a mirar. Ahora ese caso es ÁMBAR, que es lo que significa de verdad — ni éxito ni
+   * fallo, sino incertidumbre que alguien tiene que resolver con los ojos.
+   */
+  tone: 'success' | 'warning' | 'danger';
+  title: string;
+  message: string;
+  /** Códigos internos y valores crudos: útiles para reportar, nunca dentro de la frase. */
+  technical?: string | null;
+}
+
+/**
+ * Traduce el resultado del canal oficial a algo que un operador entienda, distinguiendo lo que de
+ * verdad importa: **¿salió la señal?** vs **¿respondió el equipo?**. Un `502` con el eco verificado
+ * NO es "no funcionó": es "la orden salió y el equipo no acusó el cambio" — típicamente una falla
+ * física que impide accionar.
+ */
+export function interpretCommand(r: ValveCommandResult, verb: 'open' | 'close', valveName: string): CommandVerdict {
+  const accion = verb === 'open' ? 'abrir' : 'cerrar';
+  const nuevoEstado = verb === 'open' ? 'ABIERTA' : 'CERRADA';
+
+  if (r.status === 'confirmed') {
+    return {
+      ok: true,
+      signalSent: true,
+      tone: 'success',
+      title: `Orden confirmada`,
+      message: `${valveName}: el equipo confirmó el cambio. Ahora está ${nuevoEstado}.`,
+    };
+  }
+
+  // La orden salió y el eco la verificó, pero el canal de estado de este sitio no está verificado
+  // en campo: no hay con qué afirmar NI negar que la válvula se movió. Se informa exactamente eso —
+  // y en ÁMBAR, porque pintarlo de verde convertía «ve a comprobarlo» en «listo, ya está».
+  if (r.status === 'sent') {
+    return {
+      ok: true,
+      signalSent: true,
+      tone: 'warning',
+      title: 'Verifique en la planta: no se pudo confirmar',
+      message:
+        `${valveName}: la orden de ${accion} salió y quedó registrada. Esta planta no informa del ` +
+        `estado real de la válvula, así que el sistema no puede saber si se movió. Compruébelo en sitio.`,
+      // El valor crudo del bit fuera de la frase: no significa nada para quien opera y rompía la
+      // lectura. Sigue disponible para reportar una incidencia.
+      technical: `valor escrito: ${r.writtenValue}`,
+    };
+  }
+
+  if (r.status === 'failed' && r.reason === 'WRITE_REJECTED') {
+    return {
+      ok: false,
+      signalSent: false,
+      tone: 'danger',
+      title: 'No se pudo enviar la señal',
+      message:
+        `${valveName}: el equipo RECHAZÓ la orden de ${accion}, así que no salió. ` +
+        `Revisa la conexión con la planta y vuelve a intentarlo.`,
+    };
+  }
+
+  if (r.status === 'failed') {
+    // READBACK_UNCONFIRMED (u otro fallo tras escribir).
+    const eco = r.writeVerified === true;
+    return {
+      ok: false,
+      signalSent: eco,
+      tone: 'danger',
+      title: eco ? 'La válvula no respondió' : 'La orden no se pudo confirmar',
+      message: eco
+        ? `${valveName}: la orden de ${accion} salió correctamente, pero la válvula no cambió de estado. ` +
+          `Lo más probable es que esté trabada o sin energía. Revísala en sitio.`
+        : `${valveName}: no se pudo verificar que la orden de ${accion} llegara al equipo. No se asume ningún cambio.`,
+      technical: eco ? `valor escrito: ${r.writtenValue}, verificado` : null,
+    };
+  }
+
+  // Rechazos ANTES de escribir: nada llegó al PLC.
+  const reason = r.reason ?? '';
+  if (reason.startsWith('INTERLOCK_FAILED')) {
+    return {
+      ok: false,
+      signalSent: false,
+      tone: 'danger',
+      title: 'No se envió: falta dato fresco',
+      message:
+        `${valveName}: por seguridad no se acciona una válvula sin lecturas recientes de la planta. ` +
+        `Espera a que vuelva a reportar y reinténtalo.`,
+      technical: reason,
+    };
+  }
+  if (reason === 'FORBIDDEN') {
+    return { ok: false, signalSent: false, tone: 'danger', title: 'Sin permiso', message: `Tu rol no puede operar válvulas.` };
+  }
+  if (reason === 'WRITES_DISABLED_INSECURE_SESSION') {
+    return {
+      ok: false,
+      signalSent: false,
+      tone: 'danger',
+      title: 'Escritura deshabilitada',
+      message: `El servidor tiene el canal de escritura bloqueado por configuración. Avisa al administrador.`,
+    };
+  }
+  if (reason === 'UNKNOWN_COMMAND') {
+    return {
+      ok: false,
+      signalSent: false,
+      tone: 'danger',
+      title: `Comando no disponible`,
+      message: `${valveName}: la orden de ${accion} no está definida para esta válvula.`,
+    };
+  }
+  if (reason === 'TARGET_NOT_WRITABLE') {
+    return {
+      ok: false,
+      signalSent: false,
+      tone: 'danger',
+      title: 'Válvula no operable',
+      message: `${valveName} no tiene canal de mando configurado.`,
+    };
+  }
+  if (reason === 'IN_PROGRESS') {
+    return { ok: false, signalSent: false, tone: 'warning', title: 'Orden en curso', message: `${valveName}: ya hay una orden ejecutándose. Espera el resultado.` };
+  }
+  if (reason === 'SESSION_EXPIRED') {
+    return { ok: false, signalSent: false, tone: 'danger', title: 'Sesión vencida', message: 'Vuelve a iniciar sesión.' };
+  }
+  if (reason === 'NETWORK') {
+    return {
+      ok: false,
+      signalSent: false,
+      tone: 'danger',
+      title: 'Sin conexión con el servidor',
+      message: `No se pudo enviar la orden de ${accion}. No se sabe si salió: verifica el estado antes de reintentar.`,
+    };
+  }
+  // El fallback NO vuelca el código del backend como si fuese español: se leía
+  // "Válvula de salida: RATE_LIMITED." El código va aparte, para poder reportarlo.
+  return {
+    ok: false,
+    signalSent: false,
+    tone: 'danger',
+    title: 'La orden no se ejecutó',
+    message: `${valveName}: el servidor rechazó la orden y no llegó a la planta.`,
+    technical: reason || 'motivo desconocido',
+  };
 }
 
 // ── Detección de operación MANUAL ─────────────────────────────────────────────────────────────
