@@ -66,6 +66,26 @@ test('route-check: ping OK + TCP timeout → PLC-12 (host VIVO, puerto FILTRADO 
   assert.match(v.message, /FILTRANDO/i);
 });
 
+test('route-check: ping OK + TCP con EHOSTUNREACH no se atribuye a un cortafuegos (2026-08-25)', () => {
+  // Un ICMP de inalcanzable NO es un puerto filtrado en silencio: alguien contestó. Con esa
+  // evidencia caben dos culpables (regla de rechazo en la planta, o ruta/NAT del propio
+  // servidor), asi que el veredicto no puede elegir uno. Produccion mostro el mensaje de
+  // "cortafuegos FILTRANDO" y mandaba a pedirle al administrador OT que abriera el puerto.
+  const plc: ProbeResult = { name: 'plc', target: 'x:1', outcome: 'error', ms: 2500, detail: 'EHOSTUNREACH' };
+  const v = buildVerdict(probe('internet', 'ok'), plc, probe('ping', 'ok'));
+  assert.equal(v.code, 'PLC-12');
+  assert.equal(v.where, 'ruta-o-planta');
+  assert.match(v.message, /EHOSTUNREACH/);
+  assert.match(v.message, /ruta o de NAT/);
+  assert.doesNotMatch(v.message, /está FILTRANDO/);
+});
+
+test('route-check: ping OK + TCP timeout SIGUE siendo cortafuegos filtrando (no se pierde el caso)', () => {
+  const v = buildVerdict(probe('internet', 'ok'), probe('plc', 'timeout'), probe('ping', 'ok'));
+  assert.equal(v.code, 'PLC-12');
+  assert.match(v.message, /está FILTRANDO/);
+});
+
 test('route-check: ping también muerto + TCP timeout → PLC-01 (host oscuro)', () => {
   const v = buildVerdict(probe('internet', 'ok'), probe('plc', 'timeout'), probe('ping', 'timeout'));
   assert.equal(v.code, 'PLC-01');

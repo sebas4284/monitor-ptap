@@ -97,16 +97,43 @@ export function buildVerdict(internet: ProbeResult, plc: ProbeResult, ping: Prob
         'está vivo y nada escucha en ese puerto. El servicio del PLC maestro está caído o cambió de puerto.',
     };
   }
-  // TCP sin respuesta. El ping decide si el host está vivo (puerto filtrado) u oscuro.
+  // TCP sin respuesta. El ping decide si el host está vivo (puerto inalcanzable) u oscuro.
   if (ping?.outcome === 'ok') {
+    // Y CÓMO falló el TCP decide a quién se puede señalar, que no es lo mismo:
+    //
+    //   TIMEOUT → los paquetes salen y nadie contesta nunca. Descartados en silencio: la firma
+    //     clásica de un cortafuegos que FILTRA. Es la evidencia del 2026-07-22.
+    //   ERROR   → alguien SÍ contestó, con un ICMP de inalcanzable. `EHOSTUNREACH` viene de un
+    //     router intermedio o de una regla tipo `REJECT --reject-with icmp-host-unreachable`, y
+    //     con eso no se puede afirmar quién: cabe un filtro deliberado en la planta Y cabe un
+    //     fallo de ruta/NAT en el camino, incluido nuestro propio lado.
+    //
+    // La distinción no es académica: manda al operador a pedirle al administrador OT que abra un
+    // puerto, o a revisar la ruta de su propio servidor. Culpar al tramo equivocado con seguridad
+    // fingida es exactamente lo que este veredicto existe para no hacer.
+    if (plc.outcome === 'timeout') {
+      return {
+        code: 'PLC-12',
+        where: 'ruta-o-planta',
+        message:
+          'El host del PLC está VIVO (responde ping) pero el puerto OPC UA no responde: un ' +
+          'cortafuegos está FILTRANDO el puerto. No es "la planta sin internet" ni una IP incorrecta — ' +
+          'es un bloqueo deliberado o mal configurado. Pedir al administrador OT acceso por VPN o la ' +
+          'apertura controlada del puerto (NO reabrirlo a internet: hallazgo P0).',
+      };
+    }
     return {
       code: 'PLC-12',
       where: 'ruta-o-planta',
       message:
-        'El host del PLC está VIVO (responde ping) pero el puerto OPC UA no responde: un ' +
-        'cortafuegos está FILTRANDO el puerto. No es "la planta sin internet" ni una IP incorrecta — ' +
-        'es un bloqueo deliberado o mal configurado. Pedir al administrador OT acceso por VPN o la ' +
-        'apertura controlada del puerto (NO reabrirlo a internet: hallazgo P0).',
+        `El host del PLC está VIVO (responde ping) pero la conexión al puerto OPC UA fue ` +
+        `RECHAZADA con un error de red${plc.detail ? ` (${plc.detail})` : ''}: algo del camino ` +
+        'contestó "inalcanzable" en vez de dejar pasar el TCP. NO es lo mismo que un puerto ' +
+        'filtrado en silencio, y con esta evidencia no se puede señalar un solo responsable: ' +
+        'cabe una regla de cortafuegos que rechaza activamente en la planta, y cabe un fallo de ' +
+        'ruta o de NAT en el trayecto (incluido el lado del servidor de monitoreo). Comprobar ' +
+        'PRIMERO la ruta desde el servidor (tabla de rutas, VPN, NAT del proveedor) antes de ' +
+        'pedirle al administrador OT que abra nada.',
     };
   }
   return {
