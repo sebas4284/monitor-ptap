@@ -28,7 +28,7 @@ export class PlantPipelineService implements OnModuleInit, OnModuleDestroy {
   private readonly mapping: LoadedMapping;
   private readonly engine: MappingEngine;
   private readonly liveness: LivenessTracker;
-  private readonly deadLetter = new DeadLetterBuffer();
+  private readonly deadLetter: DeadLetterBuffer;
 
   // Estado ACUMULADO por planta: última muestra de cada buffer (para reconstruir el DTO
   // completo aunque el frame coalescido traiga solo los buffers que cambiaron).
@@ -47,6 +47,7 @@ export class PlantPipelineService implements OnModuleInit, OnModuleDestroy {
     @Inject(PlantCache) private readonly cache: PlantCache,
     @Inject(TankAutonomyStore) private readonly autonomia: TankAutonomyStore,
   ) {
+    this.deadLetter = new DeadLetterBuffer(config.deadLetterCapacity);
     this.mapping = loadMapping();
     this.engine = new MappingEngine(this.mapping);
     this.liveness = new LivenessTracker(config.liveness.liveSec, config.liveness.windowSec);

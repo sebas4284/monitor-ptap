@@ -66,6 +66,13 @@ export interface ConnectivityConfig {
   provider: ConnectivityProvider;
   opcua: OpcUaConfig;
   liveness: LivenessConfig;
+  /**
+   * Tope del ring de DeadLetter en RAM (regla 12: "tope acotado ... por env"). Acota la memoria
+   * del buffer de señales anómalas: los CONTADORES por tipo nunca se pierden, solo se descartan
+   * las entradas más viejas del detalle. 0 = ilimitado está PROHIBIDO por eso mismo — el mínimo
+   * es 1, así que un valor inválido revienta al arrancar en vez de dejar crecer el ring sin fin.
+   */
+  deadLetterCapacity: number;
 }
 
 function num(name: string, fallback: number): number {
@@ -125,6 +132,13 @@ export function loadConnectivityConfig(): ConnectivityConfig {
     );
   }
 
+  // Regla 12: el tope del DeadLetter sale de .env, no del código. Un ring de capacidad 0
+  // no acota nada — se traga las entradas en silencio, que es justo lo que la regla prohíbe.
+  const deadLetterCapacity = num('OPC_DEAD_LETTER_CAPACITY', 500);
+  if (deadLetterCapacity < 1) {
+    throw new Error(`OPC_DEAD_LETTER_CAPACITY (${deadLetterCapacity}) debe ser >= 1`);
+  }
+
   return {
     provider,
     opcua: {
@@ -156,5 +170,6 @@ export function loadConnectivityConfig(): ConnectivityConfig {
       windowSec: num('LIVENESS_WINDOW_SEC', 300),
       sweepMs: num('LIVENESS_SWEEP_MS', 2000),
     },
+    deadLetterCapacity,
   };
 }

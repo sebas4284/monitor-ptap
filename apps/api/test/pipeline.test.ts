@@ -334,3 +334,25 @@ test('cache: solo se lee lo que se escribió', () => {
   const cache = new PlantCache();
   assert.equal(cache.get('montebello'), null);
 });
+
+test('dead-letter: el ring respeta el tope, pero los CONTADORES no se pierden (regla 12)', () => {
+  const dl = new DeadLetterBuffer(3);
+  for (let i = 0; i < 10; i++) dl.record('INVALID_NUMBER', 'voragine', `k${i}`, `detalle ${i}`);
+
+  const snap = dl.snapshot();
+  // El detalle está acotado a 3 entradas...
+  assert.equal(snap.recent.length, 3);
+  // ...y son las 3 ÚLTIMAS (se descarta lo viejo, no lo nuevo).
+  assert.deepEqual(
+    snap.recent.map((e) => e.domainKey),
+    ['k7', 'k8', 'k9'],
+  );
+  // ...pero el contador vio las 10: acotar la memoria no puede falsear la cuenta.
+  assert.equal(snap.counts.INVALID_NUMBER, 10);
+  assert.equal(snap.total, 10);
+});
+
+test('dead-letter: capacidad inválida → lanza (nunca un ring que se traga todo en silencio)', () => {
+  assert.throws(() => new DeadLetterBuffer(0), /capacity/);
+  assert.throws(() => new DeadLetterBuffer(-1), /capacity/);
+});

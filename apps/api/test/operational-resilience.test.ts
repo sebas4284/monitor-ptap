@@ -65,7 +65,12 @@ function makeConfig(over: Partial<OpcUaConfig> = {}, live: Partial<LivenessConfi
     allowInsecureWrites: false,
     ...over,
   };
-  return { provider: 'simulator', opcua, liveness: { liveSec: 10, windowSec: 300, sweepMs: 40, ...live } };
+  return {
+    provider: 'simulator',
+    opcua,
+    liveness: { liveSec: 10, windowSec: 300, sweepMs: 40, ...live },
+    deadLetterCapacity: 500,
+  };
 }
 
 interface Harness {
