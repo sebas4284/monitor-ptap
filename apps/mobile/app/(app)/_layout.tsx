@@ -8,6 +8,7 @@ import {
   Pressable,
   StyleSheet,
   ActivityIndicator,
+  Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '../../constants/colors';
@@ -28,6 +29,43 @@ import { ROLE_LABELS, ROLE_COLORS, type AuthUser } from '@ptap/shared';
  * Vive en su propia hoja para que su sondeo no repinte la cáscara de pestañas entera, igual que
  * el `<Clock />` de `tablero.tsx`.
  */
+/**
+ * Marca de la barra superior: el icono de Aquora y el nombre.
+ *
+ * Tres decisiones que evitan los tres defectos que se pidió evitar:
+ *
+ *  - **No crece la barra.** La fila se fija a 24 px de alto, muy por debajo de los 56 dp del
+ *    header, así que react-navigation no tiene nada que estirar. El tamaño de la barra no depende
+ *    de este componente.
+ *  - **No se pixela.** El icono se sirve en tres densidades (`aquora-mark.png` 32 px, `@2x` 64,
+ *    `@3x` 96) y Metro elige la que toca; a 22 px de render, incluso el 1x va sobrado. Y el
+ *    nombre es TEXTO, no una imagen del wordmark: el texto es nítido a cualquier densidad por
+ *    construcción, así que no hay forma de que se vea borroso.
+ *  - **No se corta.** El recorte del icono es exactamente cuadrado (156×156 del logo original) y
+ *    se pinta cuadrado, así que la relación de aspecto coincide y no hay nada que recortar.
+ *    `contain` es el cinturón de seguridad si algún día se cambia el asset por uno no cuadrado.
+ *
+ * Se usa el `Image` del core y no `expo-image` —que es lo que recomienda el SDK 56— a propósito:
+ * `expo-image` es un módulo NATIVO, así que añadirlo obliga a recompilar la APK y a que todos
+ * reinstalen (esta app no tiene actualización automática). Para un icono de 22 px no lo vale, y el
+ * `Image` del core sigue soportado en 56. Es además lo que ya usa la pantalla de login.
+ */
+function BrandTitle() {
+  return (
+    <View style={styles.marca} accessibilityRole="header">
+      <Image
+        source={require('../../assets/aquora-mark.png')}
+        style={styles.marcaIcono}
+        resizeMode="contain"
+        // Decorativa: el nombre va al lado como texto, así que un lector de pantalla que
+        // anunciara también la imagen diría "Aquora" dos veces.
+        accessible={false}
+      />
+      <Text style={styles.marcaTexto}>AQUORA</Text>
+    </View>
+  );
+}
+
 function AlertBell() {
   const unseen = useUnseenNotifications();
   return (
@@ -197,7 +235,10 @@ export default function AppLayout() {
     () => ({
       headerStyle: { backgroundColor: Colors.primary },
       headerTintColor: '#fff',
-      headerTitle: 'MONITOR / PTAP',
+      headerTitle: () => <BrandTitle />,
+      // Se conserva aunque el título de arriba sea un componente: cuatro pantallas
+      // (Estado/Alertas/Usuarios/Ajustes) sobreescriben `headerTitle` con un STRING y heredan
+      // este estilo. Quitarlo las dejaba con la tipografía por defecto de react-navigation.
       headerTitleStyle: { fontWeight: '800' as const, fontSize: 16, letterSpacing: 1 },
       headerLeft: () => <MenuButton onPress={() => setMenuVisible(true)} />,
       headerRight: () => <AlertBell />,
@@ -323,6 +364,13 @@ export default function AppLayout() {
 }
 
 const styles = StyleSheet.create({
+  // Altura FIJA y por debajo de los 56 dp del header: así este componente no puede estirar la
+  // barra pase lo que pase con el icono o con el tamaño de fuente del sistema.
+  marca: { flexDirection: 'row', alignItems: 'center', gap: 8, height: 24 },
+  // Cuadrado, igual que el recorte del asset (156x156): la relación coincide y no hay recorte.
+  marcaIcono: { width: 22, height: 22 },
+  // El nombre como TEXTO: nítido a cualquier densidad, y hereda el color del header.
+  marcaTexto: { color: '#fff', fontSize: 17, fontWeight: '800', letterSpacing: 1.5 },
   overlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.45)',
