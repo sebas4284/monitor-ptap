@@ -119,20 +119,62 @@ export function buildVerdict(
         'está vivo y nada escucha en ese puerto. El servicio del PLC maestro está caído o cambió de puerto.',
     };
   }
-  // TCP sin respuesta. El ping decide si el host está vivo (puerto inalcanzable) u oscuro.
+  // TCP sin respuesta al puerto del OPC UA. Aquí se decide A QUIÉN se puede señalar, y el orden
+  // de las comprobaciones es el orden de la FUERZA de la evidencia, no el de los casos.
   if (ping?.outcome === 'ok') {
-    // Y CÓMO falló el TCP decide a quién se puede señalar, que no es lo mismo:
-    //
-    //   TIMEOUT → los paquetes salen y nadie contesta nunca. Descartados en silencio: la firma
-    //     clásica de un cortafuegos que FILTRA. Es la evidencia del 2026-07-22.
-    //   ERROR   → alguien SÍ contestó, con un ICMP de inalcanzable. `EHOSTUNREACH` viene de un
-    //     router intermedio o de una regla tipo `REJECT --reject-with icmp-host-unreachable`, y
-    //     con eso no se puede afirmar quién: cabe un filtro deliberado en la planta Y cabe un
-    //     fallo de ruta/NAT en el camino, incluido nuestro propio lado.
-    //
-    // La distinción no es académica: manda al operador a pedirle al administrador OT que abra un
-    // puerto, o a revisar la ruta de su propio servidor. Culpar al tramo equivocado con seguridad
-    // fingida es exactamente lo que este veredicto existe para no hacer.
+    // La sonda de CONTROL es la evidencia más fuerte que tenemos, así que manda cuando existe.
+    // Si otro puerto del MISMO host contesta —da igual que esté cerrado, "cerrado" ya prueba que
+    // el paquete llega y vuelve— quedan descartadas de golpe la ruta, la VPN, el internet del
+    // servidor y una IP equivocada. Sin esta sonda hubo que deducirlo a mano el 2026-08-25.
+    if (control && (control.outcome === 'ok' || control.outcome === 'refused')) {
+      const rutaDescartada =
+        `El router de la planta es ALCANZABLE y responde: otro puerto del mismo host contestó en ` +
+        `${control.ms} ms. Queda DESCARTADO que sea la ruta de red, la VPN, el internet del ` +
+        'servidor de monitoreo o una IP equivocada — si fuera cualquiera de esas, el puerto de ' +
+        'control tampoco respondería. ';
+
+      // Y ahora CÓMO murió el TCP separa dos culpables distintos:
+      //
+      //   ERROR (ICMP inalcanzable) → el router ACEPTÓ el paquete y lo reenvió: si no hubiera
+      //     regla de reenvío contestaría RST al instante, como el control. Intentó entregarlo
+      //     dentro de la planta y no encontró a nadie. El retardo lo confirma — un bloqueo
+      //     descarta en silencio o rechaza en milisegundos, nunca tarda segundos; esos segundos
+      //     son el router agotando el ARP hacia una máquina que no está.
+      //   TIMEOUT (nada, nunca) → el paquete se descarta en silencio: cortafuegos filtrando.
+      //
+      // La diferencia decide a quién se llama: "enciendan el PC del OPC UA" o "abran el paso".
+      if (plc.outcome === 'error') {
+        return {
+          code: 'PLC-13',
+          where: 'plc-servicio',
+          message:
+            rutaDescartada +
+            `El router SÍ acepta el puerto del OPC UA y reenvía, pero el equipo que está detrás no ` +
+            `contesta: la conexión murió con ${plc.detail ?? 'un error de red'} tras ${plc.ms} ms. ` +
+            'Si no existiera la regla de reenvío, el router habría rechazado al instante como el ' +
+            'puerto de control; y un cortafuegos que bloquea no tarda segundos. Ese retardo es el ' +
+            'router buscando dentro de la planta a una máquina que no responde. LO QUE HAY QUE ' +
+            'PEDIR: que comprueben que el PC del servidor OPC UA (FactoryTalk Optix) está ENCENDIDO ' +
+            'y con red, y que su IP interna sigue siendo la del reenvío. No es un problema de ' +
+            'permisos ni de puertos cerrados: no hay nada que abrir.',
+        };
+      }
+      return {
+        code: 'PLC-12',
+        where: 'ruta-o-planta',
+        message:
+          rutaDescartada +
+          'El puerto del OPC UA no contesta NADA (descartado en silencio), que es la firma de un ' +
+          'cortafuegos filtrando justo ese puerto. Solo lo puede cambiar quien lo administra. ' +
+          'Pedir acceso por VPN o un túnel controlado hasta la planta; NO pedir que reabran el ' +
+          'puerto a internet: eso es exactamente el hallazgo P0 (sesión anónima y sin cifrar sobre ' +
+          'infraestructura de agua potable), y cerrarlo es la mitigación que este proyecto pidió ' +
+          'por escrito.',
+      };
+    }
+
+    // Sin sonda de control (o el control también cayó): la evidencia es más pobre y el veredicto
+    // tiene que reflejarlo en vez de fingir certeza.
     if (plc.outcome === 'timeout') {
       return {
         code: 'PLC-12',
@@ -142,27 +184,6 @@ export function buildVerdict(
           'cortafuegos está FILTRANDO el puerto. No es "la planta sin internet" ni una IP incorrecta — ' +
           'es un bloqueo deliberado o mal configurado. Pedir al administrador OT acceso por VPN o la ' +
           'apertura controlada del puerto (NO reabrirlo a internet: hallazgo P0).',
-      };
-    }
-    // La sonda de CONTROL resuelve la duda: si OTRO puerto del mismo host responde (aunque sea
-    // "cerrado"), los paquetes llegan al equipo y vuelven. Entonces no hay nada roto en la ruta
-    // ni en nuestro lado: lo unico bloqueado es el puerto del OPC UA, y eso solo lo puede haber
-    // hecho quien administra ese cortafuegos. Con esta evidencia si se puede señalar, y por eso
-    // el mensaje pide lo correcto en vez de "que reabran el puerto".
-    if (control && (control.outcome === 'ok' || control.outcome === 'refused')) {
-      return {
-        code: 'PLC-12',
-        where: 'ruta-o-planta',
-        message:
-          `El equipo de la planta es ALCANZABLE y responde: otro puerto del mismo host contestó ` +
-          `en ${control.ms} ms. Lo ÚNICO bloqueado es el puerto del OPC UA` +
-          `${plc.detail ? ` (${plc.detail})` : ''}. Descartado: no es la ruta de red, ni la VPN, ni ` +
-          'el internet del servidor, ni una IP equivocada — si fuera eso, el puerto de control ' +
-          'tampoco respondería. Es una regla de cortafuegos que apunta a ese puerto y solo la ' +
-          'puede cambiar quien lo administra. Pedir acceso por VPN o un túnel controlado hasta la ' +
-          'planta; NO pedir que reabran el puerto a internet: eso es exactamente el hallazgo P0 ' +
-          '(sesión anónima y sin cifrar sobre infraestructura de agua potable), y cerrarlo es la ' +
-          'mitigación que este proyecto pidió por escrito.',
       };
     }
     return {

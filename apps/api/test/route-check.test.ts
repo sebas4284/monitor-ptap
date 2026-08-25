@@ -86,10 +86,23 @@ test('route-check: ping OK + TCP timeout SIGUE siendo cortafuegos filtrando (no 
   assert.match(v.message, /está FILTRANDO/);
 });
 
+test('route-check: control responde + EHOSTUNREACH lento -> PLC-13, el equipo detras esta caido', () => {
+  // Firma medida en produccion el 2026-08-25: control RST en 18 ms, el puerto del OPC UA
+  // EHOSTUNREACH a los 3010 ms, tres veces seguidas. El router reenvia y no encuentra a nadie.
+  const plc: ProbeResult = { name: 'plc', target: 'h:59200', outcome: 'error', ms: 3010, detail: 'EHOSTUNREACH' };
+  const control: ProbeResult = { name: 'control', target: 'h:443', outcome: 'refused', ms: 18, detail: null };
+  const v = buildVerdict(probe('internet', 'ok'), plc, probe('ping', 'ok'), control);
+  assert.equal(v.code, 'PLC-13');
+  assert.equal(v.where, 'plc-servicio');
+  assert.match(v.message, /DESCARTADO/);
+  assert.match(v.message, /ENCENDIDO/);
+  assert.match(v.message, /no hay nada que abrir/);
+});
+
 test('route-check: la sonda de CONTROL descarta la ruta y señala el puerto (corte del 2026-08-25)', () => {
   // Un puerto cualquiera del MISMO host contesta "cerrado" en 25 ms => los paquetes llegan al
   // equipo y vuelven. Entonces ni la ruta, ni la VPN, ni la IP: lo unico bloqueado es el OPC UA.
-  const plc: ProbeResult = { name: 'plc', target: 'h:59200', outcome: 'error', ms: 961, detail: 'EHOSTUNREACH' };
+  const plc: ProbeResult = { name: 'plc', target: 'h:59200', outcome: 'timeout', ms: 5000, detail: null };
   const control: ProbeResult = { name: 'control', target: 'h:443', outcome: 'refused', ms: 25, detail: null };
   const v = buildVerdict(probe('internet', 'ok'), plc, probe('ping', 'ok'), control);
   assert.equal(v.code, 'PLC-12');
