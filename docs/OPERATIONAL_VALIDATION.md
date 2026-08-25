@@ -24,10 +24,23 @@ npm run test:operational
 CLIENTS=60 DURATION_MS=15000 PUBLISHING_MS=100 npm run validate:operational
 #   Ráfaga / alta carga:
 CLIENTS=80 DURATION_MS=10000 PUBLISHING_MS=20  npm run validate:operational
+
+# §4 Veredicto del soak a partir de su JSONL (post-mortem, sin re-correr las 24 h)
+npm run validate:soak-report -- ~/soak-20260803-124408.jsonl --markdown
+
+# §6 kill -9 + arranque en frío (mide contra el build compilado, como producción)
+npm run build && npm run validate:coldstart
+
+# Criterio de la Fase 2 medido sobre HTTP real (REST < 50 ms desde cache, 0 lecturas OPC)
+npm run test:pipeline
 ```
 
-Artefactos: [`test/operational-resilience.test.ts`](../apps/api/test/operational-resilience.test.ts) y
-[`scripts/operational-validation.ts`](../apps/api/scripts/operational-validation.ts).
+Artefactos: [`test/operational-resilience.test.ts`](../apps/api/test/operational-resilience.test.ts),
+[`scripts/operational-validation.ts`](../apps/api/scripts/operational-validation.ts),
+[`scripts/soak-test.ts`](../apps/api/scripts/soak-test.ts),
+[`scripts/soak-report.ts`](../apps/api/scripts/soak-report.ts),
+[`scripts/cold-start.ts`](../apps/api/scripts/cold-start.ts) y
+[`test/rest-cache-latency.test.ts`](../apps/api/test/rest-cache-latency.test.ts).
 
 ---
 
@@ -73,7 +86,7 @@ determinista, no latencia de proceso).
 
 ---
 
-## §4 · Soak test (24–72 h) — 🟡 EN CURSO desde 2026-08-03
+## §4 · Soak test (24–72 h) — 🟡 PENDIENTE DE RELANZAR (arnés corregido el 2026-08-25)
 
 Automatizado en [`scripts/soak-test.ts`](../apps/api/scripts/soak-test.ts). Arma el pipeline real en
 memoria (`SimulatorBridgeAdapter → PlantPipelineService → PlantCache`), inyecta caos rotando tres
@@ -86,9 +99,11 @@ SOAK_HOURS=24 node --import tsx scripts/soak-test.ts
 SOAK_HOURS=0.03 SAMPLE_MS=20000 CHAOS_MS=18000 node --import tsx scripts/soak-test.ts
 ```
 
-**Corrida en marcha (VM `192.168.30.50`):** lanzada el **2026-08-03 12:44 -05**, 24 h, muestreo cada
-60 s, caos cada 30 min, `publishingInterval` 2000 ms (cadencia real de PTAP), 12 plantas.
-Salida: `~/soak-20260803-124408.jsonl` · log: `~/soak.log`.
+**Corrida del 2026-08-03 (VM `192.168.30.50`) — ❌ NO VÁLIDA.** Lanzada el 2026-08-03 12:44 -05
+para 24 h (muestreo cada 60 s, caos cada 30 min, `publishingInterval` 2000 ms, 12 plantas; salida
+`~/soak-20260803-124408.jsonl`, log `~/soak.log`). **Murió a los pocos segundos por un fallo del
+arnés, no del sistema bajo prueba** — causa y corrección más abajo. Sus datos no sirven para el
+veredicto.
 
 Caos rotativo, un escenario por ciclo:
 
@@ -105,13 +120,46 @@ contra los criterios de abajo.
 **Criterio de aceptación §4:** RSS estable (< 10 % de variación), dead-letter acotado, sin fuga de
 handles, y toda recuperación automática (salvo `Faulted`, que alerta).
 
-**Ensayo previo (2.4 min, cadencia acelerada) — ✅ el arnés funciona:** RSS 74.66 → 75.72 MB
-(**1.42 %**), handles 2 → 2, dead letter acotado en 107, los 3 escenarios de caos rotando. Producción
-verificada intacta durante la corrida (`ptap-api` online, los tres `/api/health*` en 200).
+**Ensayo previo (2.4 min, cadencia acelerada):** RSS 74.66 → 75.72 MB (**1.42 %**), handles 2 → 2,
+dead letter acotado en 107, los 3 escenarios de caos rotando. Producción verificada intacta durante
+la corrida (`ptap-api` online, los tres `/api/health*` en 200). **OJO:** este ensayo es ANTERIOR al
+cambio de firma que rompió el arnés, así que su verde no dice nada del estado posterior — es
+precisamente lo que hizo creer durante tres semanas que la corrida de 24 h estaba midiendo algo.
 
-> **Pendiente de esta sección:** `kill -9` + arranque en frío del backend completo, para medir el
-> tiempo hasta `Connected` y hasta el primer snapshot. El soak cubre la estabilidad continua; ese
-> escenario es de recuperación de proceso y se mide aparte.
+### 2026-08-25 · Por qué la corrida del 2026-08-03 nunca dejó veredicto
+
+Al retomar la sección se encontró la causa, y no era del soak sino del arnés: **`soak-test.ts`
+construía `PlantPipelineService` con 3 argumentos cuando el pipeline ya pedía 4**
+(`TankAutonomyStore`, añadido después de escribir el script). El barrido de liveness moría en el
+primer tick con `Cannot read properties of undefined (reading 'get')`, es decir **a los ~2 segundos
+de arrancar**, dejando el JSONL con la línea de cabecera, una o dos muestras y ninguna línea de
+veredicto. El "ensayo previo" que figura más abajo es anterior a ese cambio de firma, y por eso sí
+funcionó — de ahí que el fallo pasara inadvertido tres semanas.
+
+Corregido en esta fecha, junto con dos cosas que lo habrían delatado el mismo día:
+
+- **`uncaughtException` / `unhandledRejection` se anotan en el JSONL** (`{"tipo":"fatal",...}`) y
+  cierran el informe con lo medido. Un soak que se cae es un resultado válido; un soak que se cae
+  sin dejar dicho por qué no lo es.
+- **El veredicto ahora comprueba la duración (`>= 24 h`)**. Antes un ensayo de dos minutos imprimía
+  `✅ CUMPLE` con las mismas letras que una corrida real, y ese verde es el que acaba copiado aquí
+  como si valiera.
+- **[`scripts/soak-report.ts`](../apps/api/scripts/soak-report.ts)** reconstruye el veredicto desde
+  un JSONL ya existente, **incluso truncado** (recalcula con los mismos criterios y lo dice). Era el
+  agujero de proceso de fondo: el veredicto solo existía por stdout, así que si la sesión que lanzó
+  el soak se cerraba, los datos quedaban en disco sin forma de cerrar la sección.
+
+**Estado:** el arnés vuelve a sobrevivir al régimen (ensayo de 1 min tras la corrección: 14 muestras,
+5 ciclos de caos, handles 2 → 2, dead letter acotado en 110, sin excepciones). **La corrida de 24 h
+hay que relanzarla**: la del 2026-08-03 no midió nada utilizable y esta sección sigue sin poder
+cerrarse hasta que haya 24 h reales de reloj.
+
+```bash
+# En la VM, dentro de apps/api (no toca producción: proceso aparte, sin MySQL ni puertos)
+SOAK_HOURS=24 nohup node --import tsx scripts/soak-test.ts > ~/soak.log 2>&1 &
+# Al terminar (o si se corta), el veredicto:
+npm run validate:soak-report -- ~/soak-<inicio>.jsonl --markdown
+```
 
 > **Observabilidad ya disponible para el soak:** las 9 métricas Prometheus del gateway
 > (`opc_notifications_total`, `opc_reconnects_total`, `opc_subscription_latency_ms`,
@@ -127,8 +175,9 @@ verificada intacta durante la corrida (`ptap-api` online, los tres `/api/health*
 | §1 Caos de conectividad | ✅ **6/6 automatizado** |
 | §2 Carga (13*/≥50 clientes, ráfaga sin bloquear event loop) | ✅ **60 y 80 clientes, 0 pérdida de sequence** |
 | §3 Latencia p50/p95/p99 dentro de presupuesto | ✅ **p95 ≈ 16–21 ms « 520–600 ms** |
-| §4 Soak 24–72 h | 🟡 **EN CURSO** — automatizado y lanzado el 2026-08-03, veredicto el 2026-08-04 |
+| §4 Soak 24–72 h | 🟡 **PENDIENTE DE RELANZAR** — el arnés estaba roto (ver §4, corregido 2026-08-25); la corrida del 2026-08-03 no midió nada utilizable |
 | §5 Replay contra tramas reales del PLC | ✅ **175 tramas, 12 plantas, 6 tests en verde** |
+| §6 Recuperación de proceso (`kill -9` + arranque en frío) | ✅ **Connected en ~3 s, primer snapshot en ~5 s, 0 intervención manual** |
 
 \* El PLC real expone **12** sitios (no 13): las 12 plantas del mapping se ejercitan en cada corrida.
 
@@ -172,3 +221,44 @@ el dato de esos cuatro sitios está **congelado o en régimen absolutamente quie
 > el dato *moverse*. En esas cuatro plantas un comando sería rechazado con
 > `409 INTERLOCK_FAILED: snapshot stable/frozen` **antes de escribir nada**. Conviene averiguar con
 > la planta si esos PLC están operando, antes de dar por hecho que el mando remoto funcionará ahí.
+
+---
+
+## §6 · Recuperación de proceso (`kill -9` + arranque en frío) — ✅ SALDADO 2026-08-25
+
+Último escenario del PROMPT MAESTRO que quedaba sin medir. Automatizado en
+[`scripts/cold-start.ts`](../apps/api/scripts/cold-start.ts): levanta el gateway como proceso hijo en
+un puerto efímero, cronometra el arranque, lo mata con **SIGKILL** y repite.
+
+**Por qué SIGKILL y no SIGTERM:** un `SIGTERM` ejecuta `enableShutdownHooks()` y cierra la sesión OPC
+con educación — es el camino feliz. Lo que hay que demostrar es que un corte brutal (OOM killer,
+caída de la VM, `pm2 kill`) no deja nada que arreglar a mano.
+
+**Por qué contra `dist/`:** producción corre `node dist/main.js`. Medido con `tsx` sobre `src/`, el
+mismo arranque daba **13 s** en vez de 7 s — se estaría cronometrando transpilar TypeScript, algo que
+producción no hace nunca. El script usa el build compilado cuando existe y avisa en voz alta cuando
+no. Se aísla en `main.telemetry.ts` (puente + pipeline + REST, **sin MySQL**) con
+`CONNECTIVITY_PROVIDER=simulator`: mide arrancar el gateway, no arrancar MySQL ni el RTT al PLC.
+
+Corrida del **2026-08-25** (Node 24, Windows dev, `publishingInterval` 2000 ms, cadencia real):
+
+| Ciclo | Modo | HTTP responde | `Connected` | Primer snapshot | `sequence` |
+|---|---|---|---|---|---|
+| 0 | arranque limpio | 7.013 s | 7.018 s | 8.985 s | — |
+| 1 | **`kill -9`** | 2.813 s | 2.824 s | 4.813 s | 3 → 1, hueco detectable ✓ |
+| 2 | **`kill -9`** | 3.351 s | 3.366 s | 5.317 s | 3 → 1, hueco detectable ✓ |
+
+El arranque limpio cuesta el doble que los posteriores: paga la caché de página del SO en frío. Los
+~2,8–3,4 s de los ciclos de `kill -9` son el número representativo de un reinicio en la VM, que es
+lo que se quería saber. El primer snapshot llega siempre ≈ `Connected` + un `publishingInterval`:
+el puente no espera nada de más, la cadencia manda.
+
+**La afirmación del plan sobre el frontend, medida en vez de supuesta:** *"el frontend se recupera
+solo vía sequence + refresh REST"*. La cache vive en RAM y muere con el proceso (regla 1), así que
+tras el reinicio el `sequence` **retrocede** (3 → 1) en lugar de continuar. Esa discontinuidad es
+exactamente el hueco que el cliente detecta para pedir refresh — el backend no tiene que avisar de
+nada. Verificado en 2/2 ciclos.
+
+**Veredicto §6:** recuperación automática en todos los ciclos, sin intervención manual (el proceso
+vuelve con el mismo comando; en la VM lo relanza `pm2`), `Connected` y primer snapshot dentro de
+presupuesto (15 s / 20 s), hueco de `sequence` detectable por el cliente en todos los ciclos.

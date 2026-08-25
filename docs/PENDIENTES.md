@@ -324,6 +324,14 @@ El DTO ya transporta los umbrales operativos (`opMin`/`opMax`) y el front deriva
 snapshot, pero **no hay motor de alarmas persistente** ni configuración de límites por usuario. El
 esquema de alertas en BD depende de la misma decisión que D1: conviene resolverlos juntos.
 
+### D4. Hot-reload del mapping — propuesta escrita, esperando OK
+
+La Fase 3 del PROMPT MAESTRO pedía **proponer** la recarga en caliente de `opc_mapping.json`, no
+implementarla. La propuesta ya existe: [`PROPUESTA_HOT_RELOAD_MAPPING.md`](./PROPUESTA_HOT_RELOAD_MAPPING.md)
+(2026-08-25). Recomienda **endpoint admin, no SIGHUP**, recarga solo de la capa de dominio (nunca de
+NodeIds/buffers) y **no implementarlo hasta que aparezca la necesidad operativa** — un reinicio
+cuesta ~3 s medidos y hoy los cambios de mapping son poco frecuentes. Falta tu decisión.
+
 ---
 
 ## 4. Deuda técnica interna (no bloquea a nadie externo)
@@ -364,7 +372,11 @@ esquema de alertas en BD depende de la misma decisión que D1: conviene resolver
       `test/**/*.ts`, pero ningún script ni el CI lo invoca. `scripts/` no está en ningún tsconfig.
 - [ ] **Los `test:*` de la API usan sintaxis de cmd.exe** (`set "VAR=…"&&`), que en Linux no hace
       nada. El CI lo esquiva pasando `TSX_TSCONFIG_PATH` por `env:` y corriendo los tests por glob.
-- [ ] **`soak-test.ts` y `opcua-writes-toggle.sh` no tienen script npm** — se invocan a mano.
+- [x] **`soak-test.ts` ya tiene script npm** (2026-08-25): `npm run validate:soak-report` para el
+      veredicto post-mortem y `npm run validate:coldstart` para el `kill -9`. El soak en sí se
+      sigue lanzando a mano a propósito: son 24 h, no algo que quepa en un `npm test`.
+      `opcua-writes-toggle.sh` sigue sin script npm (es deliberado: abrir la escritura al PLC no
+      debe ser un comando cómodo).
 - [ ] **~15 scripts de campo de un solo uso** en `apps/api/scripts/` sin script npm ni importador
       (`monitor-sirena-*.ts`, `read-sirena.ts`, `write-sirena-pulse.ts`, `fix-valve-state.ts`…).
       Decidir si se archivan o se borran.
@@ -414,8 +426,21 @@ Parámetros por variable de entorno, sin recompilar:
 ## 5. Vigilancia continua
 
 - [ ] Vigilar el `deadLetterCount` del puente OPC (`/opc/status`, requiere RBAC `system_config`).
-- [ ] Ejecutar el **soak test de 24–72 h** (`scripts/soak-test.ts`) — es el último entregable de la
-      Fase 6 sin correr. Ver [`OPERATIONAL_VALIDATION.md`](./OPERATIONAL_VALIDATION.md).
+- [ ] **Relanzar el soak test de 24–72 h en la VM** — único entregable de la Fase 6 sin cerrar.
+      La corrida del 2026-08-03 **no midió nada**: el arnés construía `PlantPipelineService` con 3
+      argumentos cuando ya pedía 4, y moría en el primer barrido de liveness. Corregido el
+      2026-08-25 (más `uncaughtException` volcado al JSONL y criterio de duración ≥ 24 h en el
+      veredicto, para que un ensayo corto no vuelva a imprimir un verde que se copie como válido).
+      En la VM, dentro de `apps/api`:
+
+      ```bash
+      SOAK_HOURS=24 nohup node --import tsx scripts/soak-test.ts > ~/soak.log 2>&1 &
+      # al terminar (o si se corta a mitad):
+      npm run validate:soak-report -- ~/soak-<inicio>.jsonl --markdown
+      ```
+
+      No toca producción: proceso aparte, sin MySQL, sin puertos, sin sudo. Con el veredicto se
+      cierra §4 de [`OPERATIONAL_VALIDATION.md`](./OPERATIONAL_VALIDATION.md).
 - [ ] Re-ejecutar el colector de eficiencia para tendencias:
       `EFF_SSH=ptap npm run -w @ptap/api audit:efficiency [-- --json]`.
 
