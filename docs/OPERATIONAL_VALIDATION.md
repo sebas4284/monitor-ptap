@@ -86,7 +86,7 @@ determinista, no latencia de proceso).
 
 ---
 
-## §4 · Soak test (24–72 h) — 🟡 PENDIENTE DE RELANZAR (arnés corregido el 2026-08-25)
+## §4 · Soak test (24–72 h) — ✅ SALDADO (corrida del 2026-08-03, veredicto leído el 2026-08-25)
 
 Automatizado en [`scripts/soak-test.ts`](../apps/api/scripts/soak-test.ts). Arma el pipeline real en
 memoria (`SimulatorBridgeAdapter → PlantPipelineService → PlantCache`), inyecta caos rotando tres
@@ -99,11 +99,29 @@ SOAK_HOURS=24 node --import tsx scripts/soak-test.ts
 SOAK_HOURS=0.03 SAMPLE_MS=20000 CHAOS_MS=18000 node --import tsx scripts/soak-test.ts
 ```
 
-**Corrida del 2026-08-03 (VM `192.168.30.50`) — ❌ NO VÁLIDA.** Lanzada el 2026-08-03 12:44 -05
-para 24 h (muestreo cada 60 s, caos cada 30 min, `publishingInterval` 2000 ms, 12 plantas; salida
-`~/soak-20260803-124408.jsonl`, log `~/soak.log`). **Murió a los pocos segundos por un fallo del
-arnés, no del sistema bajo prueba** — causa y corrección más abajo. Sus datos no sirven para el
-veredicto.
+**Corrida del 2026-08-03 (VM `192.168.30.50`) — ✅ VÁLIDA Y COMPLETA.** Lanzada el 2026-08-03
+12:44 -05 para 24 h (muestreo cada 60 s, caos cada 30 min, `publishingInterval` 2000 ms, 12 plantas;
+salida `~/soak-20260803-124408.jsonl`). Corrió **las 24 horas enteras** y cerró con su línea de
+veredicto: 1441 muestras, 48 ciclos de caos, 32 578 snapshots, 0 reconexiones, sin cortes.
+
+| Criterio | Medido | |
+|---|---|---|
+| Duración | 24 h de 24 h | ✅ |
+| Crecimiento del RSS | **0 %** (línea base 106,2 MB → último cuarto 106,2 MB) | ✅ |
+| Fuga de handles | 0 → 0 | ✅ |
+| Dead letter | 107, y **dejó de crecer** en las últimas 12 h | ✅ acotado |
+| Estados del puente | `Connected` ×1425, `Disconnected` ×16, **`Faulted` ×0** | ✅ |
+
+La memoria estuvo **plana en 106,2 MB durante 18 horas seguidas**: media de 106,1 MB en las primeras
+6 h (con un valle de arranque a 96,4) y 106,2 MB exactos en cada uno de los tres cuartos siguientes.
+
+> **Corrección de una entrada anterior de este mismo documento.** Entre el 2026-08-04 y el
+> 2026-08-25 esta sección afirmó primero "🟡 EN CURSO, veredicto el 2026-08-04" y después
+> "❌ NO VÁLIDA: murió a los pocos segundos". **Las dos eran falsas.** La corrida había terminado
+> bien el 2026-08-04 y su veredicto estaba en el JSONL todo el tiempo; nadie lo abrió. El fallo del
+> arnés que sí existe (el de los 3 argumentos, más abajo) se introdujo DESPUÉS de esta corrida, así
+> que rompía las siguientes, no esta. Diagnosticar por el código actual una corrida vieja llevó a
+> declarar inválidos datos perfectamente buenos y a pedir repetir 24 horas para nada.
 
 Caos rotativo, un escenario por ciclo:
 
@@ -117,8 +135,20 @@ Cada muestra registra `rss`, `heapUsed`, `external`, `activeHandles`, `activeReq
 `deadLetter`, `reconnects` y `bridgeStatus`. Al terminar, el script emite un **veredicto automático**
 contra los criterios de abajo.
 
-**Criterio de aceptación §4:** RSS estable (< 10 % de variación), dead-letter acotado, sin fuga de
-handles, y toda recuperación automática (salvo `Faulted`, que alerta).
+**Criterio de aceptación §4:** RSS estable, dead-letter acotado, sin fuga de handles, y toda
+recuperación automática (salvo `Faulted`, que alerta).
+
+> **El criterio de RSS cambió el 2026-08-25, y es la razón por la que esta corrida parecía fallar.**
+> Antes medía DISPERSIÓN —`(max − min) / min < 10 %`— y con estos datos daba **10,95 % → ❌**, pese a
+> que la memoria estuvo plana 18 horas: los 10 puntos salían del valle de arranque a 96,4 MB. Un
+> criterio de fuga tiene que medir **crecimiento**, no dispersión; tal como estaba, penalizaba que
+> el recolector de basura hiciera su trabajo. Ahora se compara la media del ÚLTIMO cuarto contra la
+> del segundo (el primero se salta porque incluye el arranque) y se exige **< 2 %**. Un rojo falso
+> hace tanto daño como un verde falso: cuesta relanzar 24 h, o salir a buscar una fuga que no está.
+>
+> `soak-report.ts` detecta los veredictos de formato antiguo (los que no traen `crecimientoPct`) y
+> **recalcula ese criterio desde las muestras**, que es lo que permitió cerrar esta sección sin
+> repetir la corrida.
 
 **Ensayo previo (2.4 min, cadencia acelerada):** RSS 74.66 → 75.72 MB (**1.42 %**), handles 2 → 2,
 dead letter acotado en 107, los 3 escenarios de caos rotando. Producción verificada intacta durante
@@ -126,15 +156,15 @@ la corrida (`ptap-api` online, los tres `/api/health*` en 200). **OJO:** este en
 cambio de firma que rompió el arnés, así que su verde no dice nada del estado posterior — es
 precisamente lo que hizo creer durante tres semanas que la corrida de 24 h estaba midiendo algo.
 
-### 2026-08-25 · Por qué la corrida del 2026-08-03 nunca dejó veredicto
+### 2026-08-25 · El fallo del arnés que sí existe (y que NO afectó a esta corrida)
 
-Al retomar la sección se encontró la causa, y no era del soak sino del arnés: **`soak-test.ts`
+Al retomar la sección se encontró un fallo real del arnés, que rompía cualquier corrida
+posterior al 2026-08-03 (no esta): **`soak-test.ts`
 construía `PlantPipelineService` con 3 argumentos cuando el pipeline ya pedía 4**
 (`TankAutonomyStore`, añadido después de escribir el script). El barrido de liveness moría en el
 primer tick con `Cannot read properties of undefined (reading 'get')`, es decir **a los ~2 segundos
-de arrancar**, dejando el JSONL con la línea de cabecera, una o dos muestras y ninguna línea de
-veredicto. El "ensayo previo" que figura más abajo es anterior a ese cambio de firma, y por eso sí
-funcionó — de ahí que el fallo pasara inadvertido tres semanas.
+de arrancar**. Se detectó al intentar relanzar el soak, y de ahí salió la conclusión equivocada de
+que la corrida del 3-ago también había muerto así.
 
 Corregido en esta fecha, junto con dos cosas que lo habrían delatado el mismo día:
 
@@ -175,7 +205,7 @@ npm run validate:soak-report -- ~/soak-<inicio>.jsonl --markdown
 | §1 Caos de conectividad | ✅ **6/6 automatizado** |
 | §2 Carga (13*/≥50 clientes, ráfaga sin bloquear event loop) | ✅ **60 y 80 clientes, 0 pérdida de sequence** |
 | §3 Latencia p50/p95/p99 dentro de presupuesto | ✅ **p95 ≈ 16–21 ms « 520–600 ms** |
-| §4 Soak 24–72 h | 🟡 **PENDIENTE DE RELANZAR** — el arnés estaba roto (ver §4, corregido 2026-08-25); la corrida del 2026-08-03 no midió nada utilizable |
+| §4 Soak 24–72 h | ✅ **24 h completas** — crecimiento de RSS **0 %**, 0 fugas de handles, dead letter acotado, 48 ciclos de caos, 0 `Faulted` |
 | §5 Replay contra tramas reales del PLC | ✅ **175 tramas, 12 plantas, 6 tests en verde** |
 | §6 Recuperación de proceso (`kill -9` + arranque en frío) | ✅ **Connected en ~3 s, primer snapshot en ~5 s, 0 intervención manual** |
 

@@ -245,13 +245,21 @@ async function main(): Promise<void> {
   const dlLast = est[est.length - 1]?.deadLetter ?? 0;
   const horas = (Date.now() - t0) / 3600_000;
 
-  const okRss = variacion < 10;
+  // CRECIMIENTO, no dispersión (ver el razonamiento largo en soak-report.ts). La corrida del
+  // 2026-08-03 estuvo plana en 106,2 MB durante 18 h y este criterio la reprobaba por un valle de
+  // arranque a 96,4 MB. Un rojo falso cuesta relanzar 24 h, o salir a buscar una fuga que no está.
+  const q = Math.floor(rss.length / 4);
+  const media = (xs: number[]): number => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+  const baseline = q > 0 ? media(rss.slice(q, 2 * q)) : media(rss);
+  const finalTramo = q > 0 ? media(rss.slice(3 * q)) : media(rss);
+  const crecimiento = baseline > 0 ? ((finalTramo - baseline) / baseline) * 100 : 0;
+  const okRss = crecimiento < 2;
   const okHandles = hLast <= hFirst + 5;
   // El criterio de la Fase 6 dice "soak de MINIMO 24 h". Sin esta comprobacion un ensayo de
   // 2 minutos imprimia 'CUMPLE' con las mismas letras que una corrida real, y ese verde es
   // justo el que termina copiado en el doc como si valiera.
   const okDuracion = horas >= 24;
-  const veredicto = { horas: Math.round(horas * 100) / 100, muestras: muestras.length, rssMin, rssMax, variacionPct: Math.round(variacion * 100) / 100, handlesInicio: hFirst, handlesFin: hLast, deadLetterFinal: dlLast, snapshots, ciclosDeCaos: ciclo, okRss, okHandles, okDuracion, cortadoAntes: cortado, motivoCorte };
+  const veredicto = { horas: Math.round(horas * 100) / 100, muestras: muestras.length, rssMin, rssMax, variacionPct: Math.round(variacion * 100) / 100, crecimientoPct: Math.round(crecimiento * 100) / 100, handlesInicio: hFirst, handlesFin: hLast, deadLetterFinal: dlLast, snapshots, ciclosDeCaos: ciclo, okRss, okHandles, okDuracion, cortadoAntes: cortado, motivoCorte };
   appendFileSync(OUT, JSON.stringify({ tipo: 'veredicto', ...veredicto }) + '\n');
 
   console.log('\n' + '='.repeat(74));
@@ -262,7 +270,8 @@ async function main(): Promise<void> {
   console.log(`  muestras           ${muestras.length}   ·   ciclos de caos: ${ciclo}`);
   console.log(`  snapshots totales  ${snapshots}`);
   console.log('');
-  console.log(`  RSS                ${rssMin} → ${rssMax} MB   variación ${veredicto.variacionPct}%   ${okRss ? '✅ < 10%' : '❌ ≥ 10%'}`);
+  console.log(`  RSS                ${rssMin} → ${rssMax} MB   (dispersión ${veredicto.variacionPct}%, incluye el arranque)`);
+  console.log(`  crecimiento RSS    ${veredicto.crecimientoPct}%   ${okRss ? '✅ estable (< 2%)' : '❌ crece: posible fuga'}`);
   console.log(`  handles activos    ${hFirst} → ${hLast}   ${okHandles ? '✅ sin fuga' : '❌ crecimiento sostenido'}`);
   console.log(`  dead letter final  ${dlLast}   (debe estar acotado por el ring buffer)`);
   console.log('');

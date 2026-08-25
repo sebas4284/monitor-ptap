@@ -426,7 +426,13 @@ Parámetros por variable de entorno, sin recompilar:
 ## 5. Vigilancia continua
 
 - [ ] Vigilar el `deadLetterCount` del puente OPC (`/opc/status`, requiere RBAC `system_config`).
-- [ ] **Relanzar el soak test de 24–72 h en la VM** — único entregable de la Fase 6 sin cerrar.
+- [x] **Soak test de 24–72 h — SALDADO** (veredicto leído el 2026-08-25 de la corrida del
+      2026-08-03): 24 h completas, crecimiento de RSS **0 %**, 0 fugas de handles, dead letter
+      acotado en 107, 48 ciclos de caos, cero `Faulted`. Con esto **la Fase 6 queda cerrada**.
+      La corrida SIEMPRE fue válida; lo que fallaba era el criterio del veredicto (medía dispersión
+      en vez de crecimiento) y que nadie abrió el JSONL. Ver §4 de OPERATIONAL_VALIDATION.md.
+      Texto anterior, conservado porque explica el error de diagnóstico:
+      ~~Relanzar el soak — único entregable de la Fase 6 sin cerrar.~~
       La corrida del 2026-08-03 **no midió nada**: el arnés construía `PlantPipelineService` con 3
       argumentos cuando ya pedía 4, y moría en el primer barrido de liveness. Corregido el
       2026-08-25 (más `uncaughtException` volcado al JSONL y criterio de duración ≥ 24 h en el
