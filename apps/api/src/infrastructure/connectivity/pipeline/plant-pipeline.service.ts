@@ -56,6 +56,29 @@ export class PlantPipelineService implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit(): void {
     this.adapter.onFrame((frame) => this.processFrame(frame));
+
+    /**
+     * Un cambio de estado del puente TIENE que reconstruir los snapshots.
+     *
+     * `bridgeStatus` viaja DENTRO del DTO de cada planta y es lo único con lo que el front
+     * clasifica el corte (`classifyBridge` → banner y código del catálogo). Pero el snapshot
+     * solo se reconstruía al llegar un frame o al CAMBIAR el estado de liveness, y cuando el
+     * PLC deja de ser alcanzable no ocurre ninguna de las dos: no llegan frames, y la liveness
+     * ya está en `frozen` y se queda ahí, así que el guard del barrido nunca se cumple.
+     *
+     * Resultado en producción el 2026-08-25: el puente pasó de `Stale` a Recovering → Faulted
+     * → Disconnected → Connecting en cinco segundos, y el DTO se quedó congelado en `Stale`
+     * indefinidamente. La app mostraba PLC-02, "la conexión con la planta está activa, pero el
+     * equipo dejó de enviar lecturas", mientras el servidor no alcanzaba SIQUIERA el puerto del
+     * PLC (EHOSTUNREACH). El mensaje más tranquilizador de todos, en el peor momento posible.
+     *
+     * La firma del diff ya incluye `bridgeStatus`, así que reconstruir aquí sí emite; y si el
+     * estado vuelve a uno ya visto sin nada más que cambie, el diff lo suprime igual.
+     */
+    this.adapter.onStatusChange(() => {
+      for (const p of this.mapping.plants) this.rebuildAndMaybeEmit(p.plantId);
+    });
+
     this.sweepTimer = setInterval(() => this.sweepLiveness(), this.config.liveness.sweepMs);
     if (typeof this.sweepTimer.unref === 'function') this.sweepTimer.unref();
   }

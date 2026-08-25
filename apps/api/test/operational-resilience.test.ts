@@ -255,3 +255,45 @@ test('robustez: sequence es estrictamente monotónico por planta (sin huecos en 
     await h.stop();
   }
 });
+
+// ── Regresión del 2026-08-25: el DTO se quedaba con un bridgeStatus viejo ────────────────────
+//
+// Producción mostró PLC-02 ("la conexión con la planta está activa, pero el equipo dejó de enviar
+// lecturas") mientras el servidor NO alcanzaba el puerto del PLC (EHOSTUNREACH). La causa: el
+// snapshot solo se reconstruía al llegar un frame o al CAMBIAR la liveness, y con el PLC
+// inalcanzable no pasa ninguna de las dos — no hay frames y la liveness ya está en `frozen`. El
+// `bridgeStatus` que viaja en el DTO se congelaba en el último valor construido (`Stale`), y el
+// front lo clasificaba con eso. Un estado de conexión que no se actualiza es peor que no tenerlo:
+// afirma que hay sesión cuando no la hay.
+test('regresión: el bridgeStatus del DTO sigue al puente aunque no lleguen frames ni cambie la liveness', async () => {
+  const h = boot(makeConfig({ subscriptionRecycleMaxAttempts: 1 }));
+  try {
+    await h.adapter.start();
+    await waitFor(() => h.snapshots.length > 0, 2000);
+    assert.equal(h.snapshots[h.snapshots.length - 1].bridgeStatus, 'Connected');
+
+    // Congelar las notificaciones lleva el puente a Stale (watchdog) y la liveness a `frozen`.
+    h.adapter.setRecycleOutcome('fail');
+    h.adapter.freeze();
+    const stale = await waitFor(() => h.statuses.includes('Stale'), 3000);
+    assert.equal(stale, true, 'el watchdog debe llevar el puente a Stale');
+
+    // Y de ahí a Faulted al agotar el reciclaje. AQUÍ estaba el fallo: la liveness ya era
+    // `frozen` y no volvía a cambiar, así que nada reconstruía el DTO y se quedaba en `Stale`.
+    const faulted = await waitFor(() => h.adapter.getBridgeStatus() === 'Faulted', 4000);
+    assert.equal(faulted, true);
+
+    const llegoElFaulted = await waitFor(
+      () => h.snapshots[h.snapshots.length - 1].bridgeStatus === 'Faulted',
+      2000,
+    );
+    assert.equal(
+      llegoElFaulted,
+      true,
+      `el último snapshot debe decir Faulted, no ${h.snapshots[h.snapshots.length - 1].bridgeStatus} ` +
+        '(un bridgeStatus viejo hace que la app clasifique el corte al revés)',
+    );
+  } finally {
+    await h.stop();
+  }
+});
