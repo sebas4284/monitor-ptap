@@ -25,6 +25,8 @@ const PROBE_LABEL: Record<RouteProbe['name'], string> = {
   internet: 'servidor → internet',
   ping: 'ping ICMP al host  ',
   plc: 'servidor → PLC     ',
+  // Puerto de control del mismo host: si CONTESTA, la ruta está bien y el problema es ese puerto.
+  control: 'puerto de control  ',
 };
 
 /** Línea técnica de una sonda para el .txt (con el matiz timeout vs rechazo, que acota la causa). */
@@ -36,7 +38,9 @@ function probeLine(p: RouteProbe): string {
     case 'timeout':
       return `    ${label} : ${p.target}  → TIMEOUT (${p.ms} ms) — ${p.name === 'ping' ? 'sin eco ICMP' : 'paquetes sin respuesta (firewall que descarta / equipo apagado / IP incorrecta)'}`;
     case 'refused':
-      return `    ${label} : ${p.target}  → RECHAZADA — host vivo, nada escucha en el puerto (servicio caído)`;
+      return p.name === 'control'
+        ? `    ${label} : ${p.target}  → RECHAZADA (${p.ms} ms) — el equipo RESPONDE: la ruta está BIEN`
+        : `    ${label} : ${p.target}  → RECHAZADA — host vivo, nada escucha en el puerto (servicio caído)`;
     case 'error':
       return `    ${label} : ${p.target}  → ERROR${p.detail ? ` ${p.detail}` : ''}`;
   }

@@ -39,6 +39,11 @@ function probeLabel(p: RouteProbe): string {
       return `ping al host del PLC (${p.target})`;
     case 'plc':
       return `servidor → PLC (${p.target})`;
+    // Otro puerto del MISMO host del PLC. No interesa si está abierto: interesa si CONTESTA,
+    // porque eso prueba que los paquetes llegan al equipo y vuelven. Si responde y el puerto
+    // OPC UA no, la ruta está descartada y lo bloqueado es ese puerto.
+    case 'control':
+      return `otro puerto del mismo host (${p.target})`;
   }
 }
 

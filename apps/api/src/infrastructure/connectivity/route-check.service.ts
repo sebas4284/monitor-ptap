@@ -29,7 +29,7 @@ export type ProbeOutcome = 'ok' | 'timeout' | 'refused' | 'error';
 
 export interface ProbeResult {
   /** Qué tramo prueba: salida a internet del servidor, ping ICMP al host, o TCP al puerto OPC. */
-  name: 'internet' | 'ping' | 'plc';
+  name: 'internet' | 'ping' | 'plc' | 'control';
   target: string; // host[:puerto]
   outcome: ProbeOutcome;
   ms: number;
@@ -66,10 +66,32 @@ const INTERNET_PROBE_HOST = '8.8.8.8';
 const INTERNET_PROBE_PORT = 53;
 
 /**
+ * Puerto de CONTROL en el MISMO host del PLC: la sonda que distingue "no hay ruta hasta ese
+ * equipo" de "bloquearon exactamente el puerto OPC UA".
+ *
+ * Nace del corte del 2026-08-25. El TCP al 59200 devolvia EHOSTUNREACH y el veredicto lo leyo
+ * como un problema de ruta, cuando bastaba tocar OTRO puerto del mismo host para verlo: el 443,
+ * el 22 y el 59100 contestaban RST en 25 ms. El equipo era perfectamente alcanzable y lo unico
+ * bloqueado era el puerto del OPC UA. Media hora de diagnostico para algo que esta sonda
+ * responde en 25 ms.
+ *
+ * Se usa el 443 y no un puerto al azar porque un RST desde ahi prueba lo unico que hace falta
+ * probar: que los paquetes LLEGAN al equipo y este responde. No importa que no haya nada
+ * escuchando — "cerrado" es exactamente la respuesta util.
+ */
+const CONTROL_PROBE_PORT = 443;
+const CONTROL_PROBE_TIMEOUT_MS = 4000;
+
+/**
  * Veredicto puro (testeable sin red) a partir de las sondas. `ping` es opcional: si no se pudo
  * ejecutar (comando ausente), el veredicto cae a la versión sin ping.
  */
-export function buildVerdict(internet: ProbeResult, plc: ProbeResult, ping: ProbeResult | null = null): RouteVerdict {
+export function buildVerdict(
+  internet: ProbeResult,
+  plc: ProbeResult,
+  ping: ProbeResult | null = null,
+  control: ProbeResult | null = null,
+): RouteVerdict {
   if (internet.outcome !== 'ok') {
     return {
       code: 'SRV-07',
@@ -120,6 +142,27 @@ export function buildVerdict(internet: ProbeResult, plc: ProbeResult, ping: Prob
           'cortafuegos está FILTRANDO el puerto. No es "la planta sin internet" ni una IP incorrecta — ' +
           'es un bloqueo deliberado o mal configurado. Pedir al administrador OT acceso por VPN o la ' +
           'apertura controlada del puerto (NO reabrirlo a internet: hallazgo P0).',
+      };
+    }
+    // La sonda de CONTROL resuelve la duda: si OTRO puerto del mismo host responde (aunque sea
+    // "cerrado"), los paquetes llegan al equipo y vuelven. Entonces no hay nada roto en la ruta
+    // ni en nuestro lado: lo unico bloqueado es el puerto del OPC UA, y eso solo lo puede haber
+    // hecho quien administra ese cortafuegos. Con esta evidencia si se puede señalar, y por eso
+    // el mensaje pide lo correcto en vez de "que reabran el puerto".
+    if (control && (control.outcome === 'ok' || control.outcome === 'refused')) {
+      return {
+        code: 'PLC-12',
+        where: 'ruta-o-planta',
+        message:
+          `El equipo de la planta es ALCANZABLE y responde: otro puerto del mismo host contestó ` +
+          `en ${control.ms} ms. Lo ÚNICO bloqueado es el puerto del OPC UA` +
+          `${plc.detail ? ` (${plc.detail})` : ''}. Descartado: no es la ruta de red, ni la VPN, ni ` +
+          'el internet del servidor, ni una IP equivocada — si fuera eso, el puerto de control ' +
+          'tampoco respondería. Es una regla de cortafuegos que apunta a ese puerto y solo la ' +
+          'puede cambiar quien lo administra. Pedir acceso por VPN o un túnel controlado hasta la ' +
+          'planta; NO pedir que reabran el puerto a internet: eso es exactamente el hallazgo P0 ' +
+          '(sesión anónima y sin cifrar sobre infraestructura de agua potable), y cerrarlo es la ' +
+          'mitigación que este proyecto pidió por escrito.',
       };
     }
     return {
@@ -230,10 +273,12 @@ export class RouteCheckService {
     const port = Number(url.port) || 4840; // 4840 = puerto estándar OPC UA
 
     // Las consultas en paralelo: son independientes y la prueba es interactiva.
-    const [internet, ping, plc, serverPublicIp] = await Promise.all([
+    const [internet, ping, plc, control, serverPublicIp] = await Promise.all([
       probeTcp('internet', INTERNET_PROBE_HOST, INTERNET_PROBE_PORT, INTERNET_PROBE_TIMEOUT_MS),
       pingHost(host),
       probeTcp('plc', host, port, PLC_PROBE_TIMEOUT_MS),
+      // Control: otro puerto del MISMO host. Solo importa si CONTESTA, no si está abierto.
+      probeTcp('control', host, CONTROL_PROBE_PORT, CONTROL_PROBE_TIMEOUT_MS),
       this.lookupPublicIp(),
     ]);
 
@@ -242,9 +287,9 @@ export class RouteCheckService {
       at: new Date().toISOString(),
       target: { endpoint, host, port },
       serverPublicIp,
-      probes: [internet, ping, plc],
+      probes: [internet, ping, plc, control],
       // Si el comando ping no existe en el sistema (error ENOENT), no aporta evidencia.
-      verdict: buildVerdict(internet, plc, ping.outcome === 'error' ? null : ping),
+      verdict: buildVerdict(internet, plc, ping.outcome === 'error' ? null : ping, control),
       bridge: {
         status: diagnostics.bridgeStatus,
         reconnectCount: diagnostics.reconnectCount,

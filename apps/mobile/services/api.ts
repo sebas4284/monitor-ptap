@@ -143,7 +143,9 @@ export async function fetchConnectionEvents(): Promise<ConnectionEvent[]> {
 
 /** Una sonda del backend: internet del servidor, ping ICMP al host, o TCP al puerto OPC. */
 export interface RouteProbe {
-  name: 'internet' | 'ping' | 'plc';
+  /** `control` = otro puerto del MISMO host del PLC; distingue "no hay ruta" de "ese puerto está
+   *  bloqueado". Si contesta (aunque sea "cerrado"), la ruta está bien. */
+  name: 'internet' | 'ping' | 'plc' | 'control';
   target: string; // host[:puerto]
   outcome: 'ok' | 'timeout' | 'refused' | 'error';
   ms: number;
