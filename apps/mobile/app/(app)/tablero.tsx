@@ -12,6 +12,7 @@ import { TankGaugeCard } from '../../components/TankGaugeCard';
 import { LiveBadge } from '../../components/LiveBadge';
 import { PlantSelector } from '../../components/PlantSelector';
 import { ConnectionBanner } from '../../components/ConnectionBanner';
+import { AppUpdateBanner } from '../../components/AppUpdateBanner';
 import { DashboardSummary } from '../../components/DashboardSummary';
 import { GroupHeader } from '../../components/GroupHeader';
 import { DashboardSkeleton } from '../../components/Skeleton';
@@ -117,6 +118,17 @@ export default function TableroScreen() {
           <RefreshControl refreshing={isRefetching} onRefresh={refetch} colors={[Colors.primary]} tintColor={Colors.primary} />
         }
       >
+        {/*
+          El aviso de versión nueva vive AQUÍ además de en login y Ajustes.
+          Antes solo estaba en esas dos, así que quien ya tenía la sesión abierta y no entraba a
+          Ajustes no se enteraba nunca: dependía de que le caducara la sesión (8 h) para volver a
+          ver el login. El tablero es la pantalla que todo el mundo abre.
+          Va DENTRO del ScrollView a propósito, para que scrollee con el contenido en vez de
+          comerse altura fija; y se auto-oculta en cuanto el versionCode instalado coincide con el
+          publicado, así que no puede molestar a quien ya actualizó.
+        */}
+        <AppUpdateBanner modo="actualizacion" />
+
         <View style={styles.sectionHeader}>
           <View style={{ flex: 1 }}>
             <Text style={styles.plantName}>{snapshot?.displayName ?? selectedPlant.name}</Text>
