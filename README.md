@@ -57,7 +57,7 @@ capas y los publica a la app móvil/web por REST y Socket.IO.
 | **4** | JWT/RBAC, seguridad OPC (SignAndEncrypt+certificado), `/health/opc`, métricas Prometheus, audit log en MySQL, helmet/rate-limit | ✅ Completa | `AuthModule` (login, guards), `users`/`audit_log` en MySQL (`db:migrate`/`db:seed-admin`), `apps/api/test/opcua-security-switch.test.ts` (username **y** certificate probados contra un `OPCUAServer` local real), `GET /api/health/opc`, `GET /metrics`, `docs/OPTIX_CLIENT_CERT_TRUST.md` |
 | **5** | Canal de escritura (comandos) con interlocks, idempotencia y feature flag | ✅ Completa y **ABIERTA en producción** (autorizada 2026-08-03; 10 señales `valve1` writable en el mapping) | `write.service.ts`, `commands.controller.ts` (`POST /api/plants/:id/commands`), `command-log.repository.ts` (idempotencia MySQL); `test/write-service.test.ts` (24), `test/commands-e2e.test.ts`, `test/command-mapping.test.ts`. Prueba física real: `docs/archivo/PRUEBA_VALVULA_SIRENA.md` |
 | **7** | Bandeja de notificaciones + detector de sensores congelados | ✅ Completa (2026-08-06) | Migración `0009`, `modules/notifications/`, `stale-data.detector.ts`; `test/stale-data-detector.test.ts` (13). En el front: bandeja con historial de 72 h, campana por **no vistos**, y avisos en el panel del sistema (Android por notificación local, sin Firebase) |
-| **6** | Validación operacional: caos, carga, latencia, soak 24–72 h | 🟡 Ejecutada salvo el soak | `test/operational-resilience.test.ts` (6 escenarios de caos), `scripts/operational-validation.ts` (carga/latencia), `scripts/soak-test.ts` (**arnés listo, la corrida de 24–72 h sigue pendiente**), `docs/OPERATIONAL_VALIDATION.md` |
+| **6** | Validación operacional: caos, carga, latencia, soak 24–72 h | ✅ Completa | `test/operational-resilience.test.ts` (6 escenarios de caos), `scripts/operational-validation.ts` (carga/latencia), `scripts/soak-test.ts` + `scripts/soak-report.ts` (**24 h saldadas**: crecimiento de RSS 0 %, 0 fugas de handles, 48 ciclos de caos), `docs/OPERATIONAL_VALIDATION.md` |
 
 Verificado el 2026-08-05: `npm run typecheck` limpio en **todo el monorepo** (`@ptap/api`,
 `@ptap/mobile`, `@ptap/shared`), `npm test -w @ptap/api` → **245/245 tests OK** en 31 archivos
@@ -745,7 +745,8 @@ pichinde, carbonero, sirena, san-antonio, quijote`). Nada de `PTAP Norte` ni `pt
 |-----------|-----------|
 | [`docs/PENDIENTES.md`](docs/PENDIENTES.md) | **Único tracker de pendientes**: bloqueado por infraestructura, pendiente de desplegar, decisiones del cliente y deuda técnica. |
 | [`docs/INCIDENTE_CONEXION_PLC.md`](docs/INCIDENTE_CONEXION_PLC.md) | Incidente **abierto**: pérdida de acceso al PLC maestro. |
-| [`docs/OPERATIONAL_VALIDATION.md`](docs/OPERATIONAL_VALIDATION.md) | Fase 6: caos, carga, latencia y replay. El soak de 24–72 h sigue sin correr. |
+| [`docs/OPERATIONAL_VALIDATION.md`](docs/OPERATIONAL_VALIDATION.md) | Fase 6 **completa**: caos, carga, latencia, replay y el soak de 24 h (crecimiento de RSS 0 %). |
+| [`docs/PLAN_CONSOLA_ADMIN_1.4.0.md`](docs/PLAN_CONSOLA_ADMIN_1.4.0.md) | **Plan de implementación de la 1.4.0**: revisión por planta, ayuda, tutorial, modo desarrollador y novedades. Cinco fases para ejecutar de una en una. |
 | [`docs/CATALOGO_ERRORES.md`](docs/CATALOGO_ERRORES.md) | Catálogo de códigos de error: código → archivo → causa → responsable. |
 | [`docs/archivo/`](docs/archivo/) | **Evidencia histórica congelada** (auditorías fechadas, pruebas de campo). No refleja el estado actual — leer su README. |
 
