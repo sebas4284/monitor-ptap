@@ -163,7 +163,7 @@ export async function presentNotification(
     if ((await getPermission()) !== 'granted') return;
 
     if (isWeb) {
-      new window.Notification(title, {
+      const n = new window.Notification(title, {
         body,
         tag: String(data?.tag ?? title),
         data,
@@ -174,6 +174,16 @@ export async function presentNotification(
         // una sala de control es un aviso que nadie ve.
         silent: false,
       });
+      // Que la notificación LLEVE a algún sitio. En web el destino se cuelga aquí, al crearla: la
+      // API del navegador no tiene un manejador global de toques como el nativo. Sin esto, el aviso
+      // de actualización se podía leer pero no seguir, que es la mitad de su utilidad.
+      const destino = typeof data?.downloadUrl === 'string' ? data.downloadUrl : null;
+      if (destino) {
+        n.onclick = () => {
+          window.open(destino, '_blank', 'noopener');
+          n.close();
+        };
+      }
       if (critica) pitido();
       return;
     }

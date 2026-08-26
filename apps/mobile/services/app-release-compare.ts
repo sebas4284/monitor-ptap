@@ -34,3 +34,51 @@ export function tamanoLegible(bytes: number | null): string | null {
   if (bytes === null || bytes <= 0) return null;
   return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
 }
+
+/** Lo que hay que publicar en el panel del teléfono, ya redactado. */
+export interface AvisoActualizacion {
+  titulo: string;
+  cuerpo: string;
+  /** El `versionCode` anunciado. Se guarda para no repetir el aviso de ESTA versión. */
+  versionCode: number;
+  downloadUrl: string;
+}
+
+/**
+ * ¿Hay que avisar en el panel del teléfono de que existe una versión nueva? Devuelve el aviso ya
+ * redactado, o `null` si no toca.
+ *
+ * Vive aquí, junto a la comparación y sin dependencias de plataforma, porque es la decisión de
+ * **molestar a alguien fuera de la app** y eso hay que poder probarlo sin arrancar Expo.
+ *
+ * `ultimoAvisado` es la clave de todo: la tarea de fondo corre cada ~15 minutos, así que sin
+ * recordar de qué versión ya se avisó el panel se llenaría del mismo aviso una y otra vez. Se
+ * compara por `versionCode` y no por fecha ni por "ya avisé hoy": si mañana se publica la 10, hay
+ * que volver a avisar aunque ya se hubiera avisado de la 9.
+ *
+ * Casos en los que NO se avisa, todos deliberados:
+ *  - No hay actualización (o no se puede saber: `release` nulo, o web sin `versionCode` instalado).
+ *    `hayActualizacion` ya cubre eso, y sin certeza no se molesta a nadie.
+ *  - Ya se avisó de esa misma versión, o de una posterior.
+ */
+export function decidirAvisoActualizacion(
+  release: AppRelease | null,
+  instalada: number | null,
+  ultimoAvisado: number | null,
+): AvisoActualizacion | null {
+  if (!hayActualizacion(release, instalada)) return null;
+  // `hayActualizacion` ya garantizó que ambos existen; esto es para el compilador.
+  if (!release || release.versionCode === null) return null;
+  if (ultimoAvisado !== null && ultimoAvisado >= release.versionCode) return null;
+
+  const tamano = tamanoLegible(release.sizeBytes);
+  const titulo = release.version ? `Hay una versión nueva (${release.version})` : 'Hay una versión nueva';
+  // Las notas primero: es lo que responde "¿y a mí qué me cambia?". El cómo va al final, porque
+  // quien ya sabe instalar no necesita leerlo dos veces.
+  const notas = release.notes?.trim();
+  const cuerpo = [notas, `▸ Toca para descargarla e instalarla${tamano ? ` (${tamano})` : ''}.`]
+    .filter(Boolean)
+    .join('\n\n');
+
+  return { titulo, cuerpo, versionCode: release.versionCode, downloadUrl: release.downloadUrl };
+}

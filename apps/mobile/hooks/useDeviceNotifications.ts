@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AppState, Platform } from 'react-native';
+import { AppState, Linking, Platform } from 'react-native';
 import {
   getPermission,
   isSupported,
@@ -7,7 +7,11 @@ import {
   unsupportedReason,
   type PermissionState,
 } from '../services/device-notifications';
-import { registerBackgroundSync, syncNotificationsToDevice } from '../services/notification-sync';
+import {
+  registerBackgroundSync,
+  syncNotificationsToDevice,
+  UPDATE_TAG,
+} from '../services/notification-sync';
 
 /**
  * Notificaciones del sistema operativo: permiso + sincronización.
@@ -22,6 +26,16 @@ import { registerBackgroundSync, syncNotificationsToDevice } from '../services/n
 
 /** Cada cuánto consulta la bandeja la versión web mientras la pestaña esté abierta. */
 const WEB_POLL_MS = 5 * 60 * 1000;
+
+/**
+ * Toques ya atendidos, por identificador de notificación.
+ *
+ * `getLastNotificationResponseAsync()` devuelve SIEMPRE la última respuesta, no una cola: si el hook
+ * se remonta (recarga en caliente, o un re-render de la cáscara) volvería a leer el mismo toque y
+ * abriría el navegador otra vez. A nivel de módulo y no de componente justamente para sobrevivir a
+ * ese remontaje.
+ */
+const toquesAtendidos = new Set<string>();
 export function useDeviceNotifications(): {
   supported: boolean;
   reason: string | null;
@@ -62,6 +76,64 @@ export function useDeviceNotifications(): {
     const id = setInterval(() => void syncNotificationsToDevice(), WEB_POLL_MS);
     return () => clearInterval(id);
   }, [permission]);
+
+  /**
+   * Que tocar el aviso de actualización lleve DIRECTO a la descarga.
+   *
+   * Sin esto, tocarlo solo abre la app y hay que encontrar el banner: tres pasos para algo que
+   * debería ser uno. Actúa **solo** sobre el aviso de actualización (`UPDATE_TAG`) — los avisos de
+   * planta siguen comportándose igual, abriendo la app sin más.
+   *
+   * Se atienden DOS caminos, y el segundo es el que se olvida: el listener solo capta el toque si el
+   * proceso está vivo. Si Android había matado la app, el toque la arranca en frío y ese evento ya
+   * pasó — `getLastNotificationResponseAsync()` lo recupera. Sin él, tocar el aviso con la app
+   * cerrada no haría nada, que es justo el caso más probable en un aviso que llega horas después.
+   *
+   * En web no hace falta: el destino va colgado de la propia notificación al crearla
+   * (`presentNotification`), porque la API del navegador no tiene manejador global.
+   */
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    let vivo = true;
+    let quitar: (() => void) | undefined;
+
+    const abrirSiEsActualizacion = (datos: unknown, id: string): void => {
+      if (toquesAtendidos.has(id)) return;
+      const d = (datos ?? {}) as Record<string, unknown>;
+      if (d.tag !== UPDATE_TAG) return;
+      toquesAtendidos.add(id);
+      if (typeof d.downloadUrl === 'string') void Linking.openURL(d.downloadUrl);
+    };
+
+    void (async () => {
+      try {
+        const Notifications = await import('expo-notifications');
+        if (!vivo) return;
+
+        // 1) Arranque en frío: el toque que abrió la app.
+        const ultima = await Notifications.getLastNotificationResponseAsync();
+        if (vivo && ultima) {
+          abrirSiEsActualizacion(
+            ultima.notification.request.content.data,
+            ultima.notification.request.identifier,
+          );
+        }
+
+        // 2) App viva: los toques que lleguen a partir de ahora.
+        const sub = Notifications.addNotificationResponseReceivedListener((r) => {
+          abrirSiEsActualizacion(r.notification.request.content.data, r.notification.request.identifier);
+        });
+        quitar = () => sub.remove();
+      } catch {
+        /* sin el módulo nativo el toque solo abre la app: se pierde el atajo, nada más */
+      }
+    })();
+
+    return () => {
+      vivo = false;
+      quitar?.();
+    };
+  }, []);
 
   const ask = useCallback(async () => {
     setPermission(await requestPermission());

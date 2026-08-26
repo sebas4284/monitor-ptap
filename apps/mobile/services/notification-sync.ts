@@ -4,6 +4,8 @@ import { debeSonar } from '@ptap/shared';
 import { fetchNotifications, type AppNotification } from './notifications';
 import { ensureAndroidChannel, presentNotification } from './device-notifications';
 import { getNotificationPrefs, loadNotificationPrefs } from './notification-prefs';
+import { fetchAppRelease, runningVersionCode } from './app-release';
+import { decidirAvisoActualizacion } from './app-release-compare';
 
 /**
  * Lleva los avisos del servidor al panel de notificaciones del dispositivo.
@@ -31,6 +33,10 @@ const TASK_NAME = 'ptap-notification-sync';
 const LAST_NOTIFIED_KEY = 'ptap_last_notified_id';
 /** Avisos que tocaron durante el "no molestar" y aún no han sonado. */
 const DEFERRED_KEY = 'ptap_deferred_notifications';
+/** Último `versionCode` del que ya se avisó en el panel. Ver `avisarSiHayActualizacion`. */
+const UPDATE_NOTIFIED_KEY = 'ptap_last_update_notified';
+/** Marca que llevan los datos del aviso de actualización, para reconocerlo al tocarlo. */
+export const UPDATE_TAG = 'app-update';
 /** Tope de diferidos que se arrastran. Una noche entera de avisos no puede crecer sin límite. */
 const MAX_DIFERIDOS = 30;
 /** Mínimo que Android respeta de verdad; pedir menos no lo acelera. */
@@ -78,7 +84,68 @@ async function recordarDiferidos(ids: number[]): Promise<void> {
  * Se exporta aparte de la tarea porque también se llama con la app abierta (al volver a primer
  * plano): así el aviso aparece aunque Android nunca llegue a ejecutar la tarea en segundo plano.
  */
+/**
+ * Avisa en el panel del teléfono de que hay una versión nueva de la app.
+ *
+ * Existe porque el aviso de actualización solo vivía DENTRO de la app, y quien no la abre es
+ * precisamente quien más desactualizado está: sin tienda ni `expo-updates`, no había forma de
+ * alcanzarle. Esto le llega al panel como cualquier otro aviso.
+ *
+ * **Va por el canal normal, no el crítico.** Una actualización disponible no es un tanque
+ * rebosando: el canal crítico es persistente y suena a las cuatro de la mañana.
+ *
+ * **No se le aplican las preferencias de silencio ni el «no molestar».** Esas son preferencias
+ * sobre avisos DE PLANTA (`NotificationKind`), y esto no es uno: es un aviso sobre la propia
+ * aplicación. El permiso del sistema sí se respeta — lo comprueba `presentNotification` por dentro.
+ *
+ * Devuelve 1 si avisó, 0 si no. Nunca lanza: que no se pueda saber si hay actualización no puede
+ * tumbar el barrido de avisos de planta, que es lo que de verdad importa.
+ */
+async function avisarSiHayActualizacion(): Promise<number> {
+  try {
+    const [release, ultimo] = await Promise.all([fetchAppRelease(), ultimoAvisoActualizacion()]);
+    const aviso = decidirAvisoActualizacion(release, runningVersionCode(), ultimo);
+    if (!aviso) return 0;
+
+    await ensureAndroidChannel();
+    await presentNotification(aviso.titulo, aviso.cuerpo, {
+      tag: UPDATE_TAG,
+      downloadUrl: aviso.downloadUrl,
+    });
+    // Se recuerda DESPUÉS de publicar: si `presentNotification` falla, el próximo ciclo reintenta
+    // en vez de dar el aviso por entregado.
+    await recordarAvisoActualizacion(aviso.versionCode);
+    return 1;
+  } catch {
+    return 0;
+  }
+}
+
+async function ultimoAvisoActualizacion(): Promise<number | null> {
+  try {
+    const raw = await AsyncStorage.getItem(UPDATE_NOTIFIED_KEY);
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+async function recordarAvisoActualizacion(versionCode: number): Promise<void> {
+  try {
+    await AsyncStorage.setItem(UPDATE_NOTIFIED_KEY, String(versionCode));
+  } catch {
+    /* si el storage falla, a lo sumo el aviso se repite en el próximo ciclo */
+  }
+}
+
 export async function syncNotificationsToDevice(): Promise<number> {
+  // La actualización se comprueba PRIMERO y por separado: es independiente de los avisos de planta
+  // y no comparte ni su idempotencia ni sus preferencias de silencio. Va con su propio try/catch
+  // dentro, así que si el endpoint de versión falla, lo de abajo sigue igual.
+  const avisosActualizacion = await avisarSiHayActualizacion();
+
   const [previo, pendientes] = await Promise.all([lastNotifiedId(), diferidos()]);
   const [{ notifications }] = await Promise.all([fetchNotifications(), loadNotificationPrefs()]);
   const prefs = getNotificationPrefs();
@@ -101,7 +168,7 @@ export async function syncNotificationsToDevice(): Promise<number> {
   const tope = candidatos.length > 0 ? Math.max(previo, ...candidatos.map((n) => n.id)) : previo;
   await Promise.all([recordarDiferidos(aplazados), tope > previo ? rememberNotifiedId(tope) : Promise.resolve()]);
 
-  if (nuevos.length === 0) return 0;
+  if (nuevos.length === 0) return avisosActualizacion;
 
   await ensureAndroidChannel();
 
@@ -137,7 +204,7 @@ export async function syncNotificationsToDevice(): Promise<number> {
     }
   }
 
-  return nuevos.length;
+  return nuevos.length + avisosActualizacion;
 }
 
 /**

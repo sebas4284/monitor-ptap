@@ -12,7 +12,12 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { hayActualizacion, tamanoLegible, type AppRelease } from './app-release-compare';
+import {
+  hayActualizacion,
+  tamanoLegible,
+  decidirAvisoActualizacion,
+  type AppRelease,
+} from './app-release-compare';
 
 function release(over: Partial<AppRelease> = {}): AppRelease {
   return {
@@ -61,4 +66,62 @@ test('tamaño: se muestra en MB para no mandar a nadie a una descarga grande a c
   assert.equal(tamanoLegible(35_503_027), '34 MB');
   assert.equal(tamanoLegible(null), null);
   assert.equal(tamanoLegible(0), null);
+});
+
+// ── Aviso en el panel del telefono ────────────────────────────────────────────────────────────
+//
+// Lo que protege: la tarea de fondo corre cada ~15 minutos. Sin recordar de que version ya se
+// aviso, el panel del telefono se llenaria del mismo aviso indefinidamente. Es el mismo problema
+// que `ptap_last_notified_id` resuelve para los avisos de planta.
+
+test('aviso: version nueva y nunca avisada -> avisa, con la version en el titulo', () => {
+  const a = decidirAvisoActualizacion(release({ version: '1.4.0', versionCode: 9 }), 8, null);
+  assert.notEqual(a, null);
+  assert.match(a!.titulo, /1\.4\.0/);
+  assert.equal(a!.versionCode, 9);
+  assert.match(a!.cuerpo, /Toca para descargarla/);
+});
+
+test('aviso: ya se aviso de ESA version -> no repite (esto evita el aviso cada 15 min)', () => {
+  assert.equal(decidirAvisoActualizacion(release({ versionCode: 9 }), 8, 9), null);
+});
+
+test('aviso: se aviso de una POSTERIOR -> no repite', () => {
+  assert.equal(decidirAvisoActualizacion(release({ versionCode: 9 }), 8, 10), null);
+});
+
+test('aviso: se aviso de una ANTERIOR -> vuelve a avisar de la nueva', () => {
+  const a = decidirAvisoActualizacion(release({ versionCode: 10 }), 8, 9);
+  assert.equal(a?.versionCode, 10);
+});
+
+test('aviso: la instalada ya esta al dia -> no avisa', () => {
+  assert.equal(decidirAvisoActualizacion(release({ versionCode: 9 }), 9, null), null);
+});
+
+test('aviso: en web (versionCode instalado null) -> no avisa', () => {
+  assert.equal(decidirAvisoActualizacion(release({ versionCode: 9 }), null, null), null);
+});
+
+test('aviso: el servidor no contesto (release null) -> no avisa y no lanza', () => {
+  assert.equal(decidirAvisoActualizacion(null, 8, null), null);
+});
+
+test('aviso: sin versionCode publicado -> no avisa (sin certeza no se molesta a nadie)', () => {
+  assert.equal(decidirAvisoActualizacion(release({ versionCode: null }), 8, null), null);
+});
+
+test('aviso: las notas del release van en el cuerpo, y el tamano en la llamada a la accion', () => {
+  const a = decidirAvisoActualizacion(
+    release({ versionCode: 9, notes: 'Vuelve el mando de valvulas.', sizeBytes: 35_587_387 }),
+    8,
+    null,
+  );
+  assert.match(a!.cuerpo, /Vuelve el mando de valvulas\./);
+  assert.match(a!.cuerpo, /\(34 MB\)/);
+});
+
+test('aviso: sin notas ni tamano el cuerpo sigue siendo util', () => {
+  const a = decidirAvisoActualizacion(release({ versionCode: 9, notes: null, sizeBytes: null }), 8, null);
+  assert.equal(a!.cuerpo, '▸ Toca para descargarla e instalarla.');
 });
