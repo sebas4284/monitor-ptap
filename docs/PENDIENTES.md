@@ -219,6 +219,24 @@ notificaciones y el del socket. Nada de control de acceso quedó atascado detrá
 > 🔴 **El detector encontró 10 plantas con sensores congelados** en su primer barrido — cuatro más
 > de las que se habían visto revisando a mano. Ver §Sensores congelados abajo.
 
+### 🟡 Ícono de la app actualizado — pusheado a `yosh`, falta desplegar (2026-08-26)
+
+Commit `2c985e3` (`fix(apk): el icono de la app seguia con la marca vieja, antes del rebrand a
+Aquora`) ya está en `origin/yosh` (empujado desde acá; **no** se corrió nada en la VM — sin acceso
+SSH/VPN desde este entorno, así que este paso queda para quien sí lo tenga). Reemplaza
+`icon.png`/`android-icon-foreground.png`/`android-icon-monochrome.png`/`favicon.png` (que seguían
+con la marca "A" de antes del rebrand) por la "X" de Aquora, y saca `android-icon-background.png`
+(era la plantilla de guías de Expo sin editar, nunca un fondo real).
+
+- [ ] Desplegar por el procedimiento de arriba (`git fetch && reset --hard origin/yosh` en la VM +
+      `npm run build` + `pm2 restart`). Esto actualiza el **favicon de la web**, nada más — el
+      backend no toca el ícono de la APK.
+- [ ] **El ícono de la APK instalada NO cambia solo con desplegar.** Como con el resto de
+      `apps/mobile/`, hace falta recompilar y republicar el `.apk` (toolchain de
+      [`ANDROID_APK.md`](./ANDROID_APK.md), ver también la pendiente de recompilar sin el HMI, más
+      arriba en esta misma sección) — conviene agrupar ambos cambios en la misma recompilación en
+      vez de rehacer la toolchain (~6 GB, ~40 min) dos veces.
+
 Pendiente:
 
 - [ ] **NTP** — para que el KPI de latencia OPC sea fiable: `sudo timedatectl set-ntp true`
