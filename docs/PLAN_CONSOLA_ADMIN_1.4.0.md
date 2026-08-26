@@ -50,9 +50,19 @@ Cerradas el 2026-08-26. No reabrirlas sin un motivo nuevo.
 3. **El editor es un formulario conectado al valor en vivo.** Sin bloques visuales tipo Scratch, sin
    crear ni borrar señales.
 4. **Tutorial híbrido:** anclado en 4-5 pantallas, tarjetas autocontenidas para el resto.
-5. **Una sola publicación al final, como 1.4.0 / versionCode 9.**
+5. **Dos publicaciones** (revisado el 2026-08-26, antes era una sola al final):
+   - **1.3.1 / versionCode 9** — aviso de versión nueva fuera de la app, arreglo del icono, y el
+     modo desarrollador **solo de lectura**. Nada de esto puede corromper datos.
+   - **1.4.0 / versionCode 10** — el resto: novedades, informe por planta, ayuda, tutorial y la
+     **edición** del mapeo.
 
-**Orden de ejecución: D → A → B1 → B2 → C.**
+**Orden de ejecución: C.1 (lectura) → D → A → B1 → B2 → C.2-C.4 (edición).**
+
+La vista de solo lectura se adelanta a la 1.3.1 porque es útil por sí sola y no escribe nada. **La
+edición sigue después del informe por planta, y el motivo no ha cambiado:** sin el informe no hay
+forma de verificar que un canal reapuntado quedó bien. Cambiar el índice de `inletPressure1` en
+Cascajal y comprobarlo mirando el tablero a ojo es exactamente cómo se colaron los 409,50 psi sin
+que nadie lo notara.
 
 Novedades primero por ser autocontenida y pequeña. **La revisión por planta va antes del modo
 desarrollador porque sin ella no hay forma de verificar que un canal reapuntado quedó bien** —
@@ -356,7 +366,7 @@ write spec de Cascajal: `write.target.channel = "intOut"`, `commands.open = 4096
 0 a los 300 ms, `intOut` está en cero casi siempre y un filtro "oculta ceros" lo escondería justo
 cuando se quiere ver. **La excepción hace falta.**
 
-### C.1 — Solo lectura primero
+### C.1 — Solo lectura  ·  **sale en la 1.3.1**
 
 `GET /api/opc/raw/:plantId` (`system_config`). El pipeline ya guarda `latestBuffers`
 (`Map<browseName, RawBufferSample>`) por planta; se expone tal cual, con el NodeId
@@ -374,7 +384,7 @@ INT_OUT_CASCAJAL   ns=AQUATECH4  g=37DF3BEA-…   Int16[20]   (todos los índice
   [ 0]       0   → valve1           "Válvula 1"   🔒 no editable
 ```
 
-### C.2 — La edición
+### C.2 — La edición  ·  **1.4.0, después del informe por planta**
 
 `PATCH /api/opc/mapping/:plantId/:domainKey` con
 `{ index?, buffer?, sourceBuffer?, unit?, min?, max?, opMin?, opMax? }`.
@@ -437,14 +447,25 @@ override ya está en el JSON y lo marca aplicado, para que no se acumulen capas.
 
 ---
 
-## Publicación de la 1.4.0
+## Publicación
 
-**Una sola vez, cuando las cinco fases estén cerradas.** Este orden importa: el 2026-08-25 costó tres
+**Dos entregas.** El procedimiento es idéntico en las dos; solo cambian la versión y el contenido.
+
+**1.3.1 / versionCode 9** — aviso de versión nueva fuera de la app (`42c320b`), arreglo del icono
+(`2c985e3`) y el modo desarrollador de solo lectura. Nada de esto escribe en el mapeo.
+
+**1.4.0 / versionCode 10** — novedades, informe por planta, ayuda, tutorial y la edición del mapeo.
+
+> **Ojo con el aviso de versión nueva:** solo lo verá quien tenga instalada una versión que ya lo
+> incluya. Así que la **1.3.1 se anuncia con el banner de dentro de la app** (que ya funciona), y a
+> partir de ella el aviso del panel del teléfono empieza a servir — anunciará la 1.4.0.
+
+### Procedimiento (el mismo para las dos) Este orden importa: el 2026-08-25 costó tres
 intentos por saltárselo.
 
 ```bash
 # 1. En el repo: subir version y versionCode
-#    apps/mobile/app.json  ->  "version": "1.4.0"  y  "versionCode": 9
+#    apps/mobile/app.json  ->  1.3.1 / 9   (y luego 1.4.0 / 10)
 
 # 2. Notas para los usuarios
 #    docs/NOVEDADES.md  +  ~/deploy-scripts/notas-version.txt   (en la VM)
@@ -477,9 +498,9 @@ actualización que nunca se podía satisfacer.
 # La versión REAL del binario, no la que anuncia nadie
 ssh ptap 'A=$(ls ~/android-build/sdk/build-tools/*/aapt2|sort -V|tail -1); "$A" dump badging \
   /var/www/ptap-download/monitor-ptap.apk | sed -n 1p'
-# debe decir versionCode='9' versionName='1.4.0'
+# debe coincidir con app.json: 1.3.1 -> versionCode='9'  ·  1.4.0 -> versionCode='10'
 
-curl -s https://aquora.xpertic.co/api/app/version    # 1.4.0 / 9
+curl -s https://aquora.xpertic.co/api/app/version    # la version que toque
 ```
 
 - **Peso ~34 MB.** Si sube a 92, se perdió `buildArchs` de `app.config.js` y el APK trae las cuatro

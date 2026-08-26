@@ -87,6 +87,22 @@ export class PlantPipelineService implements OnModuleInit, OnModuleDestroy {
     if (this.sweepTimer) clearInterval(this.sweepTimer);
   }
 
+  /**
+   * Últimas muestras crudas de una planta, para el modo desarrollador (solo lectura).
+   *
+   * Devuelve la MISMA referencia que usa el pipeline, no una copia: el consumidor es un endpoint de
+   * diagnóstico que serializa y descarta. Copiar 50 flotantes por buffer y 6 buffers por planta en
+   * cada consulta sería trabajo tirado. Quien la reciba no debe mutarla.
+   */
+  getLatestBuffers(plantId: string): Map<string, RawBufferSample> | undefined {
+    return this.latestBuffers.get(plantId);
+  }
+
+  /** El mapping cargado, para que el diagnóstico pueda cruzar índices con señales. */
+  getMapping(): LoadedMapping {
+    return this.mapping;
+  }
+
   getDeadLetter() {
     return this.deadLetter.snapshot();
   }
