@@ -2,6 +2,9 @@ import { memo } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '../constants/colors';
+import { Font } from '../constants/theme';
+import { Card } from './ui/Card';
+import { Badge } from './ui/Badge';
 import type { SignalDto, UnusableReason } from '../services/api';
 import { directionFor } from '../services/signal-kind';
 import { sameSignalCard } from './memo-compare';
@@ -54,7 +57,7 @@ function GaugeCardBase({
     direction === 'inlet' ? Colors.accentInlet : direction === 'outlet' ? Colors.accentOutlet : Colors.textPrimary;
 
   return (
-    <View style={[styles.card, frozen && styles.cardFrozen]}>
+    <Card frozen={frozen} style={styles.centered}>
       <View style={styles.cabecera}>
         <View style={styles.iconWrap}>
           <Ionicons name={icon as never} size={20} color={Colors.primary} />
@@ -67,16 +70,8 @@ function GaugeCardBase({
 
       {(frozen || outOfRange) && (
         <View style={styles.tagsRow}>
-          {frozen && (
-            <View style={styles.frozenTag}>
-              <Text style={styles.frozenTagText}>congelado</Text>
-            </View>
-          )}
-          {outOfRange && (
-            <View style={styles.rangeTag}>
-              <Text style={styles.rangeTagText}>fuera de rango</Text>
-            </View>
-          )}
+          {frozen && <Badge label="congelado" tone={Colors.textSecondary} />}
+          {outOfRange && <Badge label="fuera de rango" tone={Colors.danger} />}
         </View>
       )}
 
@@ -103,7 +98,7 @@ function GaugeCardBase({
           {hasMax ? `Máx: ${fmt(signal.opMax as number)}` : ''}
         </Text>
       )}
-    </View>
+    </Card>
   );
 }
 
@@ -114,17 +109,8 @@ function GaugeCardBase({
 export const GaugeCard = memo(GaugeCardBase, sameSignalCard);
 
 const styles = StyleSheet.create({
-  card: {
-    flex: 1,
-    margin: 5,
-    padding: 14,
-    backgroundColor: Colors.bg,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: Colors.divider,
-    alignItems: 'center',
-  },
-  cardFrozen: { opacity: 0.55 },
+  // El «look de tarjeta» vive en <Card>; aquí queda solo el extra propio de esta (centrar).
+  centered: { alignItems: 'center' },
   // La cabecera empuja la campana a la derecha sin mover el icono de su sitio.
   cabecera: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', alignSelf: 'stretch' },
   iconWrap: {
@@ -138,26 +124,8 @@ const styles = StyleSheet.create({
   },
   name: { fontSize: 12, fontWeight: '600', color: Colors.textSecondary, marginBottom: 8, textAlign: 'center' },
   tagsRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 6, marginBottom: 8 },
-  rangeTag: {
-    backgroundColor: Colors.danger + '22',
-    borderColor: Colors.danger,
-    borderWidth: 1,
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  rangeTagText: { fontSize: 11, fontWeight: '700', color: Colors.danger, letterSpacing: 0.5 },
-  frozenTag: {
-    backgroundColor: Colors.textSecondary + '22',
-    borderColor: Colors.textSecondary,
-    borderWidth: 1,
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  frozenTagText: { fontSize: 11, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.5 },
-  value: { fontSize: 28, fontWeight: '800', marginBottom: 6, textAlign: 'center', fontVariant: ['tabular-nums'] },
-  unit: { fontSize: 14, fontWeight: '400', color: Colors.textSecondary },
+  value: { fontSize: Font.size.display, fontWeight: Font.weight.heavy, marginBottom: 6, textAlign: 'center', fontVariant: ['tabular-nums'] },
+  unit: { fontSize: Font.size.body, fontWeight: Font.weight.regular, color: Colors.textSecondary },
   rangeText: { fontSize: 11, fontWeight: '600', color: Colors.textSecondary },
   noData: { marginBottom: 6, alignItems: 'center' },
   noDataValue: { fontSize: 20, fontWeight: '700', color: Colors.neutral },

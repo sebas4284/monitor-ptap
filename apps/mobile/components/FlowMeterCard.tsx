@@ -2,6 +2,9 @@ import { memo } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '../constants/colors';
+import { Font, withAlpha } from '../constants/theme';
+import { Card } from './ui/Card';
+import { Badge } from './ui/Badge';
 import type { SignalDto } from '../services/api';
 import { directionFor } from '../services/signal-kind';
 import { GaugeCard } from './GaugeCard';
@@ -56,8 +59,8 @@ function FlowMeterCardBase({
   const accent = direction === 'inlet' ? Colors.accentInlet : direction === 'outlet' ? Colors.accentOutlet : Colors.primary;
 
   return (
-    <View style={[styles.card, frozen && styles.cardFrozen]}>
-      <View style={[styles.headerBar, { backgroundColor: accent + '22', borderColor: accent }]}>
+    <Card frozen={frozen}>
+      <View style={[styles.headerBar, { backgroundColor: withAlpha(accent, 0.13), borderColor: accent }]}>
         <Ionicons name={icon as never} size={16} color={accent} />
         <Text style={[styles.headerText, { color: accent }]} numberOfLines={1}>
           {(signal.label ?? name).toUpperCase()}
@@ -66,16 +69,8 @@ function FlowMeterCardBase({
 
       {(frozen || outOfRange) && (
         <View style={styles.tagsRow}>
-          {frozen && (
-            <View style={styles.frozenTag}>
-              <Text style={styles.frozenTagText}>congelado</Text>
-            </View>
-          )}
-          {outOfRange && (
-            <View style={styles.rangeTag}>
-              <Text style={styles.rangeTagText}>fuera de rango</Text>
-            </View>
-          )}
+          {frozen && <Badge label="congelado" tone={Colors.textSecondary} />}
+          {outOfRange && <Badge label="fuera de rango" tone={Colors.danger} />}
         </View>
       )}
 
@@ -94,7 +89,7 @@ function FlowMeterCardBase({
           <Text style={styles.barLabelText}>100%</Text>
         </View>
       )}
-    </View>
+    </Card>
   );
 }
 
@@ -102,16 +97,6 @@ function FlowMeterCardBase({
 export const FlowMeterCard = memo(FlowMeterCardBase, sameSignalCard);
 
 const styles = StyleSheet.create({
-  card: {
-    flex: 1,
-    margin: 5,
-    padding: 14,
-    backgroundColor: Colors.bg,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: Colors.divider,
-  },
-  cardFrozen: { opacity: 0.55 },
   headerBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -126,26 +111,8 @@ const styles = StyleSheet.create({
   },
   headerText: { fontSize: 11, fontWeight: '700', letterSpacing: 0.5, flexShrink: 1 },
   tagsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 8 },
-  rangeTag: {
-    backgroundColor: Colors.danger + '22',
-    borderColor: Colors.danger,
-    borderWidth: 1,
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  rangeTagText: { fontSize: 11, fontWeight: '700', color: Colors.danger, letterSpacing: 0.5 },
-  frozenTag: {
-    backgroundColor: Colors.textSecondary + '22',
-    borderColor: Colors.textSecondary,
-    borderWidth: 1,
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  frozenTagText: { fontSize: 11, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.5 },
-  value: { fontSize: 28, fontWeight: '800', color: Colors.textPrimary, marginBottom: 10, fontVariant: ['tabular-nums'] },
-  unit: { fontSize: 14, fontWeight: '400', color: Colors.textSecondary },
+  value: { fontSize: Font.size.display, fontWeight: Font.weight.heavy, color: Colors.textPrimary, marginBottom: 10, fontVariant: ['tabular-nums'] },
+  unit: { fontSize: Font.size.body, fontWeight: Font.weight.regular, color: Colors.textSecondary },
   barOuter: {
     height: 8,
     borderRadius: 4,

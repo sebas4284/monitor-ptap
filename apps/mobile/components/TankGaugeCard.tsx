@@ -3,6 +3,9 @@ import { memo, useEffect, useRef } from 'react';
 import type { TankAutonomyDto } from '../services/api';
 import type { TankView } from '../services/tanks';
 import Colors from '../constants/colors';
+import { Font } from '../constants/theme';
+import { Card } from './ui/Card';
+import { Badge } from './ui/Badge';
 import { BotonSilencio } from './BotonSilencio';
 import { sameTankCard } from './memo-compare';
 
@@ -93,22 +96,14 @@ function TankGaugeCardBase({ tank, frozen = false, plantId }: Props) {
   });
 
   return (
-    <View style={[styles.card, frozen && styles.cardFrozen]}>
+    <Card frozen={frozen}>
       <View style={styles.nameRow}>
         <Text style={styles.name}>{tank.name}</Text>
         {plantId && sujeto ? (
           <BotonSilencio plantId={plantId} subject={sujeto} etiqueta={tank.name} />
         ) : null}
-        {frozen && (
-          <View style={styles.frozenTag}>
-            <Text style={styles.frozenTagText}>congelado</Text>
-          </View>
-        )}
-        {outOfRange && (
-          <View style={styles.rangeTag}>
-            <Text style={styles.rangeTagText}>fuera de rango</Text>
-          </View>
-        )}
+        {frozen && <Badge label="congelado" tone={Colors.textSecondary} />}
+        {outOfRange && <Badge label="fuera de rango" tone={Colors.danger} />}
       </View>
 
       <View style={styles.chipsRow}>
@@ -161,7 +156,7 @@ function TankGaugeCardBase({ tank, frozen = false, plantId }: Props) {
           />
         )}
       </View>
-    </View>
+    </Card>
   );
 }
 
@@ -214,36 +209,8 @@ function autonomiaTexto(a: TankAutonomyDto | null): { texto: string; pie: string
 }
 
 const styles = StyleSheet.create({
-  card: {
-    flex: 1,
-    margin: 5,
-    padding: 14,
-    backgroundColor: Colors.bg,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: Colors.divider,
-  },
-  cardFrozen: { opacity: 0.55 },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10, flexWrap: 'wrap' },
-  name: { fontSize: 13, fontWeight: '700', color: Colors.textPrimary },
-  rangeTag: {
-    backgroundColor: Colors.danger + '22',
-    borderColor: Colors.danger,
-    borderWidth: 1,
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  rangeTagText: { fontSize: 11, fontWeight: '700', color: Colors.danger, letterSpacing: 0.5 },
-  frozenTag: {
-    backgroundColor: Colors.textSecondary + '22',
-    borderColor: Colors.textSecondary,
-    borderWidth: 1,
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  frozenTagText: { fontSize: 11, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.5 },
+  name: { fontSize: Font.size.small, fontWeight: Font.weight.bold, color: Colors.textPrimary },
   chipsRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
   chip: {
     backgroundColor: Colors.surface,
@@ -254,7 +221,7 @@ const styles = StyleSheet.create({
   },
   chipLabel: { fontSize: 11, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.5 },
   chipValue: { fontSize: 12, fontWeight: '700', color: Colors.textPrimary },
-  pctText: { fontSize: 34, fontWeight: '800', color: Colors.textPrimary, textAlign: 'center', fontVariant: ['tabular-nums'] },
+  pctText: { fontSize: Font.size.hero, fontWeight: Font.weight.heavy, color: Colors.textPrimary, textAlign: 'center', fontVariant: ['tabular-nums'] },
   excedido: {
     fontSize: 12,
     color: Colors.danger,
