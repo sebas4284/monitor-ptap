@@ -8,6 +8,7 @@ import { OpcObservabilityModule } from '../infrastructure/connectivity/opc-obser
 import { AuthModule } from './auth/auth.module';
 import { CommandsModule } from './commands/commands.module';
 import { HealthModule } from './health/health.module';
+import { MappingModule } from './mapping/mapping.module';
 import { AppReleaseModule } from './app-release/app-release.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { PlantsModule } from './plants/plants.module';
@@ -29,6 +30,8 @@ import { UsersModule } from './users/users.module';
     ReportsModule,
     NotificationsModule,
     AppReleaseModule,
+    // Edición del mapeo desde la app: escribe en MySQL y empuja al pipeline en caliente.
+    MappingModule,
   ],
 })
 export class AppModule implements NestModule {

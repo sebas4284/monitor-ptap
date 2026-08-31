@@ -3,6 +3,7 @@ import { Subject } from 'rxjs';
 import { CONNECTIVITY_ADAPTER, CONNECTIVITY_CONFIG } from '../connectivity.tokens';
 import type { ConnectivityConfig } from '../connectivity.config';
 import { loadMapping, type LoadedMapping } from '../mapping/opc-mapping.loader';
+import { aplicarOverrides, type MappingOverride } from '../mapping/mapping-overrides';
 import type { ConnectivityAdapter, RawBufferSample, RawPlantFrame } from '../ports/connectivity-adapter.port';
 import { DeadLetterBuffer } from './dead-letter.buffer';
 import { LivenessTracker } from './liveness.tracker';
@@ -25,8 +26,15 @@ import { TankAutonomyStore } from './tank-autonomy.store';
 @Injectable()
 export class PlantPipelineService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger('PlantPipeline');
-  private readonly mapping: LoadedMapping;
-  private readonly engine: MappingEngine;
+  /**
+   * El mapeo tal como está en `config/opc_mapping.json`, sin correcciones. Se conserva porque el
+   * efectivo se RECALCULA desde él cada vez que cambian los overrides: aplicarlos sobre el
+   * anterior los iría acumulando y no habría forma de volver al JSON sin reiniciar el proceso.
+   */
+  private readonly baseMapping: LoadedMapping;
+  /** El mapeo que rige AHORA: el base con las correcciones puestas. */
+  private mapping: LoadedMapping;
+  private engine: MappingEngine;
   private readonly liveness: LivenessTracker;
   private readonly deadLetter: DeadLetterBuffer;
 
@@ -48,7 +56,12 @@ export class PlantPipelineService implements OnModuleInit, OnModuleDestroy {
     @Inject(TankAutonomyStore) private readonly autonomia: TankAutonomyStore,
   ) {
     this.deadLetter = new DeadLetterBuffer(config.deadLetterCapacity);
-    this.mapping = loadMapping();
+    this.baseMapping = loadMapping();
+    // Arranca SIN correcciones, a propósito. Las trae `MappingOverrideService` en cuanto la base
+    // de datos está lista: este módulo no puede depender de MySQL (lo importa también
+    // main.telemetry.ts, que arranca sin base), así que los overrides se EMPUJAN hacia aquí en vez
+    // de leerse desde aquí.
+    this.mapping = this.baseMapping;
     this.engine = new MappingEngine(this.mapping);
     this.liveness = new LivenessTracker(config.liveness.liveSec, config.liveness.windowSec);
     for (const p of this.mapping.plants) this.liveness.configurePlant(p.plantId, p.livenessWindowSec);
@@ -98,9 +111,45 @@ export class PlantPipelineService implements OnModuleInit, OnModuleDestroy {
     return this.latestBuffers.get(plantId);
   }
 
-  /** El mapping cargado, para que el diagnóstico pueda cruzar índices con señales. */
+  /**
+   * El mapping que RIGE, con las correcciones aplicadas. Es lo que tiene que ver el diagnóstico:
+   * la pantalla de buffers crudos es donde se comprueba que un índice reapuntado quedó bien, y
+   * enseñar ahí el JSON sin corregir sería enseñar algo que el sistema ya no está usando.
+   */
   getMapping(): LoadedMapping {
     return this.mapping;
+  }
+
+  /** El mapeo del repositorio, sin correcciones. Para calcular «de → a» y para revertir. */
+  getBaseMapping(): LoadedMapping {
+    return this.baseMapping;
+  }
+
+  /**
+   * Aplica las correcciones del mapeo EN CALIENTE, sin reiniciar el proceso.
+   *
+   * Puede hacerse porque un override solo toca la capa de dominio —índice, unidad, rangos— y no
+   * NodeIds ni buffers: la Subscription OPC UA se queda como está, y basta con reconstruir el
+   * MappingEngine y volver a componer los snapshots desde las muestras que ya hay en RAM. Por eso
+   * el efecto es inmediato y no hay `pm2 restart` por medio (que además tumbaría el puente ~5 s).
+   */
+  setOverrides(overrides: MappingOverride[]): void {
+    this.mapping = aplicarOverrides(this.baseMapping, overrides);
+    this.engine = new MappingEngine(this.mapping);
+
+    // OBLIGATORIO limpiar la firma del diff. La firma omite a propósito los campos estáticos del
+    // mapping (unit, label, opMin, opMax, confidence) porque «no cambian sin reiniciar» — y eso
+    // deja de ser verdad justo aquí. Sin este clear, corregir solo la unidad de una señal daría la
+    // misma firma, el snapshot se descartaría por idéntico, y la corrección quedaría guardada y
+    // aplicada pero invisible en el tablero hasta el siguiente cambio de un valor.
+    this.lastSignature.clear();
+    for (const p of this.mapping.plants) this.rebuildAndMaybeEmit(p.plantId);
+
+    this.logger.log(
+      overrides.length === 0
+        ? 'mapeo recargado sin correcciones (el del repositorio)'
+        : `mapeo recargado con ${overrides.length} corrección(es), sin reiniciar el proceso`,
+    );
   }
 
   getDeadLetter() {
@@ -108,7 +157,7 @@ export class PlantPipelineService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Lista de plantas con su liveness actual (para GET /api/plants), incluso sin snapshot aún. */
-  listPlants(): Array<{ plantId: string; displayName: string; liveness: ReturnType<LivenessTracker['get']>; bridgeStatus: string }> {
+  listPlants(): { plantId: string; displayName: string; liveness: ReturnType<LivenessTracker['get']>; bridgeStatus: string }[] {
     const bridgeStatus = this.adapter.getBridgeStatus();
     const healthy = bridgeStatus === 'Connected';
     return this.mapping.plants.map((p) => ({
