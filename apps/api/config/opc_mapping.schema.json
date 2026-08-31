@@ -180,9 +180,9 @@
       },
       "allOf": [
         {
-          "description": "Una señal escribible solo puede existir con semántica confirmada.",
+          "description": "Una señal escribible NO puede ser `estimated`: un valor derivado o calculado no es un canal de mando. `confirmed` = respaldado por documento oficial de la planta; `inferred` = capturado en campo con el probador de canales y escrito desde la consola de administración, que queda auditado con nombre y fecha. Hasta el 2026-08-31 esta regla exigía `confirmed` a secas, y era correcta mientras el mapeo solo se editaba por git con revisión. Al abrir la edición desde la app dejó de serlo por el motivo contrario al que parece: forzar `confirmed` obligaría a que un valor tecleado en un móvil se declarara respaldado por documentación oficial, y entonces nadie podría distinguir después cuál se verificó de verdad. Admitir `inferred` no relaja nada: hace que el mapeo diga la verdad sobre su propia procedencia, que es de lo que este campo sirve. Ver docs/PRUEBA_VALVULA_CARBONERO.md.",
           "if": { "properties": { "writable": { "const": true } }, "required": ["writable"] },
-          "then": { "properties": { "confidence": { "const": "confirmed" } } }
+          "then": { "properties": { "confidence": { "enum": ["confirmed", "inferred"] } } }
         },
         {
           "description": "Una señal writable DEBE declarar su write spec (comando→buffer/bit).",
@@ -190,7 +190,7 @@
           "then": { "required": ["write"] }
         },
         {
-          "description": "El write spec solo puede existir en una señal writable (⇒ confirmed por la regla de arriba).",
+          "description": "El write spec solo puede existir en una señal writable (⇒ confirmed o inferred por la regla de arriba, nunca estimated).",
           "if": { "required": ["write"] },
           "then": { "properties": { "writable": { "const": true } }, "required": ["writable"] }
         },
@@ -204,7 +204,7 @@
     "writeSpec": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Fase 5: traducción de un comando de dominio a una escritura de buffer/bit. Solo en señales writable (⇒ confidence:confirmed). La semántica vive aquí, nunca en el código (regla 2).",
+      "description": "Fase 5: traducción de un comando de dominio a una escritura de buffer/bit. Solo en señales writable (⇒ confidence confirmed o inferred, nunca estimated). La semántica vive aquí, nunca en el código (regla 2). Un spec con confidence inferred es uno capturado en campo con el probador de canales y escrito desde la consola de administración: funciona igual, y el campo existe para que se sepa cuál es cuál.",
       "required": ["target", "commands", "readBack", "timeoutMs", "rollbackValue", "permission"],
       "allOf": [
         {
