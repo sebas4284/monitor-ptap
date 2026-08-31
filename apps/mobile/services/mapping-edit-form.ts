@@ -81,6 +81,14 @@ export interface MappingPatch {
   max?: number | null;
   opMin?: number | null;
   opMax?: number | null;
+
+  // ── Mando (solo válvulas) ── Lo arma `mapping-mando-form.ts`; viven aquí porque el parche que
+  // viaja al servidor es uno solo, aunque se rellene desde dos formularios distintos.
+  writeIndex?: number;
+  writeCommands?: Record<string, number | boolean>;
+  writeMode?: 'absolute' | 'bitmask';
+  stateOpen?: number | null;
+  stateClosed?: number | null;
 }
 
 /** Texto tal como se enseña en el campo. `null` se escribe como vacío. */
@@ -181,7 +189,9 @@ export function parsearBorrador(borrador: Borrador, actual: ValoresSenal): Parse
 }
 
 export interface Cambio {
-  campo: CampoEditable;
+  /** Clave del campo. Texto y no `CampoEditable` porque el mando usa rutas anidadas
+   *  (`write.commands`) que no son campos planos de la señal. */
+  campo: string;
   etiqueta: string;
   ingles: string;
   de: string;

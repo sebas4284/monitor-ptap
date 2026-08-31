@@ -18,6 +18,8 @@ import { ListSkeleton } from '../../components/Skeleton';
 import { OfflineNotice } from '../../components/OfflineNotice';
 import { SenalDetalle } from '../../components/SenalDetalle';
 import { EditarSenalDialog } from '../../components/EditarSenalDialog';
+import { ProbarCanalDialog } from '../../components/ProbarCanalDialog';
+import { valorEnIndice } from '../../services/mapping-edit-form';
 import Colors from '../../constants/colors';
 
 /**
@@ -59,6 +61,7 @@ function Canal({
   onToggle,
   onEditar,
   onRevertir,
+  onProbar,
 }: {
   c: RawChannel;
   clave: string;
@@ -69,6 +72,7 @@ function Canal({
   onToggle: (clave: string) => void;
   onEditar: (senal: SenalEditable) => void;
   onRevertir: (senal: SenalEditable) => void;
+  onProbar: (senal: SenalEditable) => void;
 }) {
   return (
     <View>
@@ -126,6 +130,7 @@ function Canal({
           revirtiendo={revirtiendo}
           onEditar={() => onEditar(editable)}
           onRevertir={() => onRevertir(editable)}
+          onProbar={editable.mando ? () => onProbar(editable) : undefined}
         />
       ) : null}
     </View>
@@ -141,6 +146,7 @@ function Buffer({
   onToggle,
   onEditar,
   onRevertir,
+  onProbar,
 }: {
   b: RawBufferView;
   editables: Map<string, SenalEditable>;
@@ -150,6 +156,7 @@ function Buffer({
   onToggle: (clave: string) => void;
   onEditar: (senal: SenalEditable) => void;
   onRevertir: (senal: SenalEditable) => void;
+  onProbar: (senal: SenalEditable) => void;
 }) {
   const sinMuestras = b.receivedLength === null;
   const desajuste = !sinMuestras && b.declaredLength !== null && b.receivedLength !== b.declaredLength;
@@ -214,6 +221,7 @@ function Buffer({
               onToggle={onToggle}
               onEditar={onEditar}
               onRevertir={onRevertir}
+              onProbar={onProbar}
             />
           );
         })
@@ -245,6 +253,7 @@ export default function DesarrolladorScreen() {
   const [plantId, setPlantId] = useState(selectedPlant.id);
   const [expandido, setExpandido] = useState<string | null>(null);
   const [editando, setEditando] = useState<SenalEditable | null>(null);
+  const [probando, setProbando] = useState<SenalEditable | null>(null);
   const [revirtiendoKey, setRevirtiendoKey] = useState<string | null>(null);
   const [ultimoCambio, setUltimoCambio] = useState<string | null>(null);
   const [errorCambio, setErrorCambio] = useState<string | null>(null);
@@ -425,6 +434,7 @@ export default function DesarrolladorScreen() {
                 onToggle={(clave) => setExpandido((actual) => (actual === clave ? null : clave))}
                 onEditar={(senal) => setEditando(senal)}
                 onRevertir={(senal) => void revertir(senal)}
+                onProbar={(senal) => setProbando(senal)}
               />
             ))}
 
@@ -440,6 +450,23 @@ export default function DesarrolladorScreen() {
           </>
         )}
       </ScrollView>
+
+      {probando?.mando ? (
+        <ProbarCanalDialog
+          plantId={plantId}
+          channel={probando.mando.channel}
+          sourceBuffer={probando.mando.browseName}
+          index={probando.mando.index}
+          domainKey={probando.domainKey}
+          valorActual={valorEnIndice(muestraDe(probando.mando.browseName), probando.mando.index)?.value ?? null}
+          onCerrar={() => {
+            setProbando(null);
+            // Una prueba deja el canal como estaba, pero puede haber movido OTRAS posiciones —que es
+            // justo lo que se buscaba ver—, así que se repide la tabla.
+            refrescarTodo();
+          }}
+        />
+      ) : null}
 
       {editando ? (
         <EditarSenalDialog

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { SenalEditable } from '../services/mapping-edit';
+import { comandosComoTexto } from '../services/mapping-mando-form';
 import { formatWhen } from '../services/notifications';
 import Colors from '../constants/colors';
 
@@ -44,12 +45,15 @@ export function SenalDetalle({
   revirtiendo,
   onEditar,
   onRevertir,
+  onProbar,
 }: {
   senal: SenalEditable;
   puedeEditar: boolean;
   revirtiendo: boolean;
   onEditar: () => void;
   onRevertir: () => void;
+  /** Abre el probador apuntado al canal de mando de esta válvula. Ausente = no se ofrece. */
+  onProbar?: () => void;
 }) {
   // La reversión pide confirmación en el sitio, sin diálogo: deshace un cambio de configuración
   // real y un toque accidental en una lista larga no debería poder hacerlo.
@@ -91,6 +95,42 @@ export function SenalDetalle({
       <Dato etiqueta="Rango operativo" valor={`${num(senal.opMin)} … ${num(senal.opMax)}`} ingles="opMin / opMax" />
       <Dato etiqueta="Confianza" valor={senal.confidence} ingles="confidence" />
 
+      {senal.mando ? (
+        <>
+          <Text style={styles.seccion}>Canal de mando</Text>
+          <Dato etiqueta="Sale por" valor={`${senal.mando.browseName} [${senal.mando.index}]`} ingles="write.target" />
+          <Dato etiqueta="Verbos" valor={comandosComoTexto(senal.mando.commands)} ingles="write.commands" />
+          <Dato etiqueta="Escritura" valor={senal.mando.mode} ingles="write.mode" />
+          {senal.mando.stateOpen !== null || senal.mando.stateClosed !== null ? (
+            <Dato
+              etiqueta="Estado"
+              valor={`abierta ${senal.mando.stateOpen ?? '—'} · cerrada ${senal.mando.stateClosed ?? '—'}`}
+              ingles="stateEncoding"
+            />
+          ) : null}
+
+          {/* Que el mando sea `inferred` significa que su codificación se capturó en campo o se
+              heredó, no que venga de un documento de la planta. Decirlo aquí es lo que impide que
+              alguien lea el valor como un hecho verificado. */}
+          {senal.confidence !== 'confirmed' ? (
+            <View style={styles.avisoMando}>
+              <Ionicons name="alert-circle-outline" size={14} color={Colors.warning} />
+              <Text style={styles.avisoMandoTexto}>
+                Esta codificación no está confirmada por documento de la planta. Compruébala con el
+                probador antes de fiarte de ella.
+              </Text>
+            </View>
+          ) : null}
+          {senal.mando.compuesta ? (
+            <Text style={styles.overrideTexto}>
+              Orden compuesta: escribe varias posiciones en secuencia. Sus verbos y su índice se
+              editan en el JSON con revisión, porque el orden de esos pasos es lo que impide
+              energizar dos direcciones a la vez.
+            </Text>
+          ) : null}
+        </>
+      ) : null}
+
       {senal.override ? (
         <>
           <Text style={styles.seccion}>Corrección en vigor</Text>
@@ -114,6 +154,16 @@ export function SenalDetalle({
             <Ionicons name="create-outline" size={16} color="#fff" />
             <Text style={styles.botonPrimarioTexto}>Editar</Text>
           </TouchableOpacity>
+
+          {/* El orden importa y la pantalla lo refleja: primero se SONDEA el canal para descubrir
+              qué valor hace qué, y solo después se escribe en el mapeo. Al revés sería usar el mapa
+              para explorar el terreno. */}
+          {senal.mando && onProbar ? (
+            <TouchableOpacity style={styles.botonPlano} onPress={onProbar} activeOpacity={0.8}>
+              <Ionicons name="pulse-outline" size={15} color={Colors.accentOutlet} />
+              <Text style={[styles.botonPlanoTexto, styles.botonProbar]}>Probar canal</Text>
+            </TouchableOpacity>
+          ) : null}
 
           {senal.override ? (
             confirmando ? (
@@ -191,6 +241,19 @@ const styles = StyleSheet.create({
   datoIngles: { fontFamily: mono, fontSize: 10.5, color: Colors.textSecondary },
   datoValor: { flex: 1.2, fontFamily: mono, fontSize: 11.5, color: Colors.textPrimary, textAlign: 'right' },
   overrideTexto: { fontSize: 11.5, color: Colors.textSecondary, lineHeight: 16 },
+  avisoMando: {
+    flexDirection: 'row',
+    gap: 7,
+    alignItems: 'flex-start',
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: Colors.warning + '66',
+    backgroundColor: Colors.warning + '15',
+    borderRadius: 8,
+    padding: 9,
+  },
+  avisoMandoTexto: { flex: 1, fontSize: 11, color: Colors.textPrimary, lineHeight: 15 },
+  botonProbar: { color: Colors.accentOutlet },
   bloqueada: {
     flexDirection: 'row',
     gap: 8,

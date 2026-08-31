@@ -59,6 +59,25 @@ export interface SenalEditableDto {
   mappingStatus: string;
   confidence: string;
   writable: boolean;
+  /**
+   * El canal de mando, solo en válvulas. Es lo que responde «¿qué valor abre y cuál cierra?», que en
+   * 8 de las 10 plantas sigue siendo una suposición heredada.
+   */
+  mando: {
+    channel: string;
+    /** El buffer de SALIDA por el que se manda; puede no ser el mismo del que se lee el estado. */
+    browseName: string;
+    index: number;
+    commands: Record<string, number | boolean>;
+    mode: string;
+    /**
+     * Orden COMPUESTA (varias escrituras en secuencia). Sus verbos y su índice **no se editan desde
+     * la app**: las reglas de orden son las que impiden energizar dos direcciones a la vez.
+     */
+    compuesta: boolean;
+    stateOpen: number | null;
+    stateClosed: number | null;
+  } | null;
   /** Por qué no se puede editar, si no se puede. `null` = editable. */
   bloqueada: string | null;
   /** Corrección en vigor, con lo que decía el repositorio antes. */
@@ -273,9 +292,25 @@ export class MappingOverrideService implements OnModuleInit {
       mappingStatus: s.mappingStatus,
       confidence: s.confidence,
       writable: s.writable,
-      bloqueada: s.writable
-        ? 'Es una señal de válvula: el mapeo de lo escribible exige documento oficial de la planta.'
+      mando: s.write
+        ? {
+            channel: s.write.target.channel,
+            browseName: s.write.target.sourceBuffer,
+            index: s.write.target.index,
+            commands: { ...s.write.commands },
+            mode: s.write.mode,
+            compuesta: Boolean(s.write.sequences),
+            stateOpen: s.stateEncoding?.open ?? null,
+            stateClosed: s.stateEncoding?.closed ?? null,
+          }
         : null,
+      // Desde el 2026-08-31 una válvula SÍ se edita. Lo único que queda bloqueado es una señal
+      // declarada writable a la que le falta el write spec: eso es una incoherencia del JSON y se
+      // arregla ahí, no parcheándola desde el móvil.
+      bloqueada:
+        s.writable && !s.write
+          ? 'Está declarada como válvula pero no tiene canal de mando en el mapeo. Eso hay que arreglarlo en el JSON.'
+          : null,
       override: override
         ? {
             patch: override.patch,

@@ -26,6 +26,12 @@ import {
   type CampoEditable,
   type MuestraBuffer,
 } from '../services/mapping-edit-form';
+import {
+  borradorMandoDesde,
+  parsearMando,
+  resumenMando,
+  type BorradorMando,
+} from '../services/mapping-mando-form';
 import { formatValorCrudo } from '../services/opc-raw';
 import Colors from '../constants/colors';
 
@@ -66,6 +72,11 @@ export function EditarSenalDialog({
 }) {
   const actual = useMemo(() => valoresDe(senal), [senal]);
   const [borrador, setBorrador] = useState<Borrador>(() => borradorDesde(actual));
+  // El mando solo existe en válvulas. `null` en una señal de lectura, y entonces la sección no se
+  // dibuja: ofrecer campos que no llevan a ningún sitio es peor que no ofrecerlos.
+  const [borradorMando, setBorradorMando] = useState<BorradorMando | null>(() =>
+    senal.mando ? borradorMandoDesde(senal.mando) : null,
+  );
   const [paso, setPaso] = useState<Paso>('formulario');
   const [guardando, setGuardando] = useState(false);
   const [errorServidor, setErrorServidor] = useState<string | null>(null);
@@ -73,8 +84,21 @@ export function EditarSenalDialog({
   useWebEscape(true, onCerrar);
 
   const { patch, errores } = useMemo(() => parsearBorrador(borrador, actual), [borrador, actual]);
-  const cambios = useMemo(() => resumenCambios(actual, patch), [actual, patch]);
-  const listo = hayCambios(patch) && !hayErrores(errores);
+  const mando = useMemo(
+    () => (borradorMando && senal.mando ? parsearMando(borradorMando, senal.mando) : { patch: {}, errores: {} }),
+    [borradorMando, senal.mando],
+  );
+
+  // El parche que viaja es UNO, aunque se rellene desde dos formularios: el servidor valida el
+  // resultado completo, y partirlo en dos peticiones dejaría la señal a medio corregir si la segunda
+  // fallara.
+  const patchTotal = useMemo(() => ({ ...patch, ...mando.patch }), [patch, mando.patch]);
+  const cambios = useMemo(
+    () => [...resumenCambios(actual, patch), ...(senal.mando ? resumenMando(senal.mando, mando.patch) : [])],
+    [actual, patch, senal.mando, mando.patch],
+  );
+  const cambiaElMando = senal.mando !== null && resumenMando(senal.mando, mando.patch).length > 0;
+  const listo = hayCambios(patchTotal) && !hayErrores(errores) && Object.keys(mando.errores).length === 0;
 
   // El buffer de DESTINO: el que quede tras el cambio, no el actual. Es lo que hay que mirar para
   // saber qué se va a leer.
@@ -90,11 +114,25 @@ export function EditarSenalDialog({
     setErrorServidor(null);
   }
 
+  function setMando(cambio: Partial<BorradorMando>) {
+    setBorradorMando((b) => (b ? { ...b, ...cambio } : b));
+    setErrorServidor(null);
+  }
+
+  function setVerbo(i: number, campo: 'verbo' | 'valor', texto: string) {
+    setBorradorMando((b) => {
+      if (!b) return b;
+      const comandos = b.comandos.map((f, j) => (j === i ? { ...f, [campo]: texto } : f));
+      return { ...b, comandos };
+    });
+    setErrorServidor(null);
+  }
+
   async function guardar() {
     setGuardando(true);
     setErrorServidor(null);
     try {
-      const resultado = await aplicarCorreccion(plantId, senal.domainKey, patch);
+      const resultado = await aplicarCorreccion(plantId, senal.domainKey, patchTotal);
       onGuardada(resultado);
     } catch (err) {
       // El servidor devuelve el motivo en texto llano (INDICE_FUERA_DE_RANGO dice cuál es el último
@@ -168,6 +206,155 @@ export function EditarSenalDialog({
                   </View>
                 ))}
 
+                {borradorMando && senal.mando ? (
+                  <>
+                    <View style={styles.separador} />
+                    <Text style={styles.seccionMando}>Canal de mando</Text>
+                    <Text style={styles.notaMando}>
+                      Qué valor abre y cuál cierra, y por dónde sale la orden. Sale por{' '}
+                      <Text style={styles.mono}>{senal.mando.browseName}</Text>.
+                    </Text>
+
+                    {senal.mando.compuesta ? (
+                      <View style={styles.avisoCompuesta}>
+                        <Ionicons name="lock-closed" size={14} color={Colors.textSecondary} />
+                        <Text style={styles.avisoCompuestaTexto}>
+                          Orden compuesta: escribe varias posiciones en secuencia. Sus verbos y su
+                          índice no se editan aquí — el orden de esos pasos es lo que impide
+                          energizar dos direcciones a la vez.
+                        </Text>
+                      </View>
+                    ) : (
+                      <>
+                        <View style={styles.campo}>
+                          <Text style={styles.campoEtiqueta}>
+                            Índice de mando <Text style={styles.campoIngles}>write.target.index</Text>
+                          </Text>
+                          <TextInput
+                            style={[styles.input, mando.errores.writeIndex ? styles.inputMal : null]}
+                            value={borradorMando.writeIndex}
+                            onChangeText={(t) => setMando({ writeIndex: t })}
+                            keyboardType="numbers-and-punctuation"
+                            accessibilityLabel="Índice de mando (write.target.index)"
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                          />
+                          <Text style={mando.errores.writeIndex ? styles.campoError : styles.campoAyuda}>
+                            {mando.errores.writeIndex ?? 'La posición del buffer de salida por la que se escribe la orden.'}
+                          </Text>
+                        </View>
+
+                        <View style={styles.campo}>
+                          <Text style={styles.campoEtiqueta}>
+                            Verbos <Text style={styles.campoIngles}>write.commands</Text>
+                          </Text>
+                          {borradorMando.comandos.map((fila, i) => (
+                            <View key={i} style={styles.verboFila}>
+                              <TextInput
+                                style={[styles.input, styles.verboNombre]}
+                                value={fila.verbo}
+                                onChangeText={(t) => setVerbo(i, 'verbo', t)}
+                                placeholder="close"
+                                placeholderTextColor={Colors.textSecondary}
+                                accessibilityLabel={`Nombre del verbo ${i + 1}`}
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                              />
+                              <TextInput
+                                style={[styles.input, styles.verboValor]}
+                                value={fila.valor}
+                                onChangeText={(t) => setVerbo(i, 'valor', t)}
+                                placeholder="8192"
+                                placeholderTextColor={Colors.textSecondary}
+                                keyboardType="numbers-and-punctuation"
+                                accessibilityLabel={`Valor del verbo ${fila.verbo || i + 1}`}
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                              />
+                              <TouchableOpacity
+                                onPress={() =>
+                                  setMando({ comandos: borradorMando.comandos.filter((_, j) => j !== i) })
+                                }
+                                hitSlop={8}
+                                style={styles.verboQuitar}
+                                accessibilityLabel={`Quitar el verbo ${fila.verbo || i + 1}`}
+                              >
+                                <Ionicons name="close-circle" size={20} color={Colors.textSecondary} />
+                              </TouchableOpacity>
+                            </View>
+                          ))}
+                          <TouchableOpacity
+                            style={styles.anadirVerbo}
+                            onPress={() => setMando({ comandos: [...borradorMando.comandos, { verbo: '', valor: '' }] })}
+                            activeOpacity={0.8}
+                            accessibilityLabel="Añadir un verbo de mando"
+                          >
+                            <Ionicons name="add" size={16} color={Colors.primary} />
+                            <Text style={styles.anadirVerboTexto}>Añadir verbo</Text>
+                          </TouchableOpacity>
+                          <Text style={mando.errores.comandos ? styles.campoError : styles.campoAyuda}>
+                            {mando.errores.comandos ??
+                              'El valor que se escribe para cada orden. Un número, o true/false en canales de bit.'}
+                          </Text>
+                        </View>
+                      </>
+                    )}
+
+                    <View style={styles.campo}>
+                      <Text style={styles.campoEtiqueta}>
+                        Modo de escritura <Text style={styles.campoIngles}>write.mode</Text>
+                      </Text>
+                      <View style={styles.chips}>
+                        <Chip
+                          texto="bitmask"
+                          activo={borradorMando.writeMode === 'bitmask'}
+                          onPress={() => setMando({ writeMode: 'bitmask' })}
+                        />
+                        <Chip
+                          texto="absolute"
+                          activo={borradorMando.writeMode === 'absolute'}
+                          onPress={() => setMando({ writeMode: 'absolute' })}
+                        />
+                      </View>
+                      <Text style={styles.campoAyuda}>
+                        bitmask respeta los bits ajenos de la palabra (obligatorio si concentra varias
+                        órdenes); absolute la pisa entera.
+                      </Text>
+                    </View>
+
+                    <View style={styles.campo}>
+                      <Text style={styles.campoEtiqueta}>
+                        Estado: abierta / cerrada <Text style={styles.campoIngles}>stateEncoding</Text>
+                      </Text>
+                      <View style={styles.estadoFila}>
+                        <TextInput
+                          style={[styles.input, styles.estadoInput, mando.errores.stateOpen ? styles.inputMal : null]}
+                          value={borradorMando.stateOpen}
+                          onChangeText={(t) => setMando({ stateOpen: t })}
+                          placeholder="abierta"
+                          placeholderTextColor={Colors.textSecondary}
+                          keyboardType="numbers-and-punctuation"
+                          accessibilityLabel="Valor que significa abierta (stateEncoding.open)"
+                        />
+                        <TextInput
+                          style={[styles.input, styles.estadoInput, mando.errores.stateClosed ? styles.inputMal : null]}
+                          value={borradorMando.stateClosed}
+                          onChangeText={(t) => setMando({ stateClosed: t })}
+                          placeholder="cerrada"
+                          placeholderTextColor={Colors.textSecondary}
+                          keyboardType="numbers-and-punctuation"
+                          accessibilityLabel="Valor que significa cerrada (stateEncoding.closed)"
+                        />
+                      </View>
+                      <Text style={mando.errores.stateOpen ?? mando.errores.stateClosed ? styles.campoError : styles.campoAyuda}>
+                        {mando.errores.stateOpen ??
+                          mando.errores.stateClosed ??
+                          'Qué valor de la palabra de estado significa cada posición. Vacío = el sitio no la declara.'}
+                      </Text>
+                    </View>
+                  </>
+                ) : null}
+
                 <Text style={styles.nota}>
                   No se pueden crear ni borrar señales, ni cambiar el NodeId: solo mover esta señal
                   dentro de su canal y corregir cómo se interpreta. Es lo que permite aplicarlo sin
@@ -207,6 +394,18 @@ export function EditarSenalDialog({
                     </Text>
                   )}
                 </View>
+
+                {cambiaElMando ? (
+                  <View style={styles.avisoMando}>
+                    <Ionicons name="warning" size={18} color={Colors.danger} />
+                    <Text style={styles.avisoMandoTexto}>
+                      Estás cambiando <Text style={styles.avisoMandoFuerte}>por dónde y con qué valor
+                      se manda esta válvula</Text>. Ese valor no queda verificado por guardarlo: hace
+                      falta accionarla con un testigo mirando la válvula. Si aún no lo has capturado
+                      con el probador, cancela y pruébalo primero.
+                    </Text>
+                  </View>
+                ) : null}
 
                 <View style={styles.avisoConfianza}>
                   <Ionicons name="information-circle-outline" size={16} color={Colors.warning} />
@@ -351,6 +550,45 @@ const styles = StyleSheet.create({
   chipTexto: { fontFamily: mono, fontSize: 11, color: Colors.textSecondary },
   chipTextoActivo: { color: Colors.primary, fontWeight: '700' },
   nota: { fontSize: 11, color: Colors.textSecondary, lineHeight: 16, fontStyle: 'italic' },
+  separador: { height: 1, backgroundColor: Colors.divider, marginVertical: 4 },
+  seccionMando: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: Colors.accentOutlet,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  notaMando: { fontSize: 11.5, color: Colors.textSecondary, lineHeight: 16, marginBottom: 4 },
+  avisoCompuesta: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'flex-start',
+    borderWidth: 1,
+    borderColor: Colors.divider,
+    borderRadius: 8,
+    padding: 10,
+  },
+  avisoCompuestaTexto: { flex: 1, fontSize: 11, color: Colors.textSecondary, lineHeight: 15 },
+  verboFila: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  verboNombre: { flex: 1.4 },
+  verboValor: { flex: 1 },
+  verboQuitar: { width: 26, alignItems: 'center' },
+  anadirVerbo: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 8 },
+  anadirVerboTexto: { fontSize: 12.5, fontWeight: '700', color: Colors.primary },
+  estadoFila: { flexDirection: 'row', gap: 8 },
+  estadoInput: { flex: 1 },
+  avisoMando: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'flex-start',
+    borderWidth: 1,
+    borderColor: Colors.danger + '88',
+    backgroundColor: Colors.danger + '18',
+    borderRadius: 8,
+    padding: 11,
+  },
+  avisoMandoTexto: { flex: 1, fontSize: 12, color: Colors.textPrimary, lineHeight: 17 },
+  avisoMandoFuerte: { fontWeight: '800' },
   cambio: {
     borderWidth: 1,
     borderColor: Colors.divider,

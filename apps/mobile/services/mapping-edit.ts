@@ -25,6 +25,21 @@ export interface SenalEditable extends ValoresSenal {
   mappingStatus: string;
   confidence: string;
   writable: boolean;
+  /**
+   * El canal de mando, solo en válvulas: qué valor abre y cuál cierra, y por dónde sale la orden.
+   * `null` en una señal de lectura.
+   */
+  mando: {
+    channel: string;
+    browseName: string;
+    index: number;
+    commands: Record<string, number | boolean>;
+    mode: string;
+    /** Orden compuesta: sus verbos y su índice no se editan desde la app. */
+    compuesta: boolean;
+    stateOpen: number | null;
+    stateClosed: number | null;
+  } | null;
   /** Por qué no se puede editar, o `null` si sí. */
   bloqueada: string | null;
   override: {
