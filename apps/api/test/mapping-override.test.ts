@@ -20,8 +20,24 @@ import {
   valoresActuales,
   type MappingOverride,
 } from '../src/infrastructure/connectivity/mapping/mapping-overrides';
-import type { LoadedMapping } from '../src/infrastructure/connectivity/mapping/opc-mapping.loader';
+import type { LoadedMapping, WriteSpec } from '../src/infrastructure/connectivity/mapping/opc-mapping.loader';
 import { mappingPatchSchema } from '../src/modules/mapping/mapping-patch.schema';
+
+/**
+ * El write spec de la válvula, con la forma REAL del mapeo de producción: `open: 4096` heredado de
+ * La Vorágine, sin `close`, en modo bitmask. Es exactamente lo que hay hoy en 8 de las 10 plantas y
+ * lo que esta función existe para poder corregir.
+ */
+const WRITE: WriteSpec = {
+  target: { channel: 'intOut', sourceBuffer: 'INT_OUT_CASCAJAL', index: 0 },
+  commands: { open: 4096 },
+  mode: 'bitmask',
+  readBack: { channel: 'intIn', sourceBuffer: 'INT_IN_CASCAJAL', index: 1, confirmsWrittenValue: false, stateVerified: false },
+  timeoutMs: 3000,
+  rollbackValue: 0,
+  permission: 'control_valves',
+  pulse: null,
+};
 
 /** Mapping con la forma real de Cascajal: realIn de 50, un intOut de válvula y un buffer corto. */
 function mappingCascajal(): LoadedMapping {
@@ -38,7 +54,7 @@ function mappingCascajal(): LoadedMapping {
     signals: [
       { plantId: 'cascajal', buffer: 'realIn', index: 0, domainKey: 'outletFlow1', label: 'Caudal de salida 1', unit: 'l/s', min: 0, max: 1000, opMin: 1, opMax: 3, mappingStatus: 'mapped', confidence: 'confirmed', writable: false },
       { plantId: 'cascajal', buffer: 'realIn', index: 19, domainKey: 'inletPressure1', label: 'Presion de entrada', unit: 'psi', min: -15, max: 232, mappingStatus: 'mapped', confidence: 'confirmed', writable: false },
-      { plantId: 'cascajal', buffer: 'intOut', sourceBuffer: 'INT_OUT_CASCAJAL', index: 0, domainKey: 'valve1', label: 'Valvula 1', unit: null, min: null, max: null, mappingStatus: 'mapped', confidence: 'confirmed', writable: true },
+      { plantId: 'cascajal', buffer: 'intOut', sourceBuffer: 'INT_OUT_CASCAJAL', index: 0, domainKey: 'valve1', label: 'Valvula 1', unit: null, min: null, max: null, mappingStatus: 'mapped', confidence: 'confirmed', writable: true, write: WRITE },
     ],
     raw: {
       plants: [
@@ -47,7 +63,24 @@ function mappingCascajal(): LoadedMapping {
           signals: [
             { buffer: 'realIn', index: 0, domainKey: 'outletFlow1', unit: 'l/s', min: 0, max: 1000, opMin: 1, opMax: 3, mappingStatus: 'mapped', confidence: 'confirmed', writable: false },
             { buffer: 'realIn', index: 19, domainKey: 'inletPressure1', unit: 'psi', min: -15, max: 232, mappingStatus: 'mapped', confidence: 'confirmed', writable: false },
-            { buffer: 'intOut', index: 0, domainKey: 'valve1', mappingStatus: 'mapped', confidence: 'confirmed', writable: true },
+            {
+              buffer: 'intOut',
+              sourceBuffer: 'INT_OUT_CASCAJAL',
+              index: 0,
+              domainKey: 'valve1',
+              mappingStatus: 'mapped',
+              confidence: 'confirmed',
+              writable: true,
+              write: {
+                target: { channel: 'intOut', sourceBuffer: 'INT_OUT_CASCAJAL', index: 0 },
+                commands: { open: 4096 },
+                mode: 'bitmask',
+                readBack: { channel: 'intIn', sourceBuffer: 'INT_IN_CASCAJAL', index: 1, confirmsWrittenValue: false, stateVerified: false },
+                timeoutMs: 3000,
+                rollbackValue: 0,
+                permission: 'control_valves',
+              },
+            },
           ],
         },
       ],
@@ -85,12 +118,27 @@ test('override: NO muta el mapping base', () => {
   assert.equal(senal(base, 'inletPressure1').confidence, 'confirmed');
 });
 
-test('override: una señal ESCRIBIBLE no se toca ni con la fila ya guardada', () => {
-  // La validación de la puerta de entrada no puede ser la única: si alguien mete la fila a mano en
-  // MySQL, el canal de mando de una válvula sigue sin moverse.
-  const m = aplicarOverrides(mappingCascajal(), [override('valve1', { index: 7 })]);
-  assert.equal(senal(m, 'valve1').index, 0);
-  assert.equal(senal(m, 'valve1').confidence, 'confirmed');
+test('override: una válvula SÍ se edita, mando incluido (cambio del 2026-08-31)', () => {
+  // Hasta hoy esto estaba prohibido: el schema exigía `confidence: confirmed` a lo escribible y el
+  // aplicador se negaba a tocarlo. Se abrió a propósito, porque 8 de las 10 plantas llevan un
+  // `open: 4096` heredado que nadie verificó y la única forma de corregirlo era editar el JSON y
+  // desplegar. Lo que NO cambió: la señal cae a `inferred`, y eso es lo que hace que la pantalla de
+  // mando pueda avisar de que ese valor no está verificado en campo.
+  const m = aplicarOverrides(mappingCascajal(), [
+    override('valve1', { writeCommands: { open: 4096, close: 8192 } }),
+  ]);
+  assert.deepEqual(senal(m, 'valve1').write?.commands, { open: 4096, close: 8192 });
+  assert.equal(senal(m, 'valve1').confidence, 'inferred');
+});
+
+test('override: editar el mando NO muta el write spec del mapping base', () => {
+  // `{...s}` es copia superficial: sin clonar `write` y su `target`, el override se escribiría dentro
+  // del mapeo base y el efectivo dejaría de poder recalcularse desde él — que es justo lo que
+  // permite revertir sin reiniciar el proceso.
+  const base = mappingCascajal();
+  aplicarOverrides(base, [override('valve1', { writeCommands: { close: 1 }, writeIndex: 3 })]);
+  assert.deepEqual(senal(base, 'valve1').write?.commands, { open: 4096 }, 'el base intacto');
+  assert.equal(senal(base, 'valve1').write?.target.index, 0);
 });
 
 test('override: uno que apunta a una señal inexistente se ignora sin romper nada', () => {
@@ -141,10 +189,72 @@ test('validar: señal desconocida', () => {
   assert.equal(v.ok === false && v.motivo, 'SENAL_DESCONOCIDA');
 });
 
-test('validar: una válvula NO se edita desde la app', () => {
-  const v = validarParche(mappingCascajal(), 'cascajal', 'valve1', { index: 1 });
-  assert.equal(v.ok, false);
-  assert.equal(v.ok === false && v.motivo, 'SENAL_ESCRIBIBLE');
+test('validar: una válvula SÍ se edita', () => {
+  assert.equal(validarParche(mappingCascajal(), 'cascajal', 'valve1', { index: 1 }).ok, true);
+  assert.equal(
+    validarParche(mappingCascajal(), 'cascajal', 'valve1', { writeCommands: { open: 4096, close: 8192 } }).ok,
+    true,
+  );
+});
+
+test('validar: los campos de MANDO se rechazan en una señal de lectura', () => {
+  // No se ignoran en silencio: mandarlos ahí es señal de que quien lo hizo cree estar tocando otra
+  // cosa, y devolverle un 200 lo dejaría convencido de haber configurado algo.
+  const v = validarParche(mappingCascajal(), 'cascajal', 'outletFlow1', { writeCommands: { open: 1 } });
+  assert.equal(v.ok === false && v.motivo, 'MANDO_EN_SENAL_DE_LECTURA');
+});
+
+test('validar: el índice de MANDO se comprueba contra su propio buffer', () => {
+  // INT_OUT_CASCAJAL declara 20 elementos ⇒ el último válido es el 19. Un índice de mando fuera de
+  // rango no da un error claro en el PLC: da comportamiento indefinido en un equipo que mueve agua.
+  const v = validarParche(mappingCascajal(), 'cascajal', 'valve1', { writeIndex: 20 });
+  assert.equal(v.ok === false && v.motivo, 'INDICE_FUERA_DE_RANGO');
+  assert.match(v.ok === false ? v.detalle : '', /19/);
+  assert.equal(validarParche(mappingCascajal(), 'cascajal', 'valve1', { writeIndex: 19 }).ok, true);
+});
+
+test('validar: un verbo con nombre ilegal', () => {
+  const v = validarParche(mappingCascajal(), 'cascajal', 'valve1', { writeCommands: { '2abrir': 1 } });
+  assert.equal(v.ok === false && v.motivo, 'COMANDOS_INVALIDOS');
+});
+
+test('validar: dos verbos con el MISMO valor', () => {
+  // Si abrir y cerrar escriben lo mismo, el equipo no puede distinguirlos: una de las dos órdenes
+  // hará lo contrario de lo que dice su botón, y el registro dirá que se hizo lo que se pidió.
+  const v = validarParche(mappingCascajal(), 'cascajal', 'valve1', { writeCommands: { open: 4096, close: 4096 } });
+  assert.equal(v.ok === false && v.motivo, 'COMANDOS_INVALIDOS');
+  assert.match(v.ok === false ? v.detalle : '', /distinguir/);
+});
+
+test('validar: una válvula sin ningún verbo no se puede accionar', () => {
+  const v = validarParche(mappingCascajal(), 'cascajal', 'valve1', { writeCommands: {} });
+  assert.equal(v.ok === false && v.motivo, 'COMANDOS_INVALIDOS');
+});
+
+test('validar: una orden COMPUESTA no se edita desde la app', () => {
+  // Sus reglas de secuencia —desenergizar antes de energizar, como mucho una posición activa al
+  // final— son las que impiden la ventana con las dos direcciones puestas a la vez, que el
+  // protocolo declara ERROR. Un parche que toque commands sin recalcular la secuencia las rompe.
+  const m = mappingCascajal();
+  const v = m.signals.find((x) => x.domainKey === 'valve1');
+  if (v?.write) v.write.sequences = { open: [{ index: 1, value: 0 }, { index: 0, value: 1 }] };
+
+  const r = validarParche(m, 'cascajal', 'valve1', { writeCommands: { open: 7 } });
+  assert.equal(r.ok === false && r.motivo, 'SECUENCIA_NO_EDITABLE');
+});
+
+test('validar: abierta y cerrada no pueden leerse con el mismo valor', () => {
+  const v = validarParche(mappingCascajal(), 'cascajal', 'valve1', { stateOpen: 16384, stateClosed: 16384 });
+  assert.equal(v.ok === false && v.motivo, 'ESTADO_INVALIDO');
+  assert.equal(validarParche(mappingCascajal(), 'cascajal', 'valve1', { stateOpen: 16385, stateClosed: 16384 }).ok, true);
+});
+
+test('cambios: el mismo mapa de comandos NO cuenta como cambio', () => {
+  // Comparado con !== un objeto SIEMPRE sale distinto, y cada guardado registraría un cambio que no
+  // existe: la historia de quién tocó qué dejaría de poder leerse.
+  const s = senal(mappingCascajal(), 'valve1');
+  assert.deepEqual(soloCambios(s, { writeCommands: { open: 4096 } }), {});
+  assert.deepEqual(soloCambios(s, { writeCommands: { open: 4097 } }), { writeCommands: { open: 4097 } });
 });
 
 test('validar: sin cambios se rechaza en vez de guardar una fila vacía', () => {
@@ -262,14 +372,40 @@ test('raw: no muta el documento original', () => {
   assert.equal(original.find((x) => x.domainKey === 'inletPressure1')?.index, 19);
 });
 
-test('raw: las señales escribibles no se tocan', () => {
+test('raw: el mando de una válvula llega al documento, anidado donde toca', () => {
   const m = mappingCascajal();
-  const doc = aplicarSobreRaw(m.raw, [override('valve1', { index: 9 })]) as {
+  const doc = aplicarSobreRaw(m.raw, [
+    override('valve1', { writeCommands: { open: 4096, close: 8192 }, writeIndex: 2, stateOpen: 16385 }),
+  ]) as { plants: { signals: Record<string, unknown>[] }[] };
+  const s = doc.plants[0].signals.find((x) => x.domainKey === 'valve1');
+  const write = s?.write as { commands: Record<string, number>; target: { index: number } };
+
+  assert.deepEqual(write.commands, { open: 4096, close: 8192 });
+  assert.equal(write.target.index, 2, 'el índice de mando va dentro de write.target, no en la señal');
+  assert.deepEqual(s?.stateEncoding, { open: 16385 });
+  assert.equal(s?.confidence, 'inferred');
+});
+
+test('raw: borrar las dos mitades del estado quita la clave entera', () => {
+  // El schema exige minProperties: 1 en stateEncoding. Dejar {} lo haría inválido y el rechazo
+  // llegaría al guardar, sin que nadie entendiera por qué.
+  const m = mappingCascajal();
+  const doc = aplicarSobreRaw(m.raw, [override('valve1', { stateOpen: null, stateClosed: null })]) as {
     plants: { signals: Record<string, unknown>[] }[];
   };
   const s = doc.plants[0].signals.find((x) => x.domainKey === 'valve1');
-  assert.equal(s?.index, 0);
-  assert.equal(s?.confidence, 'confirmed');
+  assert.equal('stateEncoding' in (s ?? {}), false);
+});
+
+test('raw: a una señal de LECTURA no se le inventa un write spec', () => {
+  // Un documento con write en una señal no-writable lo rechaza el schema («el write spec solo puede
+  // existir en una señal writable»), así que colarlo aquí produciría un mapeo ilegal.
+  const m = mappingCascajal();
+  const doc = aplicarSobreRaw(m.raw, [override('outletFlow1', { writeCommands: { open: 1 } })]) as {
+    plants: { signals: Record<string, unknown>[] }[];
+  };
+  const s = doc.plants[0].signals.find((x) => x.domainKey === 'outletFlow1');
+  assert.equal('write' in (s ?? {}), false);
 });
 
 // ── La forma del cuerpo de la petición ──────────────────────────────────────────

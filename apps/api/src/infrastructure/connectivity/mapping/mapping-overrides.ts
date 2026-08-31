@@ -1,4 +1,4 @@
-import type { LoadedMapping, MonitorTarget, SignalMapping } from './opc-mapping.loader';
+import type { LoadedMapping, MonitorTarget, SignalMapping, WriteSpec } from './opc-mapping.loader';
 
 /**
  * Correcciones del mapeo aplicadas ENCIMA del JSON del repositorio.
@@ -26,10 +26,23 @@ import type { LoadedMapping, MonitorTarget, SignalMapping } from './opc-mapping.
  * con un diálogo de confirmación.
  */
 
-/** Los únicos campos que un override puede tocar. */
+/** Campos de LECTURA: dónde se lee la señal y cómo se interpreta. Viven planos en la señal. */
 export const CAMPOS_EDITABLES = ['index', 'sourceBuffer', 'unit', 'min', 'max', 'opMin', 'opMax'] as const;
 
+/**
+ * Campos de MANDO: solo en señales de válvula, y anidados dentro de `write` / `stateEncoding`.
+ *
+ * Se listan aparte porque no se pueden recorrer con el mismo bucle que los planos —cada uno va a un
+ * sitio distinto de la estructura— y porque la regla que los gobierna también es distinta: en una
+ * señal de solo lectura no significan nada y se rechazan.
+ *
+ * Son los que responden a «¿qué valor abre y qué valor cierra?», que en 8 de las 10 plantas con
+ * válvula sigue siendo una suposición heredada de La Vorágine y jamás verificada allí.
+ */
+export const CAMPOS_DE_MANDO = ['writeIndex', 'writeCommands', 'writeMode', 'stateOpen', 'stateClosed'] as const;
+
 export type CampoEditable = (typeof CAMPOS_EDITABLES)[number];
+export type CampoDeMando = (typeof CAMPOS_DE_MANDO)[number];
 
 /**
  * Parche de una señal. Un campo ausente significa «no lo toques»; presente y `null`, «bórralo y
@@ -44,6 +57,22 @@ export interface MappingPatch {
   max?: number | null;
   opMin?: number | null;
   opMax?: number | null;
+
+  // ── Mando (solo válvulas) ──
+  /** `write.target.index`: la posición del buffer de salida por la que sale la orden. */
+  writeIndex?: number;
+  /**
+   * `write.commands`: verbo → valor. **Reemplaza el mapa entero**, no lo fusiona.
+   *
+   * Es deliberado: fusionar dejaría verbos viejos que nadie recuerda haber puesto, y en un canal de
+   * mando un verbo olvidado es un botón de más en la pantalla del operario.
+   */
+  writeCommands?: Record<string, number | boolean>;
+  /** `write.mode`: `absolute` pisa la palabra entera; `bitmask` respeta los bits ajenos. */
+  writeMode?: 'absolute' | 'bitmask';
+  /** `stateEncoding.open` / `.closed`: qué valor de la palabra de estado significa cada posición. */
+  stateOpen?: number | null;
+  stateClosed?: number | null;
 }
 
 export interface MappingOverride {
@@ -64,7 +93,13 @@ export type MotivoRechazo =
   | 'BUFFER_DESCONOCIDO'
   | 'BUFFER_DE_OTRO_CANAL'
   | 'RANGO_INVERTIDO'
-  | 'UNIDAD_INVALIDA';
+  | 'UNIDAD_INVALIDA'
+  | 'MANDO_EN_SENAL_DE_LECTURA'
+  | 'SIN_WRITE_SPEC'
+  | 'COMANDOS_INVALIDOS'
+  | 'MODO_INCOMPATIBLE_CON_SECUENCIA'
+  | 'SECUENCIA_NO_EDITABLE'
+  | 'ESTADO_INVALIDO';
 
 export interface Rechazo {
   ok: false;
@@ -101,9 +136,6 @@ export function aplicarOverrides(mapping: LoadedMapping, overrides: MappingOverr
   const signals = mapping.signals.map((s) => {
     const patch = porSenal.get(clave(s.plantId, s.domainKey));
     if (!patch) return s;
-    // Una señal escribible no se toca ni aunque alguien haya conseguido colar la fila: la
-    // comprobación de la puerta de entrada no puede ser la única.
-    if (s.writable) return s;
     return fusionar(s, patch);
   });
 
@@ -120,9 +152,35 @@ export function fusionar(s: SignalMapping, patch: MappingPatch): SignalMapping {
   if (patch.max !== undefined) out.max = patch.max;
   if (patch.opMin !== undefined) out.opMin = patch.opMin;
   if (patch.opMax !== undefined) out.opMax = patch.opMax;
+
+  // El mando, solo si la señal lo tiene. `{...s}` es una copia SUPERFICIAL: sin clonar `write` y su
+  // `target`, tocarlos aquí mutaría el mapping BASE, y el efectivo dejaría de poder recalcularse
+  // desde él — que es justo lo que permite revertir sin reiniciar el proceso.
+  const tocaMando = CAMPOS_DE_MANDO.some((c) => patch[c] !== undefined);
+  if (tocaMando && out.write) {
+    const write: WriteSpec = { ...out.write, target: { ...out.write.target }, commands: { ...out.write.commands } };
+    if (patch.writeIndex !== undefined) write.target.index = patch.writeIndex;
+    if (patch.writeCommands !== undefined) write.commands = { ...patch.writeCommands };
+    if (patch.writeMode !== undefined) write.mode = patch.writeMode;
+    out.write = write;
+  }
+
+  if (patch.stateOpen !== undefined || patch.stateClosed !== undefined) {
+    const actual = out.stateEncoding ?? {};
+    const open = patch.stateOpen !== undefined ? patch.stateOpen : actual.open;
+    const closed = patch.stateClosed !== undefined ? patch.stateClosed : actual.closed;
+    const encoding: { open?: number; closed?: number } = {};
+    if (typeof open === 'number') encoding.open = open;
+    if (typeof closed === 'number') encoding.closed = closed;
+    // El schema exige al menos una propiedad: si se borran las dos, la clave desaparece entera en
+    // vez de quedar un objeto vacío, que sería inválido.
+    out.stateEncoding = Object.keys(encoding).length > 0 ? encoding : undefined;
+  }
+
   // No hay documento oficial detrás de un cambio hecho desde el móvil, y `confidence` existe
   // exactamente para decir eso. Que el tablero muestre la señal como inferida es información, no
-  // un castigo: quien la lea sabe que alguien la reapuntó a mano.
+  // un castigo: quien la lea sabe que alguien la reapuntó a mano. En una válvula es más que
+  // información: es lo que hace que la pantalla de mando avise de que ese valor no está verificado.
   out.confidence = 'inferred';
   return out;
 }
@@ -137,18 +195,47 @@ export function valoresActuales(s: SignalMapping): Required<MappingPatch> {
     max: s.max ?? null,
     opMin: s.opMin ?? null,
     opMax: s.opMax ?? null,
+    // El mando de una señal de lectura no existe; se devuelve vacío para que el «de → a» pueda
+    // pintar «(vacío)» en vez de tener que preguntar antes si la señal es una válvula.
+    writeIndex: s.write?.target.index ?? -1,
+    writeCommands: s.write?.commands ?? {},
+    writeMode: s.write?.mode ?? 'absolute',
+    stateOpen: s.stateEncoding?.open ?? null,
+    stateClosed: s.stateEncoding?.closed ?? null,
   };
+}
+
+/** Dos mapas de comandos son el mismo si tienen los mismos verbos con los mismos valores. */
+export function mismosComandos(a: Record<string, number | boolean>, b: Record<string, number | boolean>): boolean {
+  const ka = Object.keys(a).sort();
+  const kb = Object.keys(b).sort();
+  if (ka.length !== kb.length) return false;
+  return ka.every((k, i) => k === kb[i] && a[k] === b[k]);
 }
 
 /** Solo los campos que de verdad cambian respecto a lo que rige ahora. */
 export function soloCambios(actual: SignalMapping, patch: MappingPatch): MappingPatch {
   const ahora = valoresActuales(actual);
   const out: MappingPatch = {};
+
   for (const campo of CAMPOS_EDITABLES) {
     const nuevo = patch[campo];
     if (nuevo === undefined) continue;
     if (nuevo !== ahora[campo]) (out as Record<string, unknown>)[campo] = nuevo;
   }
+
+  for (const campo of CAMPOS_DE_MANDO) {
+    const nuevo = patch[campo];
+    if (nuevo === undefined) continue;
+    // `writeCommands` es un objeto: comparado con !== SIEMPRE saldría distinto, y cada guardado
+    // registraría un cambio que no existe. La historia de quién tocó qué dejaría de poder leerse.
+    if (campo === 'writeCommands') {
+      if (!mismosComandos(patch.writeCommands ?? {}, ahora.writeCommands)) out.writeCommands = patch.writeCommands;
+      continue;
+    }
+    if (nuevo !== ahora[campo]) (out as Record<string, unknown>)[campo] = nuevo;
+  }
+
   return out;
 }
 
@@ -198,18 +285,30 @@ export function validarParche(
   if (!senal) {
     return { ok: false, motivo: 'SENAL_DESCONOCIDA', detalle: `${plantId} no tiene una señal llamada ${domainKey}.` };
   }
-  if (senal.writable) {
-    return {
-      ok: false,
-      motivo: 'SENAL_ESCRIBIBLE',
-      detalle:
-        'Es una señal de válvula. El mapeo de lo escribible exige documento oficial de la planta, así que no se edita desde la app.',
-    };
-  }
-
   const cambios = soloCambios(senal, patch);
   if (Object.keys(cambios).length === 0) {
     return { ok: false, motivo: 'SIN_CAMBIOS', detalle: 'No hay ningún campo distinto del que ya rige.' };
+  }
+
+  // Los campos de mando solo significan algo en una válvula. En una señal de lectura no se ignoran
+  // en silencio: se rechazan, porque mandarlos ahí es señal de que quien lo hizo cree estar tocando
+  // otra cosa.
+  const mandoTocado = CAMPOS_DE_MANDO.filter((c) => cambios[c] !== undefined);
+  if (mandoTocado.length > 0) {
+    if (!senal.writable) {
+      return {
+        ok: false,
+        motivo: 'MANDO_EN_SENAL_DE_LECTURA',
+        detalle: `${domainKey} no es una válvula: no tiene canal de mando que configurar (${mandoTocado.join(', ')}).`,
+      };
+    }
+    if (!senal.write) {
+      return {
+        ok: false,
+        motivo: 'SIN_WRITE_SPEC',
+        detalle: `${domainKey} está declarada writable pero no tiene write spec en el mapeo. Eso hay que arreglarlo en el JSON, no desde la app.`,
+      };
+    }
   }
 
   const resultado = fusionar(senal, cambios);
@@ -281,6 +380,113 @@ export function validarParche(
     }
   }
 
+  if (mandoTocado.length > 0 && senal.write && resultado.write) {
+    const veredictoMando = validarMando(mapping, plantId, senal.write, resultado.write, cambios);
+    if (!veredictoMando.ok) return veredictoMando;
+  }
+
+  if (cambios.stateOpen !== undefined || cambios.stateClosed !== undefined) {
+    const enc = resultado.stateEncoding;
+    if (enc && enc.open !== undefined && enc.closed !== undefined && enc.open === enc.closed) {
+      return {
+        ok: false,
+        motivo: 'ESTADO_INVALIDO',
+        detalle: `Abierta y cerrada no pueden leerse con el mismo valor (${enc.open}): entonces el estado no distingue nada.`,
+      };
+    }
+  }
+
+  return { ok: true };
+}
+
+/**
+ * Las reglas del canal de mando. Son las que impiden que una corrección desde el móvil produzca una
+ * orden que el equipo no pueda obedecer — o que pueda obedecer de la forma equivocada.
+ */
+function validarMando(
+  mapping: LoadedMapping,
+  plantId: string,
+  original: SignalMapping['write'],
+  resultado: NonNullable<SignalMapping['write']>,
+  cambios: MappingPatch,
+): Veredicto {
+  // Un spec con ORDEN COMPUESTA no se edita desde la app, y no es prudencia: sus reglas —el verbo
+  // debe existir también en commands, primero se desenergiza y después se energiza, como mucho una
+  // posición queda activa al final— son las que impiden la ventana con las dos direcciones puestas
+  // a la vez, que es lo que el protocolo de estas plantas declara ERROR. Un parche que toque
+  // `commands` o el índice sin recalcular la secuencia las rompe sin avisar. Hoy ninguna planta usa
+  // secuencias; esto existe para el día que sí.
+  if (original?.sequences && (cambios.writeCommands !== undefined || cambios.writeIndex !== undefined)) {
+    return {
+      ok: false,
+      motivo: 'SECUENCIA_NO_EDITABLE',
+      detalle:
+        'Esta válvula usa una orden compuesta (varias escrituras en secuencia). Sus reglas de orden son lo que impide energizar dos direcciones a la vez, así que se edita en el JSON con revisión, no desde la app.',
+    };
+  }
+
+  if (cambios.writeCommands !== undefined) {
+    const verbos = Object.entries(resultado.commands);
+    if (verbos.length === 0) {
+      return {
+        ok: false,
+        motivo: 'COMANDOS_INVALIDOS',
+        detalle: 'Una válvula sin ningún verbo no se puede accionar. Deja al menos uno.',
+      };
+    }
+    for (const [verbo, valor] of verbos) {
+      if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(verbo)) {
+        return {
+          ok: false,
+          motivo: 'COMANDOS_INVALIDOS',
+          detalle: `«${verbo}» no sirve como nombre de verbo: empieza por letra y sigue con letras, números o guion bajo.`,
+        };
+      }
+      if (typeof valor === 'number' && !Number.isFinite(valor)) {
+        return { ok: false, motivo: 'COMANDOS_INVALIDOS', detalle: `El valor de «${verbo}» tiene que ser un número finito o un booleano.` };
+      }
+    }
+    // Dos verbos con el MISMO valor significan que abrir y cerrar escriben lo mismo: el equipo no
+    // podría distinguirlos y una de las dos órdenes haría lo contrario de lo que dice su botón.
+    const valores = verbos.map(([, v]) => String(v));
+    if (new Set(valores).size !== valores.length) {
+      return {
+        ok: false,
+        motivo: 'COMANDOS_INVALIDOS',
+        detalle: 'Dos verbos con el mismo valor: el equipo no podría distinguir una orden de la otra.',
+      };
+    }
+  }
+
+  if (cambios.writeMode !== undefined && resultado.sequences && resultado.mode !== 'absolute') {
+    return {
+      ok: false,
+      motivo: 'MODO_INCOMPATIBLE_CON_SECUENCIA',
+      detalle: 'Una orden compuesta escribe siempre en absoluto: ahí la posición del array ES el canal físico, no un bit de una palabra compartida.',
+    };
+  }
+
+  if (cambios.writeIndex !== undefined) {
+    if (!Number.isInteger(resultado.target.index) || resultado.target.index < 0) {
+      return { ok: false, motivo: 'INDICE_INVALIDO', detalle: 'El índice de mando es un entero de 0 en adelante.' };
+    }
+    const buffer = buffersDe(mapping, plantId).find((t) => t.browseName === resultado.target.sourceBuffer);
+    if (!buffer) {
+      return {
+        ok: false,
+        motivo: 'BUFFER_DESCONOCIDO',
+        detalle: `El write spec apunta a ${resultado.target.sourceBuffer}, que no existe en ${plantId}.`,
+      };
+    }
+    if (buffer.arrayLength !== null && resultado.target.index >= buffer.arrayLength) {
+      return {
+        ok: false,
+        motivo: 'INDICE_FUERA_DE_RANGO',
+        detalle: `${buffer.browseName} declara ${buffer.arrayLength} elementos: el último índice de mando válido es ${buffer.arrayLength - 1}.`,
+      };
+    }
+  }
+
   return { ok: true };
 }
 
@@ -308,7 +514,6 @@ export function aplicarSobreRaw(raw: unknown, overrides: MappingOverride[]): unk
     const planta = doc.plants.find((p) => p.plantId === o.plantId);
     const senal = planta?.signals?.find((s) => s.domainKey === o.domainKey);
     if (!senal) continue;
-    if (senal.writable === true) continue;
 
     for (const campo of CAMPOS_EDITABLES) {
       const valor = o.patch[campo];
@@ -318,6 +523,31 @@ export function aplicarSobreRaw(raw: unknown, overrides: MappingOverride[]): unk
       if (valor === null) delete senal[campo];
       else senal[campo] = valor;
     }
+
+    // El mando vive anidado, así que no cabe en el bucle de arriba. Solo se toca si la señal de
+    // verdad tiene write spec: inventarle uno a una señal de lectura produciría un documento que el
+    // schema rechaza («el write spec solo puede existir en una señal writable»).
+    const write = senal.write as Record<string, unknown> | undefined;
+    if (write) {
+      if (o.patch.writeIndex !== undefined) {
+        write.target = { ...(write.target as Record<string, unknown>), index: o.patch.writeIndex };
+      }
+      if (o.patch.writeCommands !== undefined) write.commands = { ...o.patch.writeCommands };
+      if (o.patch.writeMode !== undefined) write.mode = o.patch.writeMode;
+    }
+
+    if (o.patch.stateOpen !== undefined || o.patch.stateClosed !== undefined) {
+      const actual = (senal.stateEncoding as { open?: number; closed?: number } | undefined) ?? {};
+      const open = o.patch.stateOpen !== undefined ? o.patch.stateOpen : actual.open;
+      const closed = o.patch.stateClosed !== undefined ? o.patch.stateClosed : actual.closed;
+      const encoding: { open?: number; closed?: number } = {};
+      if (typeof open === 'number') encoding.open = open;
+      if (typeof closed === 'number') encoding.closed = closed;
+      // El schema exige minProperties: 1. Sin ninguna de las dos, la clave se borra entera.
+      if (Object.keys(encoding).length > 0) senal.stateEncoding = encoding;
+      else delete senal.stateEncoding;
+    }
+
     senal.confidence = 'inferred';
   }
 

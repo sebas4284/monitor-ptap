@@ -238,3 +238,41 @@ test('caliente: una corrección sobre UNA planta no toca las demás', async () =
     await v.cerrar();
   }
 });
+
+test('caliente: cambiar los verbos de mando se refleja en el DTO sin reiniciar', async () => {
+  // Es el cierre del ciclo que motiva toda la función: se sondea el canal con el probador, se
+  // descubre qué valor cierra, y el botón aparece en la app SIN desplegar ni reiniciar. Hoy 8 de las
+  // 10 plantas solo declaran `open`, así que el operario no tiene botón de cerrar en ninguna.
+  const v = await pipelineVivo();
+  try {
+    const valvula = v.mapping.signals.find(
+      (s) => s.writable && /^valve\d+$/.test(s.domainKey) && v.cache.get(s.plantId) !== undefined,
+    );
+    assert.ok(valvula, 'el mapeo real tiene al menos una válvula con snapshot');
+
+    const antes = v.cache.get(valvula.plantId)?.signals[valvula.domainKey]?.commands ?? [];
+
+    v.pipeline.setOverrides([
+      {
+        plantId: valvula.plantId,
+        domainKey: valvula.domainKey,
+        patch: { writeCommands: { abrirPrueba: 4096, cerrarPrueba: 8192 } },
+        by: 'test',
+        at: null,
+      },
+    ]);
+
+    const despues = v.cache.get(valvula.plantId)?.signals[valvula.domainKey]?.commands ?? [];
+    assert.deepEqual([...despues].sort(), ['abrirPrueba', 'cerrarPrueba'], 'los verbos nuevos llegan al DTO');
+    assert.notDeepEqual([...antes].sort(), [...despues].sort(), 'y son distintos de los que había');
+
+    v.pipeline.setOverrides([]);
+    assert.deepEqual(
+      v.cache.get(valvula.plantId)?.signals[valvula.domainKey]?.commands ?? [],
+      antes,
+      'al revertir vuelven los del repositorio',
+    );
+  } finally {
+    await v.cerrar();
+  }
+});

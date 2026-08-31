@@ -1,6 +1,6 @@
 /**
  * Fase 5 — validación del mapping de comandos (criterio de aceptación):
- *  - una señal writable con confidence != confirmed es IMPOSIBLE por schema;
+ *  - una señal writable puede ser confirmed o inferred, pero NUNCA estimated;
  *  - una señal writable DEBE declarar su write spec;
  *  - el mapping de PRODUCCIÓN no tiene NINGUNA señal writable (sin L5X → seguro por defecto).
  */
@@ -41,13 +41,31 @@ const VALID_WRITE = {
   permission: 'control_valves',
 };
 
-test('mapping: señal writable con confidence:inferred es rechazada por el schema', () => {
+test('mapping: una señal writable SÍ puede ser inferred (cambio del 2026-08-31)', () => {
+  // Hasta el 2026-08-31 el schema exigía `confirmed` a toda señal escribible, y era correcto
+  // mientras el mapeo solo se editaba por git con revisión. Al abrir la edición desde la app dejó de
+  // serlo por el motivo contrario al que parece: forzar `confirmed` obligaría a que una codificación
+  // capturada en campo y tecleada en un móvil se declarara respaldada por documentación oficial, y
+  // después nadie podría distinguir cuál se verificó de verdad.
   const result = validateMapping(schema, mappingWithSignal({
-    buffer: 'intOut', index: 3, domainKey: 'valveEV01',
+    buffer: 'intOut', index: 3, domainKey: 'valveEV01', label: 'Válvula EV01',
     mappingStatus: 'mapped', confidence: 'inferred', writable: true, write: VALID_WRITE,
   }));
+  assert.equal(result.ok, true, `debería validar, hubo: ${result.errors.join(' | ')}`);
+});
+
+test('mapping: una señal writable NUNCA puede ser estimated', () => {
+  // Es el límite que sí se conserva: `estimated` significa derivado o calculado, y un valor
+  // calculado no es un canal de mando. Abrir `inferred` no abre esto.
+  const result = validateMapping(schema, mappingWithSignal({
+    buffer: 'intOut', index: 3, domainKey: 'valveEV01', label: 'Válvula EV01',
+    mappingStatus: 'mapped', confidence: 'estimated', writable: true, write: VALID_WRITE,
+  }));
   assert.equal(result.ok, false);
-  assert.ok(result.errors.some((e) => /confidence|confirmed/i.test(e)), `esperaba error de confidence, hubo: ${result.errors.join(' | ')}`);
+  assert.ok(
+    result.errors.some((e) => /confidence|then/i.test(e)),
+    `esperaba error de confidence, hubo: ${result.errors.join(' | ')}`,
+  );
 });
 
 test('mapping: señal writable SIN write spec es rechazada por el schema', () => {

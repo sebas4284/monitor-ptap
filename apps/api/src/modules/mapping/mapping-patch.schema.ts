@@ -20,6 +20,24 @@ export const mappingPatchSchema = z
     max: z.number().finite().nullable().optional(),
     opMin: z.number().finite().nullable().optional(),
     opMax: z.number().finite().nullable().optional(),
+
+    // ── Mando (solo válvulas) ──
+    //
+    // El servidor comprueba ADEMAS que la señal sea de verdad una válvula con write spec, que el
+    // índice quepa en su buffer y que no haya dos verbos con el mismo valor. Esto de aquí es solo la
+    // forma: lo que decide es `validarParche`.
+    writeIndex: z.number().int().min(0).max(10_000).optional(),
+    /**
+     * Verbo → valor. Reemplaza el mapa ENTERO, no lo fusiona: fusionar dejaría verbos viejos que
+     * nadie recuerda haber puesto, y en un canal de mando un verbo olvidado es un botón de más en la
+     * pantalla del operario.
+     */
+    writeCommands: z
+      .record(z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]*$/), z.union([z.number().finite(), z.boolean()]))
+      .optional(),
+    writeMode: z.enum(['absolute', 'bitmask']).optional(),
+    stateOpen: z.number().finite().nullable().optional(),
+    stateClosed: z.number().finite().nullable().optional(),
   })
   .strict()
   .refine((p) => Object.keys(p).length > 0, { message: 'No se mandó ningún campo que cambiar.' });
