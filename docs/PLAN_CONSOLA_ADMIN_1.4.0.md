@@ -58,6 +58,19 @@ Cerradas el 2026-08-26. No reabrirlas sin un motivo nuevo.
 
 **Orden de ejecución: C.1 (lectura) → D → A → B1 → B2 → C.2-C.4 (edición).**
 
+**Hecho al 2026-08-31: C.1 y D, completas.** C.1 en dos commits (el endpoint en `db5805f`, la
+pantalla después) y D entera. Queda **A → B1 → B2 → C.2-C.4**.
+
+> **Decisión del 2026-08-31: estas dos fases salen SOLO a la web, sin tocar la versión.**
+> `app.json` se queda en **1.3.0 / versionCode 8** y el APK no se recompila todavía. La web se
+> sirve fresca del servidor, así que un admin ya tiene los buffers crudos y la pestaña de
+> Novedades desde el navegador; quien use la APK los verá cuando se compile la siguiente.
+>
+> Consecuencia que hay que tener presente: **`docs/NOVEDADES.md` NO lleva entrada de esto.** La
+> entrada se escribe cuando se publique el APK (1.3.1 / 9), porque anunciar dentro de la app una
+> versión que nadie puede instalar es exactamente lo que ese listado no debe hacer. Hoy su
+> entrada más reciente es la 1.3.0, que es la verdad.
+
 La vista de solo lectura se adelanta a la 1.3.1 porque es útil por sí sola y no escribe nada. **La
 edición sigue después del informe por planta, y el motivo no ha cambiado:** sin el informe no hay
 forma de verificar que un canal reapuntado quedó bien. Cambiar el índice de `inletPressure1` en
@@ -169,6 +182,30 @@ inventar una planta falsa ni migrar el esquema. **Ninguna de las dos hace falta.
 
 La pestaña Novedades lista el changelog, marca como nueva la entrada no vista, y no aparece ninguna
 fila en la tabla `notification`.
+
+### ✅ HECHO el 2026-08-31
+
+| Pieza | Dónde |
+|---|---|
+| Changelog versionado | `docs/NOVEDADES.md` (1.3.0 y 1.2.4, sacadas de `notas-version.txt`) |
+| Parser puro | `apps/api/src/modules/app-release/novedades.parser.ts` |
+| Servicio sin cache | `apps/api/src/modules/app-release/novedades.service.ts` |
+| Endpoint `@Public()` | `GET /api/app/novedades` en `app-release.controller.ts` |
+| Cliente + marca de visto | `apps/mobile/services/novedades.ts` (+ `novedades-compare.ts`, puro) |
+| Hook | `apps/mobile/hooks/useNovedades.ts` |
+| Pestaña y render propios | `components/NovedadesLista.tsx` + `app/(app)/alertas.tsx` |
+| Tests | 10 en `apps/api/test/novedades.test.ts`, 7 en `apps/mobile/services/novedades.test.ts` |
+
+Tres cosas que se decidieron al implementar y no estaban en el plan:
+
+- **El parser ORDENA por versión** en vez de fiarse del orden del archivo. El archivo se mantiene
+  a mano y el despiste probable es añadir la entrada nueva al final; ordenar aquí hace que ese
+  despiste no tenga consecuencias. Se compara por número, así que 1.10.0 va por delante de 1.9.0.
+- **La tira de pestañas ya no se esconde con la bandeja vacía.** Antes solo se dibujaba si había
+  avisos; con Novedades dentro, eso la habría dejado inalcanzable justo cuando no hay nada más que
+  leer.
+- **El estado vacío de la bandeja decía «Sin novedades»**, que ahora significaría otra cosa. Pasa
+  a decir «Sin avisos».
 
 ---
 
@@ -366,7 +403,7 @@ write spec de Cascajal: `write.target.channel = "intOut"`, `commands.open = 4096
 0 a los 300 ms, `intOut` está en cero casi siempre y un filtro "oculta ceros" lo escondería justo
 cuando se quiere ver. **La excepción hace falta.**
 
-### C.1 — Solo lectura  ·  **sale en la 1.3.1**
+### C.1 — Solo lectura  ·  ✅ **HECHA el 2026-08-31** (en la web; el APK, después)
 
 `GET /api/opc/raw/:plantId` (`system_config`). El pipeline ya guarda `latestBuffers`
 (`Map<browseName, RawBufferSample>`) por planta; se expone tal cual, con el NodeId
@@ -383,6 +420,16 @@ REAL_IN_CASCAJAL   ns=AQUATECH4  g=F0C27430-68DC-74D7-BDAB-B9EDCC19F8A7   Float[
 INT_OUT_CASCAJAL   ns=AQUATECH4  g=37DF3BEA-…   Int16[20]   (todos los índices, incluidos los 0)
   [ 0]       0   → valve1           "Válvula 1"   🔒 no editable
 ```
+
+Front: **`apps/mobile/app/(app)/desarrollador.tsx`**, con `services/opc-raw.ts` de cliente, la
+entrada en Ajustes (sección propia, bajo `system_config`) y la ruta registrada con `href: null` en
+`_layout.tsx`. Refresca cada 10 s y con tirón hacia abajo; el selector de planta es **local**, para
+que diagnosticar Cascajal no le cambie la planta del tablero a quien vuelva atrás.
+
+Cuatro cosas que la vista dice y que no estaban dibujadas en el boceto de arriba, porque son los
+casos en los que de verdad se usa: un buffer del que **nunca llegó una muestra**, un desajuste
+entre la longitud declarada y la recibida, un índice **mapeado cuyo valor no vino** (el que produce
+un dead-letter `INDEX_OUT_OF_RANGE`), y la `quality`/`statusCode` cuando no son `Good`.
 
 ### C.2 — La edición  ·  **1.4.0, después del informe por planta**
 

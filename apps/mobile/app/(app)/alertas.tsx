@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useNotifications } from '../../hooks/useNotifications';
+import { useNovedades } from '../../hooks/useNovedades';
 import { usePlant, PLANTS } from '../../context/PlantContext';
 import {
   FAMILIAS,
@@ -16,6 +17,8 @@ import {
 import { ListSkeleton } from '../../components/Skeleton';
 import { OfflineNotice } from '../../components/OfflineNotice';
 import { RegistroIntegridadCard } from '../../components/RegistroIntegridadCard';
+import { NovedadesLista } from '../../components/NovedadesLista';
+import { versionMasReciente } from '../../services/novedades';
 import Colors from '../../constants/colors';
 
 /**
@@ -83,11 +86,14 @@ function Pestania({
   etiqueta,
   cuantos,
   activa,
+  nuevo = false,
   onPress,
 }: {
   etiqueta: string;
   cuantos: number;
   activa: boolean;
+  /** Punto de aviso: hay algo sin ver detrás de esta pestaña. */
+  nuevo?: boolean;
   onPress: () => void;
 }) {
   return (
@@ -97,8 +103,9 @@ function Pestania({
       activeOpacity={0.7}
       accessibilityRole="tab"
       accessibilityState={{ selected: activa }}
-      accessibilityLabel={`${etiqueta}, ${cuantos} avisos`}
+      accessibilityLabel={`${etiqueta}, ${cuantos}${nuevo ? ', sin ver' : ''}`}
     >
+      {nuevo && <View style={[styles.dot, styles.pestaniaDot]} />}
       <Text style={[styles.pestaniaTexto, activa && styles.pestaniaTextoActiva]}>{etiqueta}</Text>
       <Text style={styles.pestaniaNum}>{cuantos}</Text>
     </TouchableOpacity>
@@ -107,9 +114,17 @@ function Pestania({
 
 export default function AlertasScreen() {
   const { notifications, unseen, isLoading, isError, refetch, markSeen } = useNotifications();
+  const novedadesQ = useNovedades();
   const { setSelectedPlant } = usePlant();
   const [familia, setFamilia] = useState<FamiliaAviso | null>(null);
   const [busqueda, setBusqueda] = useState('');
+  /**
+   * Qué se está mirando. Las novedades NO son una familia de avisos —no tienen planta, ni
+   * gravedad, ni «visto» por usuario— así que no caben en `familia` sin mentir sobre lo que son.
+   */
+  const [vista, setVista] = useState<'avisos' | 'novedades'>('avisos');
+  /** Versión que estaba sin ver al ABRIR la pestaña; fija el resalte mientras se lee. */
+  const [versionNueva, setVersionNueva] = useState<string | null>(null);
 
   const visibles = useMemo(() => filtrarAvisos(notifications, familia, busqueda), [notifications, familia, busqueda]);
 
@@ -131,6 +146,19 @@ export default function AlertasScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  function verAvisos(f: FamiliaAviso | null) {
+    setVista('avisos');
+    setFamilia(f);
+  }
+
+  function verNovedades() {
+    // El resalte se decide UNA sola vez, al entrar. Si se derivara de la marca guardada, el
+    // recuadro de «nuevo» se apagaría delante del usuario en el mismo gesto de abrirlo.
+    setVersionNueva(novedadesQ.hayNueva ? versionMasReciente(novedadesQ.novedades) : null);
+    setVista('novedades');
+    novedadesQ.marcarVistas();
+  }
+
   function abrir(n: AppNotification) {
     // Seleccionar la planta primero: el tablero muestra la que esté activa, así que sin esto el
     // usuario aterrizaría mirando otra planta y creería que el aviso es falso.
@@ -145,7 +173,13 @@ export default function AlertasScreen() {
     <SafeAreaView style={styles.safe} edges={['bottom']}>
       <ScrollView
         contentContainerStyle={styles.content}
-        refreshControl={<RefreshControl refreshing={false} onRefresh={refetch} tintColor={Colors.primary} />}
+        refreshControl={
+          <RefreshControl
+            refreshing={false}
+            onRefresh={vista === 'novedades' ? novedadesQ.refetch : refetch}
+            tintColor={Colors.primary}
+          />
+        }
       >
         <View style={styles.head}>
           <Text style={styles.heading}>Notificaciones</Text>
@@ -160,47 +194,64 @@ export default function AlertasScreen() {
             lo que está leyendo lo quiere saber mientras lo lee. */}
         <RegistroIntegridadCard />
 
-        {notifications.length > 0 && (
-          <>
-            <View style={styles.buscador}>
-              <Ionicons name="search-outline" size={16} color={Colors.textSecondary} />
-              <TextInput
-                style={styles.buscadorInput}
-                value={busqueda}
-                onChangeText={setBusqueda}
-                placeholder="Buscar por válvula, sensor o persona"
-                placeholderTextColor={Colors.textSecondary}
-                accessibilityLabel="Buscar dentro de las notificaciones"
-                returnKeyType="search"
-              />
-              {busqueda.length > 0 && (
-                <TouchableOpacity onPress={() => setBusqueda('')} hitSlop={10} accessibilityLabel="Borrar la búsqueda">
-                  <Ionicons name="close-circle" size={16} color={Colors.textSecondary} />
-                </TouchableOpacity>
-              )}
-            </View>
-
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pestanias}>
-              <Pestania
-                etiqueta="Todo"
-                cuantos={notifications.length}
-                activa={familia === null}
-                onPress={() => setFamilia(null)}
-              />
-              {FAMILIAS.map((f) => (
-                <Pestania
-                  key={f.id}
-                  etiqueta={f.etiqueta}
-                  cuantos={conteos[f.id] ?? 0}
-                  activa={familia === f.id}
-                  onPress={() => setFamilia(familia === f.id ? null : f.id)}
-                />
-              ))}
-            </ScrollView>
-          </>
+        {vista === 'avisos' && notifications.length > 0 && (
+          <View style={styles.buscador}>
+            <Ionicons name="search-outline" size={16} color={Colors.textSecondary} />
+            <TextInput
+              style={styles.buscadorInput}
+              value={busqueda}
+              onChangeText={setBusqueda}
+              placeholder="Buscar por válvula, sensor o persona"
+              placeholderTextColor={Colors.textSecondary}
+              accessibilityLabel="Buscar dentro de las notificaciones"
+              returnKeyType="search"
+            />
+            {busqueda.length > 0 && (
+              <TouchableOpacity onPress={() => setBusqueda('')} hitSlop={10} accessibilityLabel="Borrar la búsqueda">
+                <Ionicons name="close-circle" size={16} color={Colors.textSecondary} />
+              </TouchableOpacity>
+            )}
+          </View>
         )}
 
-        {isLoading ? (
+        {/* La tira de pestañas aparece si hay ALGO que ofrecer: con la bandeja vacía, Novedades
+            sigue teniendo contenido y esconderla la dejaría inalcanzable. */}
+        {(notifications.length > 0 || novedadesQ.novedades.length > 0) && (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pestanias}>
+            <Pestania
+              etiqueta="Todo"
+              cuantos={notifications.length}
+              activa={vista === 'avisos' && familia === null}
+              onPress={() => verAvisos(null)}
+            />
+            {FAMILIAS.map((f) => (
+              <Pestania
+                key={f.id}
+                etiqueta={f.etiqueta}
+                cuantos={conteos[f.id] ?? 0}
+                activa={vista === 'avisos' && familia === f.id}
+                onPress={() => verAvisos(vista === 'avisos' && familia === f.id ? null : f.id)}
+              />
+            ))}
+            <Pestania
+              etiqueta="Novedades"
+              cuantos={novedadesQ.novedades.length}
+              activa={vista === 'novedades'}
+              nuevo={novedadesQ.hayNueva}
+              onPress={verNovedades}
+            />
+          </ScrollView>
+        )}
+
+        {vista === 'novedades' ? (
+          <NovedadesLista
+            novedades={novedadesQ.novedades}
+            versionNueva={versionNueva}
+            isLoading={novedadesQ.isLoading}
+            isError={novedadesQ.isError}
+            onRetry={novedadesQ.refetch}
+          />
+        ) : isLoading ? (
           <ListSkeleton rows={3} label="Cargando las notificaciones" />
         ) : isError ? (
           <OfflineNotice
@@ -212,7 +263,7 @@ export default function AlertasScreen() {
         ) : notifications.length === 0 ? (
           <View style={styles.empty}>
             <Ionicons name="checkmark-circle-outline" size={44} color={Colors.success} />
-            <Text style={styles.emptyTitle}>Sin novedades</Text>
+            <Text style={styles.emptyTitle}>Sin avisos</Text>
             <Text style={styles.emptyText}>
               No se ha registrado ningún aviso en los últimos 3 días. Aquí aparecerán las maniobras de
               válvula, las señales fuera de rango y los sensores que dejen de refrescarse.
@@ -284,6 +335,7 @@ const styles = StyleSheet.create({
     borderColor: Colors.divider,
   },
   pestaniaActiva: { borderColor: Colors.primary, backgroundColor: Colors.primary + '22' },
+  pestaniaDot: { backgroundColor: Colors.danger },
   pestaniaTexto: { fontSize: 12.5, fontWeight: '600', color: Colors.textSecondary },
   pestaniaTextoActiva: { color: Colors.primary },
   pestaniaNum: { fontSize: 11, color: Colors.textSecondary },
