@@ -70,16 +70,35 @@ pm2 save >/dev/null
 
 # Tras el reinicio, /api/health devuelve 000 unos segundos mientras conecta el puente OPC UA. No es
 # una caída: se espera y se reintenta antes de declarar nada.
-echo -n "  esperando a que escuche: "
-for _ in $(seq 1 20); do
-  CODIGO="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:4000/api/health || true)"
+#
+# TRES MINUTOS, y no uno. El 2026-08-31 este script abortó con la API perfectamente sana: había
+# esperado 60 s, y en esta VM (2 CPUs) el proceso tardó ~2 min en arrancar porque venía de compilar.
+# La API levantó cuatro segundos después de rendirse. Un despliegue que declara un fallo que no
+# existe es peor que uno lento: manda a alguien a diagnosticar una caída inventada.
+ESPERAS=60
+echo -n "  esperando a que escuche (hasta $((ESPERAS * 3)) s): "
+INICIO=$SECONDS
+for _ in $(seq 1 "$ESPERAS"); do
+  CODIGO="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://127.0.0.1:4000/api/health || true)"
   [[ "$CODIGO" == "200" ]] && break
+  echo -n "."
   sleep 3
 done
-echo "$CODIGO"
+echo " $CODIGO en $((SECONDS - INICIO)) s"
+
 if [[ "$CODIGO" != "200" ]]; then
-  echo "  La API no respondió 200 en 60 s. NO se publica la web." >&2
+  # El VEREDICTO va al FINAL, después del volcado de logs, y no antes. Con el mensaje arriba, un
+  # `| tail` —que es como se lee esto por SSH— se queda con los logs y esconde justo la línea que
+  # dice qué pasó. Pasó de verdad el 2026-08-31.
   pm2 logs ptap-api --lines 20 --nostream --no-color >&2 || true
+  echo "" >&2
+  echo "  ================================================================" >&2
+  echo "  La API no respondió 200 en $((SECONDS - INICIO)) s. NO se publica la web." >&2
+  echo "  El backend YA está actualizado y compilado; lo único que falta es" >&2
+  echo "  el bundle. Cuando la API responda, publica con:" >&2
+  echo "      cd ~/monitor-ptap/apps/mobile && API_BASE_URL= npx expo export -p web --clear" >&2
+  echo "      sudo -n /usr/local/sbin/ptap-web-publish" >&2
+  echo "  ================================================================" >&2
   exit 1
 fi
 
