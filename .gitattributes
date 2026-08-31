@@ -1,0 +1,4 @@
+# Los scripts de la VM son ejecutables de Linux: un CRLF en el shebang los rompe con
+# "bad interpreter: /usr/bin/env bash^M", y este repositorio se edita desde Windows con
+# core.autocrlf=true. Esta regla los mantiene en LF en cualquier checkout.
+tools/vm/** text eol=lf
