@@ -183,6 +183,29 @@ export default function AjustesScreen() {
           <>
             <Text style={styles.sectionTitle}>Estado de conexión con el PLC</Text>
             <ConnectionDiagnostics />
+
+            {/* Sección propia, y no un botón dentro del diagnóstico: esto no responde "¿está
+                conectado?" sino "¿de dónde sale este número?". Son dos preguntas distintas. */}
+            <Text style={styles.sectionTitle}>Modo desarrollador</Text>
+            <TouchableOpacity
+              style={[styles.card, styles.linkCard]}
+              onPress={() => router.push('/(app)/desarrollador')}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="terminal-outline" size={20} color={Colors.primary} />
+              <View style={styles.flex}>
+                <Text style={styles.linkTitle}>Buffers crudos del PLC</Text>
+                <Text style={styles.linkDesc}>
+                  Los arrays como los entrega la planta, y qué señal lee cada índice
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
+            </TouchableOpacity>
+            <Text style={styles.hint}>
+              Solo lectura, y no dispara ninguna lectura al PLC: sale de la última muestra que
+              ya había entrado. Sirve para averiguar de dónde viene un valor raro sin abrir el
+              mapeo a mano.
+            </Text>
           </>
         )}
 

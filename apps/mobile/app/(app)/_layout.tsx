@@ -358,6 +358,16 @@ export default function AppLayout() {
             headerTitle: 'Ajustes',
           }}
         />
+        {/* Fuera del tab bar: se entra desde Ajustes, y el backend solo la sirve con
+            `system_config`. La pantalla vuelve a comprobarlo por su cuenta. */}
+        <Tabs.Screen
+          name="desarrollador"
+          options={{
+            href: null,
+            ...HEADER_OPTS,
+            headerTitle: 'Modo desarrollador',
+          }}
+        />
       </Tabs>
     </>
   );
