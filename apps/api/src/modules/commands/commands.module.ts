@@ -11,6 +11,8 @@ import { SignatureIntegrityDetector } from './signature-integrity.detector';
 import { CommandMappingResolver } from './command-mapping.resolver';
 import { CommandsController } from './commands.controller';
 import { WriteService } from './write.service';
+import { ChannelProbeController } from './channel-probe.controller';
+import { ChannelProbeService } from './channel-probe.service';
 
 /**
  * Fase 5 — canal de escritura. Requiere BD (idempotencia/traza en command_log) y Auth
@@ -24,9 +26,10 @@ import { WriteService } from './write.service';
   // NotificationsModule: cada maniobra deja un aviso en la bandeja, que es el registro que
   // sustituye a la confirmación eléctrica que estas plantas no dan.
   imports: [ConnectivityModule, AuthModule, AuditModule, DatabaseModule, NotificationsModule],
-  controllers: [CommandsController, CommandSignatureController],
+  controllers: [CommandsController, CommandSignatureController, ChannelProbeController],
   providers: [
     WriteService,
+    ChannelProbeService,
     CommandMappingResolver,
     CommandLogRepository,
     CommandSignatureService,

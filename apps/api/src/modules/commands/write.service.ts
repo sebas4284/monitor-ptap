@@ -79,6 +79,30 @@ export class WriteService {
    */
   private readonly enCurso = new Set<string>();
 
+  /**
+   * Reserva TODAS las claves o ninguna. Lo usa el probador de canales para bloquear, mientras dura
+   * una prueba, las válvulas que mandan por ese mismo elemento del buffer — y al revés: una orden en
+   * curso impide sondear su canal.
+   *
+   * Comparten este mismo conjunto a propósito. Dos cerrojos separados no se ven entre sí, y el hueco
+   * entre ellos es justo donde cabe el fallo que hay que evitar: una orden en máscara solapada con
+   * una escritura absoluta deja la palabra con las DOS direcciones energizadas, que es el estado que
+   * el protocolo de estas plantas declara ERROR.
+   *
+   * Todo o nada: reservar la mitad de las claves y devolver false dejaría media planta bloqueada sin
+   * que nadie la libere.
+   */
+  reservar(claves: string[]): boolean {
+    if (claves.some((c) => this.enCurso.has(c))) return false;
+    for (const c of claves) this.enCurso.add(c);
+    return true;
+  }
+
+  /** Libera lo reservado. Se llama SIEMPRE desde un `finally`. */
+  liberar(claves: string[]): void {
+    for (const c of claves) this.enCurso.delete(c);
+  }
+
   async execute(plantId: string, req: CommandRequest, actor: CommandActor): Promise<CommandResult> {
     const cerrojo = `${plantId}/${req.target}`;
     if (this.enCurso.has(cerrojo)) {
