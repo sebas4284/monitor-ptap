@@ -58,8 +58,17 @@ Cerradas el 2026-08-26. No reabrirlas sin un motivo nuevo.
 
 **Orden de ejecución: C.1 (lectura) → D → A → B1 → B2 → C.2-C.4 (edición).**
 
-**Hecho al 2026-08-31: C.1 y D, completas.** C.1 en dos commits (el endpoint en `db5805f`, la
-pantalla después) y D entera. Queda **A → B1 → B2 → C.2-C.4**.
+**Hecho al 2026-08-31: C.1, D, C.2 y C.3.** C.1 en dos commits (el endpoint en `db5805f`, la
+pantalla después), D entera, y la **edición del mapeo con aplicación en caliente**. Queda
+**A → B1 → B2** y **C.4** (llevar los cambios a git, que necesita crear antes la deploy key).
+
+> **La edición se adelantó a la fase A, y conviene dejar escrito por qué.** El plan la ponía
+> después del informe por planta con un motivo concreto: «sin el informe no hay forma de
+> verificar que un canal reapuntado quedó bien». Ese motivo lo cubre ahora la propia pantalla de
+> C.1 — el editor vive DENTRO de la tabla de buffers crudos y la revisión previa enseña **qué
+> valor está entregando el PLC en el índice de destino** antes de guardar. La verificación que
+> faltaba no era el informe: era no tener que comprobarlo a ojo en el tablero. El informe por
+> planta sigue haciendo falta, pero ya no bloquea esto.
 
 > **Decisión del 2026-08-31: estas dos fases salen SOLO a la web, sin tocar la versión.**
 > `app.json` se queda en **1.3.0 / versionCode 8** y el APK no se recompila todavía. La web se
@@ -431,7 +440,7 @@ casos en los que de verdad se usa: un buffer del que **nunca llegó una muestra*
 entre la longitud declarada y la recibida, un índice **mapeado cuyo valor no vino** (el que produce
 un dead-letter `INDEX_OUT_OF_RANGE`), y la `quality`/`statusCode` cuando no son `Good`.
 
-### C.2 — La edición  ·  **1.4.0, después del informe por planta**
+### C.2 — La edición  ·  ✅ **HECHA el 2026-08-31** (en caliente, sin reiniciar)
 
 `PATCH /api/opc/mapping/:plantId/:domainKey` con
 `{ index?, buffer?, sourceBuffer?, unit?, min?, max?, opMin?, opMax? }`.
@@ -449,7 +458,7 @@ un dead-letter `INDEX_OUT_OF_RANGE`), y la `quality`/`statusCode` cuando no son 
 aplica los overrides encima del JSON al cargar. Es auditoría/configuración, no telemetría: respeta la
 regla 1.
 
-### C.3 — "Se aplica ya", sin reiniciar el proceso
+### C.3 — "Se aplica ya", sin reiniciar el proceso  ·  ✅ **HECHA el 2026-08-31**
 
 Un cambio de índice, unidad o rango es **puramente de la capa de dominio**: no toca NodeIds, ni
 buffers, ni la Subscription OPC. Así que aplicarlo es **recargar `MappingEngine` y reconstruir los
@@ -458,7 +467,7 @@ esa propuesta recomienda: dominio sí, NodeIds nunca.
 
 **Nada de `pm2 restart` desde dentro del propio proceso.**
 
-### C.4 — "Llevar a git" (segundo paso, explícito)
+### C.4 — "Llevar a git" (segundo paso, explícito)  ·  ⬜ pendiente
 
 `POST /api/opc/mapping/git`: escribe los overrides pendientes en `config/opc_mapping.json`, commitea
 a **`yosh`** y hace push. **No despliega** — producción ya está corregida por el override.
@@ -479,6 +488,47 @@ override ya está en el JSON y lo marca aplicado, para que no se acumulen capas.
 - Una señal `writable` no es editable.
 - El override baja `confidence` a `inferred`.
 - Tras aplicar un override, el DTO sale con el índice nuevo sin reiniciar el proceso.
+
+### ✅ HECHO el 2026-08-31 — C.2 y C.3
+
+| Pieza | Dónde |
+|---|---|
+| Tabla append-only | `0014_mapping_override.sql` |
+| Aplicar y validar (puro) | `connectivity/mapping/mapping-overrides.ts` |
+| Recarga en caliente | `PlantPipelineService.setOverrides()` |
+| Persistencia | `modules/mapping/mapping-override.repository.ts` |
+| Orquestación + schema | `modules/mapping/mapping-override.service.ts` |
+| API | `GET/PATCH/DELETE /api/opc/mapping/...` (`system_config`) |
+| Formulario y revisión | `components/EditarSenalDialog.tsx` + `services/mapping-edit-form.ts` |
+| Panel de procedencia | `components/SenalDetalle.tsx` |
+| Tests | 29 en `apps/api/test/mapping-override.test.ts`, 24 en `apps/mobile/services/mapping-edit.test.ts` |
+
+Seis decisiones que se tomaron al implementar y no estaban en el plan:
+
+- **La tabla es APPEND-ONLY.** El plan decía «reversible uno a uno» y la forma barata habría
+  sido un UPDATE por señal. Con filas mutables, la pregunta «¿quién reapuntó esto y cuándo?» se
+  pierde en el propio UPDATE. El override que rige es la última fila de cada (planta, señal), y
+  revertir **inserta** una fila de reversión. Misma disciplina que el libro de firmas.
+- **El parche que se guarda es el ACUMULADO de la señal, no el delta.** Así leer el efectivo es
+  una fila por señal; con deltas habría que replegar la historia entera en cada arranque, y un
+  hueco en la cadena cambiaría el resultado en silencio.
+- **`PlantPipelineService.setOverrides()` limpia `lastSignature`.** La firma del diff omite a
+  propósito los campos estáticos del mapping «porque no cambian sin reiniciar» — y eso deja de
+  ser cierto justo aquí. Sin ese `clear`, corregir solo la unidad daba la misma firma, el
+  snapshot se descartaba por idéntico y la corrección quedaba aplicada pero invisible.
+- **Los overrides se EMPUJAN al pipeline, no los lee él.** `ConnectivityModule` no puede depender
+  de MySQL (lo importa `main.telemetry.ts`, que arranca sin base). La dirección de esa flecha es
+  lo que mantiene viva la separación.
+- **El índice se valida contra el buffer de DESTINO.** Mover una señal del `realIn` de 50 al TK1
+  de 10 dejando el índice 19 pasa cualquier validación que mire el buffer anterior, y produce un
+  dead-letter `INDEX_OUT_OF_RANGE` en cada muestra: una señal muda, sin error visible.
+- **Sin el schema en disco se RECHAZA el cambio**, en vez de aplicarlo avisando en el log. Nadie
+  lee ese log, y la alternativa convierte un despliegue mal copiado en una puerta a guardar
+  mapeos ilegales.
+
+Y una que sí estaba y se reforzó: las señales `writable` se rechazan **dos veces** —al validar y
+al aplicar—, así que ni una fila metida a mano en MySQL puede mover el canal de mando de una
+válvula.
 
 ---
 

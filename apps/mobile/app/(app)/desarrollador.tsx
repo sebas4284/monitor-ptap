@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, RefreshControl, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../../context/AuthContext';
 import { usePlant, PLANTS } from '../../context/PlantContext';
 import {
@@ -12,24 +12,30 @@ import {
   type RawBufferView,
   type RawChannel,
 } from '../../services/opc-raw';
+import { fetchPlantaEditable, revertirCorreccion, type SenalEditable } from '../../services/mapping-edit';
 import { formatWhen } from '../../services/notifications';
 import { ListSkeleton } from '../../components/Skeleton';
 import { OfflineNotice } from '../../components/OfflineNotice';
+import { SenalDetalle } from '../../components/SenalDetalle';
+import { EditarSenalDialog } from '../../components/EditarSenalDialog';
 import Colors from '../../constants/colors';
 
 /**
- * Modo desarrollador — los buffers crudos de una planta, al estilo de UA Expert. **Solo lectura.**
+ * Modo desarrollador — los buffers crudos de una planta, al estilo de UA Expert, y el editor del
+ * mapeo.
  *
  * Por qué existe: el 2026-08-25 se tardaron seis horas en concluir que `cascajal.inletPressure1`
  * leía 409,50 psi porque es 4095/10 —el fondo de escala de un convertidor de 12 bits—, y para
  * llegar ahí hubo que abrir fixtures a mano y cruzar índices entre las doce plantas. El backend
- * tenía el dato desde el principio; lo que faltaba era poder verlo. Esta pantalla es ese dato.
+ * tenía el dato desde el principio; lo que faltaba era poder verlo. Y después, poder arreglarlo:
+ * corregir el índice exigía editar el JSON, commitear, desplegar y reiniciar.
  *
- * Lo que la hace accionable, y no una tabla de números: **junto a cada índice, qué señal lo consume
- * y con qué etiqueta y unidad sale en el tablero.**
+ * Las dos mitades viven juntas a propósito. **La tabla es la verificación del editor**: se corrige
+ * el índice y se comprueba en la misma pantalla, sobre el valor que de verdad está entregando el
+ * PLC, sin pasar por el tablero a ojo — que es exactamente cómo se colaron esos 409,50 sin que nadie
+ * lo notara.
  *
- * No dispara lecturas al PLC: `/api/opc/raw/:plantId` sirve la última muestra que entró por la
- * Subscription, igual que el resto de `/opc/*`.
+ * La consulta no toca el PLC: sale de la última muestra que entró por la Subscription.
  */
 
 /** Cada cuánto se repide. La cache del pipeline se refresca en ~1 s; 10 s es «en vivo» de sobra. */
@@ -37,41 +43,114 @@ const REFRESCO_MS = 10_000;
 
 const mono = Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' });
 
+/** Identifica una fila: un índice dentro de un buffer concreto. */
+function claveFila(browseName: string, index: number): string {
+  return `${browseName}#${index}`;
+}
+
 /** Una fila del array: índice, valor y quién lo consume. */
-function Canal({ c }: { c: RawChannel }) {
+function Canal({
+  c,
+  clave,
+  editable,
+  expandido,
+  puedeEditar,
+  revirtiendo,
+  onToggle,
+  onEditar,
+  onRevertir,
+}: {
+  c: RawChannel;
+  clave: string;
+  editable: SenalEditable | undefined;
+  expandido: boolean;
+  puedeEditar: boolean;
+  revirtiendo: boolean;
+  onToggle: (clave: string) => void;
+  onEditar: (senal: SenalEditable) => void;
+  onRevertir: (senal: SenalEditable) => void;
+}) {
   return (
-    <View style={styles.fila}>
-      <Text style={styles.indice}>[{String(c.index).padStart(2, ' ')}]</Text>
-      <Text
-        style={[styles.valor, c.outOfRange && styles.valorMal, c.value === null && styles.valorAusente]}
-      >
-        {formatValorCrudo(c.value)}
-      </Text>
-      <View style={styles.filaInfo}>
-        {c.domainKey ? (
-          <>
-            <Text style={styles.domainKey}>
-              {c.domainKey}
-              {c.unit ? <Text style={styles.unidad}> {c.unit}</Text> : null}
-            </Text>
-            {c.label ? <Text style={styles.etiqueta}>{c.label}</Text> : null}
-          </>
+    <View>
+      <View style={styles.fila}>
+        <Text style={styles.indice}>[{String(c.index).padStart(2, ' ')}]</Text>
+        <Text
+          style={[styles.valor, c.outOfRange && styles.valorMal, c.value === null && styles.valorAusente]}
+        >
+          {formatValorCrudo(c.value)}
+        </Text>
+        <View style={styles.filaInfo}>
+          {c.domainKey ? (
+            <>
+              <Text style={styles.domainKey}>
+                {c.domainKey}
+                {c.unit ? <Text style={styles.unidad}> {c.unit}</Text> : null}
+              </Text>
+              {c.label ? <Text style={styles.etiqueta}>{c.label}</Text> : null}
+            </>
+          ) : (
+            <Text style={styles.sinMapear}>(sin mapear)</Text>
+          )}
+          {/* Un índice declarado que la muestra no trae es exactamente el fallo que produce un
+              dead-letter INDEX_OUT_OF_RANGE. Se dice, en vez de pintarlo como un cero. */}
+          {c.value === null && c.domainKey ? (
+            <Text style={styles.aviso}>el mapeo declara este índice y la muestra no lo trae</Text>
+          ) : null}
+        </View>
+        {c.outOfRange ? <Ionicons name="warning" size={14} color={Colors.warning} /> : null}
+        {editable?.override ? <Ionicons name="create" size={13} color={Colors.warning} /> : null}
+        {c.locked ? <Ionicons name="lock-closed" size={13} color={Colors.textSecondary} /> : null}
+
+        {/* El botón de ampliar. Solo en índices mapeados: en uno sin mapear no hay atributo que
+            explicar ni señal que editar. */}
+        {editable ? (
+          <TouchableOpacity
+            onPress={() => onToggle(clave)}
+            hitSlop={10}
+            style={styles.ampliar}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: expandido }}
+            accessibilityLabel={`${expandido ? 'Ocultar' : 'Ver'} de dónde sale ${c.domainKey ?? ''} y a qué atributo corresponde`}
+          >
+            <Ionicons name={expandido ? 'chevron-up' : 'chevron-down'} size={18} color={Colors.primary} />
+          </TouchableOpacity>
         ) : (
-          <Text style={styles.sinMapear}>(sin mapear)</Text>
+          <View style={styles.ampliarHueco} />
         )}
-        {/* Un índice declarado que la muestra no trae es exactamente el fallo que produce un
-            dead-letter INDEX_OUT_OF_RANGE. Se dice, en vez de pintarlo como un cero. */}
-        {c.value === null && c.domainKey ? (
-          <Text style={styles.aviso}>el mapeo declara este índice y la muestra no lo trae</Text>
-        ) : null}
       </View>
-      {c.outOfRange ? <Ionicons name="warning" size={14} color={Colors.warning} /> : null}
-      {c.locked ? <Ionicons name="lock-closed" size={13} color={Colors.textSecondary} /> : null}
+
+      {expandido && editable ? (
+        <SenalDetalle
+          senal={editable}
+          puedeEditar={puedeEditar}
+          revirtiendo={revirtiendo}
+          onEditar={() => onEditar(editable)}
+          onRevertir={() => onRevertir(editable)}
+        />
+      ) : null}
     </View>
   );
 }
 
-function Buffer({ b }: { b: RawBufferView }) {
+function Buffer({
+  b,
+  editables,
+  expandido,
+  puedeEditar,
+  revirtiendoKey,
+  onToggle,
+  onEditar,
+  onRevertir,
+}: {
+  b: RawBufferView;
+  editables: Map<string, SenalEditable>;
+  expandido: string | null;
+  puedeEditar: boolean;
+  revirtiendoKey: string | null;
+  onToggle: (clave: string) => void;
+  onEditar: (senal: SenalEditable) => void;
+  onRevertir: (senal: SenalEditable) => void;
+}) {
   const sinMuestras = b.receivedLength === null;
   const desajuste = !sinMuestras && b.declaredLength !== null && b.receivedLength !== b.declaredLength;
 
@@ -120,7 +199,24 @@ function Buffer({ b }: { b: RawBufferView }) {
             : 'Todos los índices llegaron en cero y ninguno está mapeado.'}
         </Text>
       ) : (
-        b.channels.map((c) => <Canal key={c.index} c={c} />)
+        b.channels.map((c) => {
+          const clave = claveFila(b.browseName, c.index);
+          const editable = c.domainKey ? editables.get(c.domainKey) : undefined;
+          return (
+            <Canal
+              key={c.index}
+              c={c}
+              clave={clave}
+              editable={editable}
+              expandido={expandido === clave}
+              puedeEditar={puedeEditar}
+              revirtiendo={revirtiendoKey === (editable?.domainKey ?? '')}
+              onToggle={onToggle}
+              onEditar={onEditar}
+              onRevertir={onRevertir}
+            />
+          );
+        })
       )}
 
       {b.hiddenZeros > 0 ? (
@@ -143,11 +239,18 @@ function Buffer({ b }: { b: RawBufferView }) {
 export default function DesarrolladorScreen() {
   const { hasPermission } = useAuth();
   const { selectedPlant, canSwitchPlant } = usePlant();
+  const queryClient = useQueryClient();
   // Selección LOCAL, sembrada con la planta activa: cambiar de planta aquí para diagnosticar no debe
   // mover la planta del tablero por debajo de quien vuelva atrás.
   const [plantId, setPlantId] = useState(selectedPlant.id);
+  const [expandido, setExpandido] = useState<string | null>(null);
+  const [editando, setEditando] = useState<SenalEditable | null>(null);
+  const [revirtiendoKey, setRevirtiendoKey] = useState<string | null>(null);
+  const [ultimoCambio, setUltimoCambio] = useState<string | null>(null);
+  const [errorCambio, setErrorCambio] = useState<string | null>(null);
 
   const puede = hasPermission('system_config');
+
   const { data, isLoading, isError, refetch, dataUpdatedAt } = useQuery({
     queryKey: ['opc-raw', plantId],
     queryFn: () => fetchRawBuffers(plantId),
@@ -156,6 +259,50 @@ export default function DesarrolladorScreen() {
     staleTime: 5_000,
   });
 
+  // El mapeo editable va en su propia consulta y NO se sondea: solo cambia cuando alguien lo edita,
+  // y repetirlo cada 10 s junto a los valores sería tráfico regalado.
+  const { data: editables } = useQuery({
+    queryKey: ['opc-mapping', plantId],
+    queryFn: () => fetchPlantaEditable(plantId),
+    enabled: puede,
+    staleTime: 60_000,
+  });
+
+  const porDomainKey = useMemo(
+    () => new Map((editables?.senales ?? []).map((s) => [s.domainKey, s])),
+    [editables],
+  );
+
+  const conCorreccion = useMemo(
+    () => (editables?.senales ?? []).filter((s) => s.override !== null).length,
+    [editables],
+  );
+
+  const refrescarTodo = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ['opc-raw', plantId] });
+    void queryClient.invalidateQueries({ queryKey: ['opc-mapping', plantId] });
+  }, [queryClient, plantId]);
+
+  const muestraDe = useCallback(
+    (browseName: string | null) =>
+      browseName ? data?.buffers.find((b) => b.browseName === browseName) : undefined,
+    [data],
+  );
+
+  async function revertir(senal: SenalEditable) {
+    setRevirtiendoKey(senal.domainKey);
+    setErrorCambio(null);
+    try {
+      await revertirCorreccion(plantId, senal.domainKey);
+      setUltimoCambio(`${senal.domainKey} volvió a lo que dice el repositorio.`);
+      refrescarTodo();
+    } catch (err) {
+      setErrorCambio(err instanceof Error ? err.message : 'No se pudo revertir.');
+    } finally {
+      setRevirtiendoKey(null);
+    }
+  }
+
   if (!puede) {
     return (
       <SafeAreaView style={styles.safe} edges={['bottom']}>
@@ -163,7 +310,7 @@ export default function DesarrolladorScreen() {
           <Ionicons name="lock-closed-outline" size={40} color={Colors.textSecondary} />
           <Text style={styles.denegadoTitulo}>Solo para administradores</Text>
           <Text style={styles.denegadoTexto}>
-            Esta pantalla muestra la configuración interna del puente OPC UA. El servidor la
+            Esta pantalla muestra y edita la configuración interna del puente OPC UA. El servidor la
             restringe al permiso de configuración del sistema.
           </Text>
         </View>
@@ -179,8 +326,8 @@ export default function DesarrolladorScreen() {
       >
         <Text style={styles.titulo}>Buffers crudos</Text>
         <Text style={styles.subtitulo}>
-          Lo que entrega el PLC, sin interpretar, y qué señal lee cada índice. Solo lectura: la
-          edición del mapeo llega más adelante.
+          Lo que entrega el PLC, sin interpretar, y qué señal lee cada índice. Toca la flecha de una
+          fila para ver de dónde sale y editarla.
         </Text>
 
         {canSwitchPlant ? (
@@ -189,7 +336,11 @@ export default function DesarrolladorScreen() {
               <TouchableOpacity
                 key={p.id}
                 style={[styles.plantaChip, p.id === plantId && styles.plantaChipActiva]}
-                onPress={() => setPlantId(p.id)}
+                onPress={() => {
+                  setPlantId(p.id);
+                  setExpandido(null);
+                  setUltimoCambio(null);
+                }}
                 activeOpacity={0.7}
                 accessibilityRole="tab"
                 accessibilityState={{ selected: p.id === plantId }}
@@ -203,6 +354,19 @@ export default function DesarrolladorScreen() {
         ) : (
           <Text style={styles.plantaFija}>{selectedPlant.name}</Text>
         )}
+
+        {ultimoCambio ? (
+          <View style={styles.exito}>
+            <Ionicons name="checkmark-circle" size={16} color={Colors.success} />
+            <Text style={styles.exitoTexto}>{ultimoCambio} Ya está aplicado, sin reiniciar el servidor.</Text>
+          </View>
+        ) : null}
+        {errorCambio ? (
+          <View style={styles.fallo}>
+            <Ionicons name="alert-circle" size={16} color={Colors.danger} />
+            <Text style={styles.falloTexto}>{errorCambio}</Text>
+          </View>
+        ) : null}
 
         {isLoading ? (
           <ListSkeleton rows={3} label="Cargando los buffers de la planta" />
@@ -229,6 +393,12 @@ export default function DesarrolladorScreen() {
                 <Text style={styles.leyendaTexto}>el valor cae fuera del rango declarado</Text>
               </View>
               <View style={styles.leyendaFila}>
+                <Ionicons name="create" size={13} color={Colors.warning} />
+                <Text style={styles.leyendaTexto}>
+                  el mapeo de esa señal se corrigió desde la app: se puede ver quién y revertirlo
+                </Text>
+              </View>
+              <View style={styles.leyendaFila}>
                 <Ionicons name="lock-closed" size={13} color={Colors.textSecondary} />
                 <Text style={styles.leyendaTexto}>
                   señal de válvula: el mapeo de lo escribible exige documento de la planta y no se
@@ -245,18 +415,49 @@ export default function DesarrolladorScreen() {
             </View>
 
             {data.buffers.map((b) => (
-              <Buffer key={b.browseName} b={b} />
+              <Buffer
+                key={b.browseName}
+                b={b}
+                editables={porDomainKey}
+                expandido={expandido}
+                puedeEditar={puede}
+                revirtiendoKey={revirtiendoKey}
+                onToggle={(clave) => setExpandido((actual) => (actual === clave ? null : clave))}
+                onEditar={(senal) => setEditando(senal)}
+                onRevertir={(senal) => void revertir(senal)}
+              />
             ))}
 
             <Text style={styles.pie}>
               {data.buffers.length} {data.buffers.length === 1 ? 'buffer' : 'buffers'} en{' '}
               {data.displayName}
+              {conCorreccion > 0
+                ? ` · ${conCorreccion} ${conCorreccion === 1 ? 'señal corregida' : 'señales corregidas'} desde la app`
+                : ''}
               {dataUpdatedAt ? ` · leído ${formatWhen(new Date(dataUpdatedAt).toISOString())}` : ''}.
               Esta consulta no toca el PLC: sale de la última muestra que ya había entrado.
             </Text>
           </>
         )}
       </ScrollView>
+
+      {editando ? (
+        <EditarSenalDialog
+          senal={editando}
+          plantId={plantId}
+          buffersDelCanal={(data?.buffers ?? [])
+            .filter((b) => b.channel === editando.buffer)
+            .map((b) => ({ browseName: b.browseName, declaredLength: b.declaredLength }))}
+          muestraDe={muestraDe}
+          onCerrar={() => setEditando(null)}
+          onGuardada={(senal) => {
+            setEditando(null);
+            setErrorCambio(null);
+            setUltimoCambio(`${senal.domainKey} ahora se lee en el índice ${senal.index}.`);
+            refrescarTodo();
+          }}
+        />
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -278,6 +479,30 @@ const styles = StyleSheet.create({
   plantaTexto: { fontSize: 12.5, fontWeight: '600', color: Colors.textSecondary },
   plantaTextoActiva: { color: Colors.primary },
   plantaFija: { fontSize: 14, fontWeight: '700', color: Colors.textPrimary, marginVertical: 12 },
+  exito: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'flex-start',
+    borderWidth: 1,
+    borderColor: Colors.success + '66',
+    backgroundColor: Colors.success + '15',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 10,
+  },
+  exitoTexto: { flex: 1, fontSize: 12, color: Colors.textPrimary, lineHeight: 17 },
+  fallo: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'flex-start',
+    borderWidth: 1,
+    borderColor: Colors.danger + '77',
+    backgroundColor: Colors.danger + '15',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 10,
+  },
+  falloTexto: { flex: 1, fontSize: 12, color: Colors.textPrimary, lineHeight: 17 },
   leyenda: {
     gap: 6,
     backgroundColor: Colors.bg,
@@ -337,6 +562,10 @@ const styles = StyleSheet.create({
   etiqueta: { fontSize: 11.5, color: Colors.textSecondary },
   aviso: { fontSize: 10.5, color: Colors.warning, fontStyle: 'italic' },
   sinMapear: { fontSize: 11.5, color: Colors.textSecondary, fontStyle: 'italic' },
+  // El botón de ampliar y su hueco miden lo mismo: así la columna de valores no se desalinea entre
+  // una fila mapeada y una sin mapear.
+  ampliar: { width: 24, alignItems: 'flex-end' },
+  ampliarHueco: { width: 24 },
   vacio: { fontSize: 11.5, color: Colors.textSecondary, lineHeight: 16, fontStyle: 'italic' },
   ocultos: {
     fontSize: 10.5,
