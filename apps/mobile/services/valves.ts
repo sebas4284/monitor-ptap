@@ -411,6 +411,16 @@ export function interpretCommand(r: ValveCommandResult, verb: 'open' | 'close', 
   // Rechazos ANTES de escribir: nada llegó al PLC.
   const reason = r.reason ?? '';
   if (reason.startsWith('INTERLOCK_FAILED')) {
+    if (/bridge |snapshot frozen|sin fuente viva|connectionStatus/.test(reason)) {
+      return {
+        ok: false,
+        signalSent: false,
+        tone: 'danger',
+        title: 'Sin conexión con la planta',
+        message: `${valveName}: no se envió la orden porque no hay conexión o lecturas fiables de la planta. Espera a que se restablezca la conexión.`,
+        technical: reason,
+      };
+    }
     return {
       ok: false,
       signalSent: false,
@@ -464,7 +474,7 @@ export function interpretCommand(r: ValveCommandResult, verb: 'open' | 'close', 
       signalSent: false,
       tone: 'danger',
       title: 'Sin conexión con el servidor',
-      message: `No se pudo enviar la orden de ${accion}. No se sabe si salió: verifica el estado antes de reintentar.`,
+      message: `Se perdió la conexión con el servidor y no se pudo conocer el resultado de la orden de ${accion}. Verifica el estado en la planta antes de reintentar.`,
     };
   }
   if (r.status === 'error') {

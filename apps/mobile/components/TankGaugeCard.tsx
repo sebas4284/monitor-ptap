@@ -62,6 +62,7 @@ function TankGaugeCardBase({ tank, frozen = false, plantId }: Props) {
     (hasLevel && (tank.levelM as number) < 0) ||
     (tank.percentage !== null && (tank.percentage < 0 || tank.percentage > 100));
   const autonomia = autonomiaTexto(tank.autonomy);
+  const color = outOfRange ? Colors.danger : pct !== null ? waterColor(pct) : Colors.textSecondary;
   const sujeto = sujetoDelTanque(tank.id);
   const [fillAnim] = useState(() => new Animated.Value(0));
   /** Último valor al que se llevó la barra: permite saltarse los tweens imperceptibles. */
@@ -130,13 +131,13 @@ function TankGaugeCardBase({ tank, frozen = false, plantId }: Props) {
         <>
           {/* El número es el REAL, sin recortar: si marca 106 % hay que verlo, no esconderlo. */}
           <Text style={styles.pctText}>{Math.round(pctReal as number)}%</Text>
-          <View style={[styles.statusBadge, { backgroundColor: waterColor(pct) + '30', borderColor: waterColor(pct) }]}>
-            <Text style={[styles.statusText, { color: waterColor(pct) }]}>{statusLabel(pct)}</Text>
+          <View style={[styles.statusBadge, { backgroundColor: color + '30', borderColor: color }]}>
+            <Text style={[styles.statusText, { color }]}>{outOfRange ? 'Fuera de rango' : statusLabel(pct)}</Text>
           </View>
           {(pctReal as number) > 100 && (
             <Text style={styles.excedido}>
               Por encima del máximo configurado ({tank.levelOpMax?.toFixed(2) ?? '—'} m). O el tanque
-              está rebosando, o ese máximo está mal.
+              puede haber un rebose, un error de lectura o un máximo incorrecto. Verifica en planta.
             </Text>
           )}
         </>
@@ -146,7 +147,7 @@ function TankGaugeCardBase({ tank, frozen = false, plantId }: Props) {
 
       <View style={styles.barOuter}>
         {pct !== null && (
-          <Animated.View style={[styles.barFill, { width: fillWidth, backgroundColor: waterColor(pct) }]} />
+          <Animated.View style={[styles.barFill, { width: fillWidth, backgroundColor: color }]} />
         )}
       </View>
 

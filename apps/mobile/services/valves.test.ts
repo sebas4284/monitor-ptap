@@ -218,7 +218,7 @@ test('interpretCommand: respuesta inesperada no afirma que la orden fue rechazad
 test('interpretCommand: interlock y permisos se explican sin culpar al equipo', () => {
   const il = interpretCommand(res({ http: 409, status: 'rejected', reason: 'INTERLOCK_FAILED: snapshot frozen' }), 'open', 'V1');
   assert.equal(il.signalSent, false);
-  assert.match(il.title, /dato fresco/i, 'sin la palabra «enclavamiento», que no está en el vocabulario de nadie');
+  assert.match(il.title, /sin conexión/i);
   assert.equal(il.technical, 'INTERLOCK_FAILED: snapshot frozen', 'el código va aparte, para reportarlo');
   assert.doesNotMatch(il.message, /INTERLOCK_FAILED/, 'y NUNCA dentro de la frase');
   const fb = interpretCommand(res({ http: 403, status: 'rejected', reason: 'FORBIDDEN' }), 'open', 'V1');
@@ -229,6 +229,8 @@ test('interpretCommand: fallo de red NO afirma que la orden salió', () => {
   const v = interpretCommand(res({ http: 0, status: 'error', reason: 'NETWORK' }), 'close', 'V1');
   assert.equal(v.ok, false);
   assert.equal(v.signalSent, false);
+  assert.match(v.title, /sin conexión/i);
+  assert.match(v.message, /no se pudo conocer el resultado/i);
 });
 
 // ── Detección de operación manual ──

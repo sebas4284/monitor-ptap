@@ -335,6 +335,7 @@ export default function AppLayout() {
           name="estado"
           options={{
             tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' },
             ...HEADER_OPTS,
             headerTitle: 'Estado General',
           }}
@@ -344,6 +345,7 @@ export default function AppLayout() {
           name="alertas"
           options={{
             tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' },
             ...HEADER_OPTS,
             headerTitle: 'Alertas',
           }}
@@ -353,6 +355,7 @@ export default function AppLayout() {
           name="usuarios"
           options={{
             tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' },
             ...HEADER_OPTS,
             headerTitle: 'Usuarios',
           }}
@@ -362,6 +365,7 @@ export default function AppLayout() {
           name="ajustes"
           options={{
             tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' },
             ...HEADER_OPTS,
             headerTitle: 'Ajustes',
           }}
@@ -372,6 +376,7 @@ export default function AppLayout() {
           name="desarrollador"
           options={{
             tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' },
             ...HEADER_OPTS,
             headerTitle: 'Modo desarrollador',
           }}
