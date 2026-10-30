@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="es">
+<!-- PLANTILLA BASE Aquora. Copiar, borrar lo que no se use y escribir encima.
+     build.ps1 sustituye <!--FONTS--> por las 10 @font-face en base64. -->
+<head>
+<meta charset="utf-8">
+<title>Título del documento · Aquora</title>
+<style>
+<!--FONTS-->
+</style>
+<style>
+:root{
+  --ground:#F6F8FB; --surface:#FFFFFF; --raised:#EEF2F7; --sunken:#E7ECF3;
+  --ink:#0E1626; --ink-2:#3A485C; --ink-3:#5A6B82; --hair:#D6DEE9; --hair-2:#E4EAF1;
+  --brand:#0F6E7C; --brand-2:#127C8A; --brand-ink:#0A4C56;
+  --live:#1F9D57; --live-bg:#E5F5EC;
+  --stable:#2563C9; --stable-bg:#E6EEFB;
+  --frozen:#DC2626; --frozen-bg:#FBE7E7;
+  --warn:#B4740A; --warn-bg:#FBF0DC;
+  --shadow-sm:0 1px 2px rgba(14,22,38,.07);
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:#fff;color:var(--ink);
+  font-family:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  font-size:9.8pt;line-height:1.44;-webkit-font-smoothing:antialiased;
+  -webkit-print-color-adjust:exact;print-color-adjust:exact}
+h1,h2,h3,h4{font-family:"Archivo","IBM Plex Sans",system-ui,sans-serif;line-height:1.14;letter-spacing:-.014em;margin:0}
+code,.mono{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace}
+code{background:var(--sunken);border:1px solid var(--hair-2);border-radius:4px;padding:.04em .32em;font-size:.87em}
+p{margin:.34rem 0}
+strong,b{font-weight:600}
+@page{size:A4;margin:11mm 13mm 9mm}
+@page:first{margin:0}   /* la portada sangra a borde */
+.page{break-after:page;position:relative}
+.page:last-of-type{break-after:auto}
+.avoid{break-inside:avoid}
+
+/* ---- PORTADA (solo documentos largos) ---- */
+.cover{height:100vh;width:100%;
+  display:flex;flex-direction:column;justify-content:space-between;
+  background:linear-gradient(158deg,#0A4C56 0%,#0F6E7C 42%,#127C8A 68%,#0E5F6B 100%);
+  color:#fff;padding:22mm 20mm 16mm;overflow:hidden}
+.cover .brandrow{display:flex;align-items:center;gap:.75rem}
+.cover .drop{width:46px;height:46px;border-radius:14px;background:rgba(255,255,255,.16);
+  border:1px solid rgba(255,255,255,.3);display:grid;place-items:center;
+  font-family:"Archivo";font-weight:800;font-size:22px;color:#fff}
+.cover .brandrow b{font-family:"Archivo";font-weight:800;font-size:1.5rem;letter-spacing:-.02em}
+.cover .brandrow span{font-size:.72rem;letter-spacing:.18em;text-transform:uppercase;color:rgba(255,255,255,.68);display:block;font-weight:600}
+.cover h1{font-size:56pt;font-weight:800;letter-spacing:-.035em;margin:0 0 .4rem}
+.cover .sub{font-size:14pt;color:rgba(255,255,255,.86);max-width:38ch;line-height:1.45}
+.cover .rule{height:3px;width:78px;background:rgba(255,255,255,.55);border-radius:2px;margin:1.5rem 0}
+.cover .phasechips{display:flex;gap:.4rem;margin-top:1.3rem;flex-wrap:wrap}
+.cover .pchip{font-size:8pt;font-weight:600;letter-spacing:.04em;padding:.3rem .65rem;border-radius:999px;
+  background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.26)}
+.cover .kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:0;border-top:1px solid rgba(255,255,255,.24);padding-top:1.1rem}
+.cover .kpi{padding-right:.6rem}
+.cover .kpi b{display:block;font-family:"Archivo";font-weight:800;font-size:20pt;letter-spacing:-.02em}
+.cover .kpi span{display:block;font-size:7.6pt;letter-spacing:.09em;text-transform:uppercase;color:rgba(255,255,255,.7);margin-top:.15rem;line-height:1.35}
+.cover .foot{display:flex;justify-content:space-between;align-items:flex-end;font-size:8.5pt;color:rgba(255,255,255,.62)}
+
+/* ---- CABECERA compacta (documentos cortos) ---- */
+.hdr{background:linear-gradient(122deg,#0A4C56 0%,#0F6E7C 55%,#127C8A 100%);color:#fff;
+  border-radius:12px;padding:.8rem 1rem .85rem;margin-bottom:.75rem;
+  display:flex;align-items:center;gap:.9rem}
+.hdr .mk{width:40px;height:40px;border-radius:12px;background:rgba(255,255,255,.16);
+  border:1px solid rgba(255,255,255,.3);display:grid;place-items:center;flex:none;
+  font-family:"Archivo";font-weight:800;font-size:19px}
+.hdr .lbl{font-size:7.4pt;letter-spacing:.19em;text-transform:uppercase;color:rgba(255,255,255,.72);font-weight:700}
+.hdr h1{font-size:19pt;font-weight:800;margin:.05rem 0 .1rem}
+.hdr .sub{font-family:"IBM Plex Mono";font-size:9.2pt;color:rgba(255,255,255,.9)}
+
+.eyebrow{font-size:7.4pt;letter-spacing:.19em;text-transform:uppercase;color:var(--brand-2);font-weight:700;margin:0 0 .3rem}
+h2{font-size:14pt;font-weight:800;margin:0 0 .4rem}
+h3{font-size:11pt;font-weight:700;margin:.75rem 0 .28rem}
+h3 .n{font-family:"IBM Plex Mono";font-size:9pt;color:var(--brand-2);font-weight:600;margin-right:.3rem}
+
+/* ---- FICHA destacada ---- */
+.cred{border:1px solid var(--brand);border-left-width:5px;border-radius:11px;background:#F2F8F9;
+  padding:.6rem .8rem;margin:.55rem 0}
+.cred .ct{font-size:7.4pt;letter-spacing:.16em;text-transform:uppercase;color:var(--brand-ink);font-weight:700;margin-bottom:.45rem}
+.cred dl{display:grid;grid-template-columns:auto 1fr;gap:.22rem .9rem;margin:0}
+.cred dt{font-size:8.6pt;color:var(--ink-3);font-weight:600;padding-top:.12rem}
+.cred dd{margin:0;font-family:"IBM Plex Mono";font-size:9.2pt;font-weight:600;color:var(--brand-ink);letter-spacing:-.01em}
+
+/* ---- TABLAS ---- */
+table{border-collapse:collapse;width:100%;font-size:8.6pt;background:var(--surface)}
+.tw{border:1px solid var(--hair);border-radius:10px;overflow:hidden;margin:.5rem 0;box-shadow:var(--shadow-sm)}
+th,td{text-align:left;padding:.28rem .55rem;border-bottom:1px solid var(--hair-2);vertical-align:top}
+thead th{background:var(--raised);font-family:"Archivo";font-weight:700;font-size:8.2pt;letter-spacing:.02em}
+tbody tr:last-child td{border-bottom:0}
+td.k{font-weight:600;color:var(--ink)}
+td .v{font-family:"IBM Plex Mono";font-size:8.8pt;color:var(--brand-ink);font-weight:600}
+
+/* ---- AVISOS ---- */
+.call{border:1px solid var(--hair);border-left-width:4px;border-radius:9px;padding:.48rem .7rem;margin:.5rem 0;background:var(--surface)}
+.call .ct{font-weight:700;font-size:9pt;display:flex;align-items:center;gap:.45rem;margin-bottom:.05rem}
+.call p{font-size:8.6pt;margin:.12rem 0 0;line-height:1.4}
+.call p:last-child{margin-bottom:0}
+.call .ico{font-family:"Archivo";font-weight:800;width:15px;height:15px;border-radius:4px;display:inline-grid;place-items:center;font-size:8pt;color:#fff;flex:none}
+.call.ok{border-left-color:var(--live);background:var(--live-bg)} .call.ok .ct{color:var(--live)} .call.ok .ico{background:var(--live)}
+.call.info{border-left-color:var(--stable);background:var(--stable-bg)} .call.info .ct{color:var(--stable)} .call.info .ico{background:var(--stable)}
+.call.warn{border-left-color:var(--warn);background:var(--warn-bg)} .call.warn .ct{color:var(--warn)} .call.warn .ico{background:var(--warn)}
+.call.bad{border-left-color:var(--frozen);background:var(--frozen-bg)} .call.bad .ct{color:var(--frozen)} .call.bad .ico{background:var(--frozen)}
+
+/* ---- TARJETAS Y LISTAS ---- */
+.two{display:grid;grid-template-columns:1fr 1fr;gap:.6rem;margin:.5rem 0}
+.card{border:1px solid var(--hair);border-radius:11px;background:var(--surface);box-shadow:var(--shadow-sm);overflow:hidden}
+.card .ch{background:var(--raised);border-bottom:1px solid var(--hair-2);padding:.38rem .7rem}
+.card .ch h4{font-size:11pt;font-weight:800}
+.card .ch span{font-size:7.6pt;color:var(--ink-3);font-family:"IBM Plex Mono"}
+.card .cb{padding:.5rem .7rem .55rem}
+ol.steps{margin:0;padding-left:1.1rem;font-size:8.7pt;line-height:1.38}
+ol.steps li{margin:.16rem 0}
+ol.steps li::marker{font-family:"IBM Plex Mono";font-size:8pt;color:var(--brand-2);font-weight:700}
+ul.tight{margin:.15rem 0 0;padding-left:1rem;font-size:8.6pt;line-height:1.38}
+ul.tight li{margin:.12rem 0}
+
+/* ---- PILDORAS Y BARRAS ---- */
+.pill{display:inline-flex;align-items:center;font-size:7.6pt;font-weight:700;padding:.11rem .48rem;border-radius:999px;background:var(--live-bg);color:var(--live)}
+.pill.y{background:var(--warn-bg);color:var(--warn)}
+.pill.r{background:var(--frozen-bg);color:var(--frozen)}
+.pill.b{background:var(--stable-bg);color:var(--stable)}
+.barrow{display:grid;grid-template-columns:130px 1fr auto;gap:.5rem;align-items:center;font-size:8.4pt;margin:.22rem 0}
+.bartrack{height:9px;border-radius:5px;background:var(--sunken);overflow:hidden}
+.bartrack{display:block}
+.barfill{display:block;height:100%;border-radius:5px;background:var(--brand)}
+.legend{display:flex;gap:.8rem;flex-wrap:wrap;font-size:7.8pt;color:var(--ink-3);margin-top:.5rem;align-items:center}
+.legend span{display:inline-flex;align-items:center;gap:.3rem}
+.legend i{width:9px;height:9px;border-radius:3px;display:inline-block}
+
+footer{border-top:1px solid var(--hair);margin-top:.55rem;padding-top:.35rem;font-size:7.6pt;color:var(--ink-3)}
+pre{background:#0E1626;color:#E7ECF3;border-radius:9px;padding:.5rem .68rem;margin:.4rem 0;
+  font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:7.6pt;line-height:1.34;overflow:hidden}
+pre .c{color:#7FD1B9} pre .s{color:#F2C57C} pre .m{color:#8FB8F0}
+.srcs{font-size:7.8pt;line-height:1.42;color:var(--ink-2)}
+.srcs b{color:var(--ink);font-size:8.6pt}
+.srcs div{margin:.3rem 0}
+</style>
+</head>
+<body>
+
+<!-- ============ PORTADA — borrar si el documento es corto ============ -->
+<div class="page cover">
+  <div>
+    <div class="brandrow">
+      <div class="drop">A</div>
+      <div>
+        <b>Aquora</b>
+        <span>Monitoreo de plantas PTAP</span>
+      </div>
+    </div>
+  </div>
+  <div>
+    <div style="font-size:8.4pt;letter-spacing:.2em;text-transform:uppercase;color:rgba(255,255,255,.7);font-weight:700;margin-bottom:.7rem">Subtítulo · periodo</div>
+    <h1>Título</h1>
+    <p class="sub">Una frase que dice de qué va el documento y para quién es.</p>
+    <div class="rule"></div>
+    <div class="phasechips">
+      <span class="pchip">◆ Bloque I · nombre</span>
+      <span class="pchip">◆ Bloque II · nombre</span>
+    </div>
+  </div>
+  <div>
+    <div class="kpis">
+      <div class="kpi"><b>12</b><span>Etiqueta corta</span></div>
+      <div class="kpi"><b>10</b><span>Etiqueta corta</span></div>
+      <div class="kpi"><b>3</b><span>Etiqueta corta</span></div>
+      <div class="kpi"><b>245</b><span>Etiqueta corta</span></div>
+      <div class="kpi"><b>1.3.0</b><span>Etiqueta corta</span></div>
+    </div>
+    <div class="foot" style="margin-top:1.6rem">
+      <div>Telcobras · Xpertic<br><span style="opacity:.75">aquora.xpertic.co</span></div>
+      <div style="text-align:right">Documento · fecha</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ PAGINA con cabecera compacta ============ -->
+<div class="page">
+  <div class="hdr">
+    <div class="mk">T</div>
+    <div>
+      <div class="lbl">Telcobras · Área</div>
+      <h1>Título del documento</h1>
+      <div class="sub">subtítulo técnico</div>
+    </div>
+  </div>
+
+  <div class="cred avoid">
+    <div class="ct">Ficha de datos fijos</div>
+    <dl>
+      <dt>Clave</dt><dd>valor en monoespaciada</dd>
+      <dt>Otra</dt><dd>otro valor</dd>
+    </dl>
+    <p style="font-size:8.6pt;color:var(--ink-2);margin:.5rem 0 0">Nota aclaratoria de la ficha.</p>
+  </div>
+
+  <div class="call info avoid">
+    <div class="ct"><span class="ico">i</span> Aviso informativo</div>
+    <p>Contexto que el lector necesita antes de seguir.</p>
+  </div>
+  <div class="call ok avoid">
+    <div class="ct"><span class="ico">&#10003;</span> Comprobado <span class="pill">verificado</span></div>
+    <p>Algo que se verificó y se puede afirmar.</p>
+  </div>
+  <div class="call warn avoid">
+    <div class="ct"><span class="ico">!</span> Cuidado</div>
+    <p>Un error caro o algo que no se pudo confirmar.</p>
+  </div>
+
+  <h3><span class="n">01</span>Sección con tabla</h3>
+  <div class="tw avoid">
+  <table>
+    <thead><tr><th style="width:150px">Columna</th><th>Descripción</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Etiqueta</td><td>Texto de la fila.</td></tr>
+      <tr><td><span class="v">valor_tecnico</span></td><td>Con valor en monoespaciada.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3><span class="n">02</span>Dos columnas</h3>
+  <div class="two">
+    <div class="card avoid">
+      <div class="ch"><h4>Pasos</h4><span>en orden</span></div>
+      <div class="cb">
+        <ol class="steps">
+          <li>Primer paso</li>
+          <li>Segundo paso</li>
+          <li>Tercero</li>
+        </ol>
+      </div>
+    </div>
+    <div class="card avoid">
+      <div class="ch"><h4>Ejemplo</h4><span>código</span></div>
+      <div class="cb">
+        <pre style="margin:0"><span class="c"># comentario</span>
+{ <span class="m">"clave"</span>: <span class="s">"valor"</span> }</pre>
+      </div>
+    </div>
+  </div>
+
+  <h3><span class="n">03</span>Barras de avance</h3>
+  <div class="barrow"><span>Etiqueta</span><span class="bartrack"><span class="barfill" style="width:72%"></span></span><span class="pill">72%</span></div>
+  <div class="barrow"><span>Otra</span><span class="bartrack"><span class="barfill" style="width:40%;background:var(--warn)"></span></span><span class="pill y">40%</span></div>
+  <div class="legend">
+    <span><i style="background:var(--brand)"></i> Completado</span>
+    <span><i style="background:var(--warn)"></i> En curso</span>
+    <span><i style="background:var(--frozen)"></i> Bloqueado</span>
+  </div>
+
+  <footer>Pie del documento · página 1 de N</footer>
+</div>
+
+</body>
+</html>
