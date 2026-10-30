@@ -3,6 +3,7 @@ import { Modal, View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Pla
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '../constants/colors';
 import { useWebEscape } from '../hooks/useWebEscape';
+import { HapticFeedback } from '../services/haptics';
 
 /**
  * Doble confirmación antes de accionar una válvula real.
@@ -56,13 +57,21 @@ export function ValveConfirmDialog({
   // El contador se reinicia en CADA apertura: si no, la segunda maniobra de la sesión saldría
   // sin espera y se perdería justamente la protección contra el toque por inercia.
   useEffect(() => {
-    if (!visible) {
+    if (!visible) return;
+    HapticFeedback.modalOpen();
+    const id = setInterval(() => {
+      setRestante((r) => {
+        const next = Math.max(0, r - 1);
+        if (next === 0 && r > 0) {
+          HapticFeedback.safetyUnlocked();
+        }
+        return next;
+      });
+    }, 1000);
+    return () => {
+      clearInterval(id);
       setRestante(ESPERA_SEGUNDOS);
-      return;
-    }
-    setRestante(ESPERA_SEGUNDOS);
-    const id = setInterval(() => setRestante((r) => Math.max(0, r - 1)), 1000);
-    return () => clearInterval(id);
+    };
   }, [visible]);
 
   const accion = verb === 'open' ? 'ABRIR' : 'CERRAR';
@@ -72,6 +81,11 @@ export function ValveConfirmDialog({
   // Escape cancela — pero NUNCA con una orden en vuelo: cerrar el diálogo no la detendría, y
   // dejaría al operador creyendo que canceló algo que ya salió al PLC.
   useWebEscape(visible && !busy, onCancel);
+
+  const handleConfirm = () => {
+    HapticFeedback.criticalConfirm();
+    onConfirm();
+  };
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={busy ? undefined : onCancel}>
@@ -138,7 +152,7 @@ export function ValveConfirmDialog({
 
             <TouchableOpacity
               style={[styles.btn, listo ? { backgroundColor: colorAccion } : styles.btnEspera]}
-              onPress={onConfirm}
+              onPress={handleConfirm}
               disabled={!listo}
               activeOpacity={0.8}
               accessibilityRole="button"

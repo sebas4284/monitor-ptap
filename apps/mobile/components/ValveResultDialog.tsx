@@ -1,8 +1,10 @@
+import { useEffect } from 'react';
 import { Modal, View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '../constants/colors';
 import { useWebEscape } from '../hooks/useWebEscape';
 import type { CommandVerdict } from '../services/valves';
+import { HapticFeedback } from '../services/haptics';
 
 /**
  * Resultado de una orden de válvula, con **acuse de recibo obligatorio**.
@@ -33,6 +35,12 @@ interface Props {
 export function ValveResultDialog({ verdict, onClose }: Props) {
   const visible = verdict !== null;
   useWebEscape(visible, onClose);
+
+  useEffect(() => {
+    if (verdict) {
+      HapticFeedback.commandVerdict(verdict.tone);
+    }
+  }, [verdict]);
 
   if (!verdict) return null;
 

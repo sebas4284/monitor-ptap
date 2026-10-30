@@ -1,4 +1,5 @@
-import { Controller, Get, Inject, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Inject, Post, Req, UseGuards } from '@nestjs/common';
+import type { Request } from 'express';
 import { RequirePermission } from '../../modules/auth/decorators/require-permission.decorator';
 import { JwtAuthGuard } from '../../modules/auth/guards/jwt-auth.guard';
 import { PermissionGuard } from '../../modules/auth/guards/permission.guard';
@@ -105,5 +106,36 @@ export class DiagnosticsController {
   async routeHistory(): Promise<RouteHistoryResponse> {
     const events = await this.auditLog.listByEventType(ROUTE_PROBE_EVENT, 500);
     return buildRouteHistory(events, ROUTE_HISTORY_WINDOW_HOURS);
+  }
+
+  /**
+   * Registro soberano in-house de diagnósticos y fallos del cliente móvil.
+   * Cero telemetría a servidores de terceros (reemplaza servicios externos tipo Sentry).
+   * Accesible a cualquier rol autenticado (civil, operador, jefe, admin).
+   */
+  @Post('client-log')
+  async recordClientLog(
+    @Body() body: { error?: string; stack?: string; context?: Record<string, unknown>; plantId?: string; version?: string },
+    @Req() req: Request & { user?: { id?: string; email?: string; role?: string } },
+  ): Promise<{ ok: boolean }> {
+    const user = req.user;
+    await this.auditLog.record({
+      eventType: 'client.diagnostic_error',
+      userId: user?.id ?? null,
+      userEmail: user?.email ?? null,
+      role: user?.role ?? null,
+      ip: req.ip ?? null,
+      method: req.method,
+      path: req.url,
+      statusCode: 200,
+      detail: {
+        error: String(body?.error ?? 'Error no especificado').slice(0, 500),
+        stack: body?.stack ? String(body.stack).slice(0, 2000) : null,
+        plantId: body?.plantId ?? null,
+        version: body?.version ?? null,
+        context: body?.context ?? null,
+      },
+    });
+    return { ok: true };
   }
 }

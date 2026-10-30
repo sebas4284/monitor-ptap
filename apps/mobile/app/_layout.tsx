@@ -3,6 +3,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from '../context/AuthContext';
 import { PlantProvider } from '../context/PlantContext';
 import { ToastHost } from '../components/ToastHost';
+import { initErrorReporter } from '../services/error-reporter';
+
+initErrorReporter();
 
 const queryClient = new QueryClient({
   defaultOptions: {

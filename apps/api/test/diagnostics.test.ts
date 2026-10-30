@@ -61,6 +61,7 @@ const PROBE_ROWS: AuditEventRow[] = [
 
 const auditDouble = {
   listByEventType: async (eventType: string) => (eventType === 'opc.route_probe' ? PROBE_ROWS : EVENTS),
+  record: async () => {},
 } as unknown as AuditLogService;
 
 const ROUTE_REPORT: RouteCheckReport = {
@@ -176,6 +177,26 @@ test('diagnostics/route-history: civil → 403; admin → 200 con resumen del re
     assert.equal(res.body.summary.plcOk, 1);
     // La muestra más reciente falló → hay corte vigente desde esa muestra.
     assert.equal(res.body.summary.downSince, PROBE_ROWS[0].at);
+  } finally {
+    await app.close();
+  }
+});
+
+
+test('diagnostics/client-log: operador registra error interno sin enviar a terceros → 201 ok', async () => {
+  const { app, jwt } = await buildApp();
+  try {
+    const res = await request(app.getHttpServer())
+      .post('/api/diagnostics/client-log')
+      .set('Authorization', `Bearer ${tokenFor(jwt, 'operador')}`)
+      .send({
+        error: 'Conexión intermitente en PTAP La Vorágine',
+        plantId: 'voragine',
+        version: '1.4.0',
+        context: { screen: 'tablero' },
+      })
+      .expect(201);
+    assert.deepEqual(res.body, { ok: true });
   } finally {
     await app.close();
   }
