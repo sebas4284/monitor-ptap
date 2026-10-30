@@ -39,6 +39,20 @@ export interface StoredCommand {
   interlockSequence: number | null;
 }
 
+/** Una orden con realimentación que se quedó sosteniendo sin resultado (ver `sostenidosSinResultado`). */
+export interface SostenidoSinResultado {
+  id: number;
+  at: string;
+  plantId: string;
+  target: string;
+  command: string;
+  userId: string | null;
+  userEmail: string | null;
+  userName: string | null;
+  role: string | null;
+  ip: string | null;
+}
+
 /** Serializa un valor de comando a string para la columna (o null). */
 function toColumn(v: CommandValue): string | null {
   return v === null || v === undefined ? null : String(v);
@@ -108,6 +122,54 @@ export class CommandLogRepository {
       // La traza no debe tumbar la respuesta del comando ya ejecutado; se loguea el fallo.
       this.logger.error(`No se pudo finalizar command_log id=${id}: ${err instanceof Error ? err.message : err}`);
     }
+  }
+
+  /**
+   * Cambia SOLO `reason` de una fila ya finalizada.
+   *
+   * Existe por la firma encadenada: `status` y `confirmed_value` están SELLADOS (ver
+   * `command-signature.ts`), y una orden con realimentación se firma al salir (`sent`), antes de
+   * saber cómo acaba. Reescribir su `status` al final rompería el sello y la verificación lo
+   * denunciaría como manipulación. `reason` no se sella: ahí se anota cómo acabó, y el resultado
+   * sellado va en su propia fila (ver `WriteService.registrarResultado`).
+   */
+  async anotarMotivo(id: number, reason: string): Promise<void> {
+    try {
+      await this.pool.query('UPDATE command_log SET reason = ? WHERE id = ?', [reason, id]);
+    } catch (err) {
+      this.logger.error(`No se pudo anotar el motivo de command_log id=${id}: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  /**
+   * Órdenes con realimentación que se quedaron en `sent` + `SENT_HOLDING_UNTIL_FEEDBACK`, creadas
+   * ANTES de `antesDe`: las de un proceso anterior que se detuvo con el sostenido en marcha. Las del
+   * proceso actual nunca entran (son posteriores a su arranque), así que no se puede dar por
+   * interrumpida una orden que todavía se está sosteniendo.
+   */
+  async sostenidosSinResultado(motivoEnCurso: string, antesDe: Date): Promise<SostenidoSinResultado[]> {
+    const [rows] = await this.pool.query<RowDataPacket[]>(
+      `SELECT id, at, plant_id, target, command, user_id, user_email, user_name, role, ip
+         FROM command_log
+        WHERE status = 'sent' AND reason = ? AND at < ?
+        ORDER BY id ASC`,
+      [motivoEnCurso, antesDe],
+    );
+    return rows.map((r) => {
+      const at = r.at as Date | string;
+      return {
+        id: r.id as number,
+        at: at instanceof Date ? at.toISOString() : new Date(at).toISOString(),
+        plantId: r.plant_id as string,
+        target: r.target as string,
+        command: r.command as string,
+        userId: (r.user_id as string | null) ?? null,
+        userEmail: (r.user_email as string | null) ?? null,
+        userName: (r.user_name as string | null) ?? null,
+        role: (r.role as string | null) ?? null,
+        ip: (r.ip as string | null) ?? null,
+      };
+    });
   }
 
   /**

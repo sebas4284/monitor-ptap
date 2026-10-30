@@ -540,7 +540,7 @@ export function verificarContraMapping(raw: unknown): string[] {
     if (w.commands?.open !== v.abrir || w.commands?.close !== v.cerrar) {
       errores.push(`${nombre} (${v.domainKey}): el mapping dice open=${String(w.commands?.open)} close=${String(w.commands?.close)}; esta herramienta, ${v.abrir}/${v.cerrar}`);
     }
-    if (w.mode !== 'bitmask') errores.push(`${nombre} (${v.domainKey}): mode ${String(w.mode)}, no bitmask`);
+    if (w.mode !== 'bitmask' && w.mode !== 'absolute') errores.push(`${nombre} (${v.domainKey}): mode ${String(w.mode)}, no bitmask ni absolute`);
     if (w.sustained !== true) {
       errores.push(`${nombre} (${v.domainKey}): el mapping NO la declara sostenida — el backend que lo use limpiaría la señal tras cada orden`);
     }

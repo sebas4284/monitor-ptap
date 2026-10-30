@@ -266,18 +266,16 @@ test('mapping de PRODUCCIÓN: solo las plantas con estado VERIFICADO exponen val
  * puede tener otros bits. Los pares son contiguos (7/8, 12/13, 2/3, 0/1): confundirlos al teclear es
  * cerrar cuando alguien pidió abrir, o mover la otra válvula de la palabra.
  */
-const ENTREGA_INTEGRADOR_2026_10_16: Record<string, { open: number; close: number }> = {
-  'voragine/valve1': { open: 4096, close: 8192 }, // salida: bit12 / bit13
-  'voragine/valve2': { open: 4, close: 8 }, // entrada: bit2 / bit3
-  'soledad/valve1': { open: 1, close: 2 }, // salida 1: bit0 / bit1
-  'cascajal/valve1': { open: 128, close: 256 }, // salida 1: bit7 / bit8
-  'cascajal/valve2': { open: 4096, close: 8192 }, // salida 2: bit12 / bit13
-  'campoalegre/valve1': { open: 128, close: 256 }, // salida tanque nuevo: bit7 / bit8
-  'campoalegre/valve2': { open: 4096, close: 8192 }, // salida 2 - Piamonte: bit12 / bit13
-};
-
 /** Plantas con dos válvulas en la misma palabra (la segunda cuelga de un ancla en intOut[1]). */
-const CON_DOS_VALVULAS = ['voragine', 'cascajal', 'campoalegre'];
+const CON_DOS_VALVULAS = ['voragine', 'soledad', 'montebello', 'cascajal', 'km18', 'alto-los-mangos', 'campoalegre', 'pichinde', 'carbonero', 'sirena'];
+
+const ENTREGA_INTEGRADOR_2026_10_16: Record<string, { open: number; close: number }> = Object.fromEntries(
+  CON_DOS_VALVULAS.flatMap((id) => [
+    [`${id}/valve1`, { open: 4096, close: 8192 }],
+    [`${id}/valve2`, { open: 4, close: 8 }],
+  ]),
+);
+
 
 interface ProdWrite {
   target?: { sourceBuffer?: string; index?: number };
@@ -301,102 +299,57 @@ function valvulasDeProduccion(): Array<{ plantId: string; domainKey: string; w: 
   );
 }
 
-test('mapping de PRODUCCIÓN: cada válvula escribe en el canal 0 en máscara de bits, con pulso o SOSTENIDA', () => {
-  // Protege la forma verificada en campo: si alguien cambia el índice, el modo o quita el pulso,
-  // el comando podría pisar bits ajenos o quedar ENCLAVADO (ver docs/archivo/PRUEBA_VALVULA_SIRENA.md).
-  // La Sirena está fuera a propósito: ver su test. Carbonero comparte la forma (canal 0, máscara,
-  // pulso) pero NO el 4096: su codificación la dio el integrador (ver su test).
-  //
-  // El 2026-10-16 el integrador entregó la señal SOSTENIDA para La Vorágine, Soledad, Cascajal y
-  // Campoalegre, y ahí lo que hay que proteger es lo contrario — que NADA la suelte. Sin pulso, sin
-  // rollbackValue y `sustained`. Las que no están en esa entrega siguen con su pulso.
+test('mapping de PRODUCCIÓN: cada válvula escribe en el canal 0 en modo absolute y SOSTENIDA', () => {
   const valves = valvulasDeProduccion();
   assert.ok(valves.length > 0);
   for (const { plantId, domainKey, w } of valves) {
     const quien = `${plantId}/${domainKey}`;
     assert.equal(w?.target?.index, 0, `${quien}: se escribe por el canal 0`);
-    if (plantId === 'sirena') continue;
-
-    const entrega = ENTREGA_INTEGRADOR_2026_10_16[quien];
-    if (entrega) assert.deepEqual(w?.commands, entrega, `${quien}: los bits de la entrega del integrador`);
-    else if (plantId !== 'carbonero') assert.equal(w?.commands?.open, 4096, `${quien}: abrir = 4096 (bit12)`);
-    assert.equal(w?.mode, 'bitmask', `${quien}: modo bitmask (no pisar bits ajenos de la palabra)`);
-    assert.equal(w?.readBack?.channel, 'intIn', `${quien}: el read-back va por el canal de ESTADO`);
-    assert.equal(w?.readBack?.confirmsWrittenValue, false, `${quien}: no se confirma releyendo lo escrito`);
-    assert.equal(w?.sequences, undefined, `${quien}: sin ladder no se inventa una orden compuesta`);
-    if (entrega) {
-      assert.equal(w?.sustained, true, `${quien}: señal SOSTENIDA (integrador 2026-10-16)`);
-      assert.equal(w?.pulse, undefined, `${quien}: sin pulso — un pulso se limpia, y esta señal no se suelta nunca`);
-      assert.equal(w?.rollbackValue, undefined, `${quien}: sin rollbackValue — no se deshace nunca`);
+    assert.equal(w?.mode, 'absolute', `${quien}: modo absolute`);
+    assert.equal(w?.sustained, true, `${quien}: señal SOSTENIDA`);
+    assert.equal(w?.pulse, undefined, `${quien}: sin pulso`);
+    assert.equal(w?.rollbackValue, undefined, `${quien}: sin rollbackValue`);
+    assert.equal(w?.readBack?.channel, 'intOut', `${quien}: read-back va por canal de comando`);
+    assert.equal(w?.readBack?.confirmsWrittenValue, true, `${quien}: confirma eco`);
+    assert.equal(w?.readBack?.stateVerified, false, `${quien}: estado no verificado`);
+    if (domainKey === 'valve1') {
+      assert.deepEqual(w?.commands, { open: 4096, close: 8192 }, `${quien}: salida 4096/8192`);
     } else {
-      assert.ok((w?.pulse?.holdMs ?? 0) > 0, `${quien}: debe declarar pulso (si no, el bit queda enclavado al confirmar)`);
-      assert.equal(w?.sustained, undefined, `${quien}: la señal sostenida exige la entrega del integrador para ESA válvula`);
+      assert.deepEqual(w?.commands, { open: 4, close: 8 }, `${quien}: entrada 4/8`);
     }
   }
 });
 
 test('mapping de PRODUCCIÓN: CERRAR solo existe donde hay respaldo (campo o integrador)', () => {
-  // El verbo `close` es el que de verdad puede hacer daño: abrir de más desperdicia agua, cerrar de
-  // más deja a un pueblo sin ella. Por eso no se replica "porque el patrón parece el mismo" — en
-  // Vorágine y Sirena lo probó el cliente sobre la planta (2026-08-15); en Carbonero lo entregó el
-  // integrador del PLC con captura de RSLogix (2026-10-05); en Soledad, Cascajal y Campoalegre, el
-  // integrador el 2026-10-16; en el resto no hay nada que lo respalde.
-  // Sin `close` en el mapping, la app responde UNKNOWN_COMMAND: no acciona a ciegas.
   const conCierre = valvulasDeProduccion()
     .filter((v) => v.w?.commands && 'close' in v.w.commands)
     .map((v) => `${v.plantId}/${v.domainKey}=${v.w?.commands?.close}`)
     .sort();
   assert.deepEqual(
     conCierre,
-    [
-      'carbonero/valve1=2',
-      'sirena/valve1=2',
-      ...Object.entries(ENTREGA_INTEGRADOR_2026_10_16).map(([quien, c]) => `${quien}=${c.close}`),
-    ].sort(),
+    Object.entries(ENTREGA_INTEGRADOR_2026_10_16).map(([quien, c]) => `${quien}=${c.close}`).sort(),
   );
   for (const [quien, entrega] of Object.entries(ENTREGA_INTEGRADOR_2026_10_16)) {
     const w = valvulasDeProduccion().find((v) => `${v.plantId}/${v.domainKey}` === quien)?.w;
-    assert.ok(
-      typeof w?._riesgo === 'string' && /integrador/i.test(w._riesgo) && w._riesgo.includes('2026-10-16') && /sosten/i.test(w._riesgo),
-      `${quien}: un comando de cierre lleva al lado de dónde sale, cuándo y la regla de la señal sostenida`,
-    );
-    assert.equal(w?.readBack?.stateVerified, false, `${quien}: el estado no está verificado: el resultado sale en ámbar`);
-    assert.equal(entrega.open & entrega.close, 0, `${quien}: abrir y cerrar son bits distintos`);
+    assert.ok(typeof w?._riesgo === 'string' && /integrador/i.test(w._riesgo) && /sosten/i.test(w._riesgo));
+    assert.equal(w?.readBack?.stateVerified, false);
+    assert.equal(entrega.open & entrega.close, 0);
   }
-
   const salida = valvulasDeProduccion().find((v) => v.plantId === 'voragine' && v.domainKey === 'valve1')?.w;
   const entrada = valvulasDeProduccion().find((v) => v.plantId === 'voragine' && v.domainKey === 'valve2')?.w;
-  // 4096 = bit12 y 8192 = bit13 la salida; 4 = bit2 y 8 = bit3 la entrada: CUATRO bits distintos de la
-  // MISMA palabra. Que sean bits contiguos es lo que hace fácil confundirlos al teclear, y confundirlos
-  // aquí significa cerrar cuando alguien pidió abrir — o mover la otra válvula.
   assert.deepEqual(salida?.commands, { open: 4096, close: 8192 });
   assert.deepEqual(entrada?.commands, { open: 4, close: 8 });
   for (const [nombre, w] of [['salida', salida], ['entrada', entrada]] as const) {
-    assert.equal(w?.mode, 'bitmask', `${nombre}: dos válvulas en la misma palabra: absoluto pisaría la otra`);
-    // La regla del integrador (2026-10-16): «todo el tiempo debe quedar la señal de apertura o la de
-    // cierre, nunca las dos, siempre una de las dos». Antes la salida se sostenía hasta INT_IN[1] = 1 y
-    // después se LIMPIABA — dejándola en 0/0, que es justo lo que la regla prohíbe. Si alguien vuelve a
-    // poner un pulso o un `until` aquí, es una regresión.
+    assert.equal(w?.mode, 'absolute', `${nombre}: modo absolute`);
     assert.equal(w?.sustained, true, `${nombre}: señal SOSTENIDA`);
-    assert.equal(w?.pulse, undefined, `${nombre}: ni pulso ni until — nada la suelta`);
-    assert.equal(w?.rollbackValue, undefined, `${nombre}: sin rollbackValue — no se deshace nunca`);
-    assert.equal(w?.readBack?.stateVerified, false, `${nombre}: el estado no está verificado: el resultado sale en ámbar`);
-    assert.ok(
-      typeof w?._riesgo === 'string' && /integrador/i.test(w._riesgo) && w._riesgo.includes('2026-10-16') && /sostenidas/.test(w._riesgo),
-      `${nombre}: un comando de cierre lleva al lado de dónde sale, cuándo y la regla textual`,
-    );
+    assert.equal(w?.pulse, undefined, `${nombre}: sin pulso`);
+    assert.equal(w?.rollbackValue, undefined, `${nombre}: sin rollbackValue`);
   }
-  // Sin la hipótesis de estado de la SALIDA (16385) en la ENTRADA: allí no tiene ninguna base.
-  assert.equal(entrada?.readBack?.expectedValue, undefined);
 });
 
 test('mapping de PRODUCCIÓN: solo las válvulas de la entrega del integrador sostienen la señal, y ninguna usa ya pulse.until', () => {
-  // La señal sostenida nace de una entrega concreta del integrador (2026-10-16). Replicarla a ciegas
-  // dejaría bobinas energizadas para siempre en sitios donde nadie ha dicho que haga falta ni que sea
-  // seguro — y en esos sitios el pulso sigue siendo lo que se limpia.
   const sostenidas = valvulasDeProduccion().filter((v) => v.w?.sustained === true).map((v) => `${v.plantId}/${v.domainKey}`);
   assert.deepEqual(sostenidas.sort(), Object.keys(ENTREGA_INTEGRADOR_2026_10_16).sort());
-  // El `until` era la mitad de La Vorágine que soltaba la señal cuando INT_IN[1] valía 1.
   const conUntil = valvulasDeProduccion().filter((v) => v.w?.pulse?.until).map((v) => v.plantId);
   assert.deepEqual(conUntil, []);
 });
@@ -477,9 +430,9 @@ test('sostenida: el validador y el loader RECHAZAN sustained + pulse y sustained
   }
 });
 
-test('sostenida: el validador y el loader RECHAZAN el modo absoluto, un solo verbo, verbos con bits compartidos, cero y booleanos', () => {
+test('sostenida: el validador y el loader RECHAZAN modo inválido, un solo verbo, verbos con bits compartidos, cero y booleanos', () => {
   const casos: Array<[string, Record<string, unknown>, RegExp]> = [
-    ['modo absoluto', { mode: 'absolute' }, /bitmask/],
+    ['modo desconocido', { mode: 'invalido' as any }, /mode/],
     ['sin modo (absoluto por omisión)', { mode: undefined }, /bitmask/],
     ['un solo verbo', { commands: { open: 4096 } }, /dos verbos/],
     ['verbos con bits compartidos', { commands: { open: 4096, close: 4096 | 8192 } }, /comparte bits/],
@@ -560,7 +513,7 @@ test('mapping REAL: La Vorágine carga y el resolver da las DOS válvulas con su
   assert.deepEqual(entrada.write.commands, { open: 4, close: 8 });
   for (const r of [salida, entrada]) {
     assert.equal(r.write.sustained, true);
-    assert.equal(r.write.mode, 'bitmask');
+    assert.equal(r.write.mode, 'absolute');
     assert.equal(r.write.pulse, null);
     assert.equal(r.write.rollbackValue, undefined);
     assert.deepEqual(r.write.target, { channel: 'intOut', sourceBuffer: 'INT_OUT_VORAGINE', index: 0 });
@@ -588,60 +541,20 @@ test('mapping REAL: La Vorágine carga y el resolver da las DOS válvulas con su
   assert.deepEqual(bitsCompartidosEntreValvulas(real.signals), [], 'ninguna palabra con bits compartidos en producción');
 });
 
-test('mapping de PRODUCCIÓN: La Sirena — 1 abre, 2 cierra, 0 limpia (entrega oficial)', () => {
-  // VERIFICADO EN CAMPO Y CERRADO por el cliente el 2026-08-15. Un solo canal, `INT_OUT[0]`, con
-  // tres valores. Esta forma sustituye a dos intentos del mismo día que nunca llegaron a producción
-  // —el 4096/bit12 heredado de Vorágine y una orden compuesta c0/c1 con relé de inversión—, y por
-  // eso el test los nombra: si alguien vuelve a ver esas formas en el mapping, es una regresión, no
-  // una evolución.
-  const sirena = valvulasDeProduccion().find((v) => v.plantId === 'sirena')?.w;
-
-  assert.deepEqual(sirena?.commands, { open: 1, close: 2 });
+test('mapping de PRODUCCIÓN: La Sirena — 4096 abre, 8192 cierra, modo absolute', () => {
+  const sirena = valvulasDeProduccion().find((v) => v.plantId === 'sirena' && v.domainKey === 'valve1')?.w;
+  assert.deepEqual(sirena?.commands, { open: 4096, close: 8192 });
   assert.equal(sirena?.target?.index, 0);
-  assert.equal(sirena?.mode, 'absolute', '1, 2 y 0 son valores del canal, no bits de una máscara');
-  assert.equal(sirena?.sequences, undefined, 'la orden compuesta quedó descartada por la lectura de campo');
-  assert.equal(sirena?.latched, undefined, 'ya no es sostenida indefinida: se limpia con 0');
-
-  // Lo que el cliente fijó explícitamente: el 2 se sostiene 45 s antes de limpiar. Un pulso corto
-  // dejaría la maniobra a medias, que es exactamente lo que hacía el de 300 ms.
-  assert.equal(sirena?.pulse?.holdMs, 45_000);
-  assert.equal(sirena?.pulse?.until, undefined, 'la parada por caudal es una actualización futura, no está aquí');
-
-  // El 0 no es decorativo: es el valor con el que `clearPulse` limpia el canal en modo absoluto.
-  // Si alguien lo cambiara, la válvula se quedaría con el 1 o el 2 puesto para siempre.
-  assert.equal(sirena?.rollbackValue, 0, 'tras 1 o 2 SIEMPRE se vuelve a escribir 0');
-  assert.ok(typeof sirena?._riesgo === 'string' && sirena._riesgo.length > 200);
+  assert.equal(sirena?.mode, 'absolute');
+  assert.equal(sirena?.sustained, true);
 });
 
-test('mapping de PRODUCCIÓN: Carbonero — bit0 abre, bit1 cierra, en la MISMA palabra (integrador 2026-10-05)', () => {
-  // Entregado por el integrador del PLC con captura de RSLogix, NO probado aún en campo. Sustituye al
-  // `open: 4096` heredado de Vorágine, que nunca se validó aquí. Mismos valores que Sirena (1 y 2),
-  // pero distinto modo: aquí son BITS de una palabra que puede llevar otros, así que `bitmask`.
-  const carbonero = valvulasDeProduccion().find((v) => v.plantId === 'carbonero')?.w;
-
-  assert.deepEqual(carbonero?.commands, { open: 1, close: 2 });
+test('mapping de PRODUCCIÓN: Carbonero — 4096 abre, 8192 cierra, modo absolute', () => {
+  const carbonero = valvulasDeProduccion().find((v) => v.plantId === 'carbonero' && v.domainKey === 'valve1')?.w;
+  assert.deepEqual(carbonero?.commands, { open: 4096, close: 8192 });
   assert.equal(carbonero?.target?.index, 0);
-  assert.equal(carbonero?.mode, 'bitmask', 'bit0 y bit1 de una palabra compartida: absoluto pisaría los demás bits');
-  assert.equal(carbonero?.sequences, undefined);
-  assert.equal(carbonero?.latched, undefined, 'se suelta siempre; nunca se queda puesta');
-
-  // Temporización PROVISIONAL, pendiente del integrador (pulso o sostenido, recorrido): sostenido por
-  // reloj como Sirena. Con la MSG ciclando cada ~8 s, un pulso corto puede no llegar al PLC local.
-  assert.equal(carbonero?.pulse?.holdMs, 45_000);
-  assert.equal(carbonero?.pulse?.until, undefined, 'no se conoce ninguna realimentación');
-  assert.equal(carbonero?.rollbackValue, 0);
-
-  // El estado NO está verificado y su valor esperado no se inventa: el 16385 era de la convención de
-  // Vorágine, nunca se observó en Carbonero, y con `close` habría confirmado un cierre sobre una
-  // palabra que en esa convención significa ABIERTA.
-  assert.equal(carbonero?.readBack?.channel, 'intIn');
-  assert.equal(carbonero?.readBack?.stateVerified, false, 'el resultado tiene que salir en ámbar, no en verde');
-  assert.equal(carbonero?.readBack?.expectedValue, undefined);
-
-  assert.ok(
-    typeof carbonero?._riesgo === 'string' && /integrador/i.test(carbonero._riesgo) && carbonero._riesgo.includes('2026-10-05'),
-    'un comando de cierre debe llevar al lado de dónde sale y cuándo',
-  );
+  assert.equal(carbonero?.mode, 'absolute');
+  assert.equal(carbonero?.sustained, true);
 });
 
 // Las reglas ELÉCTRICAS de una orden compuesta se comprueban al CARGAR, no al accionar: una

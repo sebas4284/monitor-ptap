@@ -63,6 +63,11 @@
       "type": "string",
       "enum": ["mapped", "unmapped"]
     },
+    "mascaraDeUnBit": {
+      "type": "integer",
+      "enum": [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768],
+      "description": "Un solo bit de una palabra Int16: 1 = bit0 … 32768 = bit15."
+    },
     "bufferDescriptor": {
       "type": "object",
       "additionalProperties": false,
@@ -190,9 +195,9 @@
           "then": { "required": ["write"] }
         },
         {
-          "description": "El write spec solo puede existir en una señal writable (⇒ confirmed o inferred por la regla de arriba, nunca estimated).",
-          "if": { "required": ["write"] },
-          "then": { "properties": { "writable": { "const": true } }, "required": ["writable"] }
+          "description": "Un write spec en una señal writable: false es un MANDO RETIRADO: la válvula se accionó con ese spec y ya no (Soledad, Cascajal y Campoalegre desde el 2026-10-23, a la espera de sus bits de realimentación). No da mando ni verbos; lo usa SOLO la limpieza de bits huérfanos para saber qué bits pudo dejar puestos. Exige _nota que diga por qué se retiró: sin ella, el próximo que lea el mapping vería un write spec y supondría que la válvula se manda.",
+          "if": { "required": ["write"], "properties": { "writable": { "const": false } } },
+          "then": { "required": ["_nota"] }
         },
         {
           "description": "Una señal MAPEADA debe tener etiqueta legible. Sin ella, los avisos enseñaban el domainKey crudo al operario ('Soledad: outletFlow2 fuera de rango') o, si se prefiere callar, se perdía el aviso entero. Ninguna de las dos es aceptable, así que el hueco se caza aquí: al validar el mapping, no de madrugada en el móvil de alguien.",
@@ -208,12 +213,12 @@
       "required": ["target", "commands", "readBack", "timeoutMs", "permission"],
       "allOf": [
         {
-          "description": "Una orden SOSTENIDA (sustained: true) no se deshace nunca: exige mode bitmask; al menos dos verbos, cada uno una máscara entera de 1 a 65535; y PROHÍBE pulse (se limpia al terminar), rollbackValue (volver a él dejaría la válvula sin señal), sequences (posiciones en absoluto) y latched (el de las órdenes compuestas). Cualquier otro spec sigue exigiendo rollbackValue. Lo que JSON Schema no puede expresar —que los verbos no compartan bits entre sí ni con otra válvula de la misma palabra— lo comprueban validate:mapping y el loader, que con un spec sostenido inválido NO arranca.",
+          "description": "Una orden SOSTENIDA (sustained: true) no se deshace nunca: admite mode bitmask o absolute (sobreescritura directa de la palabra); al menos dos verbos, cada uno una máscara o valor entero de 1 a 65535; y PROHÍBE pulse (se limpia al terminar), rollbackValue (volver a él dejaría la válvula sin señal), sequences (posiciones en absoluto) y latched (el de las órdenes compuestas). Cualquier otro spec sigue exigiendo rollbackValue. Lo que JSON Schema no puede expresar —que los verbos no compartan bits entre sí ni con otra válvula de la misma palabra— lo comprueban validate:mapping y el loader, que con un spec sostenido inválido NO arranca.",
           "if": { "properties": { "sustained": { "const": true } }, "required": ["sustained"] },
           "then": {
             "required": ["mode"],
             "properties": {
-              "mode": { "const": "bitmask" },
+              "mode": { "enum": ["bitmask", "absolute"] },
               "commands": {
                 "minProperties": 2,
                 "additionalProperties": { "type": "integer", "minimum": 1, "maximum": 65535 }
@@ -228,7 +233,29 @@
               ]
             }
           },
-          "else": { "required": ["rollbackValue"] }
+          "else": {
+            "description": "Un PULSO CON REALIMENTACIÓN POR BITS (pulse.feedback, integrador 2026-10-23) se limpia apagando SOLO su bit en una palabra compartida: exige mode bitmask y PROHÍBE rollbackValue (limpiar en absoluto borraría la otra válvula), sequences y latched. Cualquier otro spec sigue exigiendo rollbackValue. Lo que JSON Schema no puede expresar —verbos open/close de un bit, máscaras de realimentación distintas y sin solaparse con las del mando, minHoldMs menor que holdMs, la realimentación fuera de la palabra de mando— lo comprueban validate:mapping y el loader, que con un spec así inválido NO arranca.",
+            "if": { "properties": { "pulse": { "required": ["feedback"] } }, "required": ["pulse"] },
+            "then": {
+              "required": ["mode"],
+              "properties": {
+                "mode": { "const": "bitmask" },
+                "latched": { "const": false }
+              },
+              "not": {
+                "anyOf": [
+                  { "required": ["rollbackValue"] },
+                  { "required": ["sequences"] }
+                ]
+              }
+            },
+            "else": { "required": ["rollbackValue"] }
+          }
+        },
+        {
+          "description": "Un pulso SIN realimentación por bits se sostiene a ciegas (o hasta until): su tope sigue siendo 60 s. Solo con pulse.feedback se admite hasta 180 s, porque ahí el bit se suelta en cuanto el PLC confirma.",
+          "if": { "properties": { "pulse": { "not": { "required": ["feedback"] } } }, "required": ["pulse"] },
+          "then": { "properties": { "pulse": { "properties": { "holdMs": { "maximum": 60000 } } } } }
         },
         {
           "description": "Un PULSO se limpia antes del read-back, así que NO puede confirmarse releyendo el valor escrito: su readBack debe apuntar al canal de ESTADO (confirmsWrittenValue:false + expectedValue).",
@@ -298,7 +325,7 @@
         },
         "sustained": {
           "type": "boolean",
-          "description": "true ⇒ SEÑAL SOSTENIDA en una palabra compartida. Integrador del PLC de La Vorágine, 2026-10-16, textual: «estas señales deben ser sostenidas, es decir que todo el tiempo debe quedar la señal de apertura o la señal de cierre, nunca las dos, siempre una de las dos». Cada verbo es una máscara de bits de target y la orden es UNA escritura read-modify-write, (actual & ~bitsDeLosOtrosVerbos) | bitsDelVerbo: el par pasa de un verbo al otro sin ningún instante en 1/1 ni en 0/0, y los bits de las demás válvulas de la palabra no se tocan. Después NO se suelta nunca: ni al terminar, ni si el estado no confirma, ni si algo falla. Exige mode bitmask y al menos dos verbos enteros de 1 a 65535 sin bits compartidos; prohíbe pulse, rollbackValue, sequences y latched (ver la regla en allOf). No se llama latched porque en este código «enclavar» es la avería del bit ENCLAVADO y, en el simulador, un PLC que se mueve con el flanco: lo contrario de lo que pide el integrador."
+          "description": "RETIRADA el 2026-10-23 para toda válvula accionable (writable: true no la admite: ver la regla de la señal); solo sobrevive en el mando conservado de una writable: false, para la limpieza de bits huérfanos. Lo que fue: true ⇒ SEÑAL SOSTENIDA en una palabra compartida. Integrador del PLC de La Vorágine, 2026-10-16, textual: «estas señales deben ser sostenidas, es decir que todo el tiempo debe quedar la señal de apertura o la señal de cierre, nunca las dos, siempre una de las dos». Cada verbo es una máscara de bits de target y la orden es UNA escritura read-modify-write, (actual & ~bitsDeLosOtrosVerbos) | bitsDelVerbo: el par pasa de un verbo al otro sin ningún instante en 1/1 ni en 0/0, y los bits de las demás válvulas de la palabra no se tocan. Después NO se suelta nunca: ni al terminar, ni si el estado no confirma, ni si algo falla. Exige mode bitmask y al menos dos verbos enteros de 1 a 65535 sin bits compartidos; prohíbe pulse, rollbackValue, sequences y latched (ver la regla en allOf). No se llama latched porque en este código «enclavar» es la avería del bit ENCLAVADO y, en el simulador, un PLC que se mueve con el flanco: lo contrario de lo que pide el integrador."
         },
         "mode": {
           "type": "string",
@@ -310,8 +337,29 @@
           "additionalProperties": false,
           "description": "Presente ⇒ el comando es un PULSO: se activa, se sostiene holdMs y se limpia SIEMPRE (confirme el estado o no). Sin esto, un comando confirmado dejaría el bit enclavado.",
           "required": ["holdMs"],
+          "dependentRequired": { "feedback": ["minHoldMs"], "minHoldMs": ["feedback"] },
+          "not": { "required": ["until", "feedback"] },
           "properties": {
-            "holdMs": { "type": "integer", "minimum": 1, "maximum": 60000, "description": "Duración del pulso en ms (típico 200–500 ms). Con `until` presente deja de ser la duración y pasa a ser el TOPE DURO del sostenido." },
+            "holdMs": { "type": "integer", "minimum": 1, "maximum": 180000, "description": "Duración del pulso en ms (típico 200–500 ms). Con `until` o `feedback` presente deja de ser la duración y pasa a ser el TOPE DURO del sostenido. Hasta 60 000 ms sin feedback y hasta 180 000 ms con él (ver la regla del writeSpec)." },
+            "minHoldMs": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Solo con feedback, y obligatorio con él: durante los primeros minHoldMs ms la realimentación NO suelta la orden aunque ya diga «abierta» o «falla». Existe porque la MSG tarda ~16 s en cada sentido (La Vorágine, 16/10): una lectura anterior a la orden no puede darse por buena. Menor que holdMs (lo comprueban validate:mapping y el loader)."
+            },
+            "feedback": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Realimentación POR BITS (integrador de La Vorágine, 2026-10-23): el bit de mando se mantiene en 1 hasta que el PLC informa «abierta» (con abrir) o «cerrada» (con cerrar), o «falla», y entonces vuelve a 0; si nada llega antes de holdMs, se suelta igual y la orden sale fallida. open, close y fault son MÁSCARAS DE UN BIT dentro de sourceBuffer[index] (que pueden compartir varias válvulas: en INT_IN_VORAGINE[1] la entrada usa 1/2/16 y la salida 1024/2048/16384). Se compara por bits, no por valor entero como until, porque la palabra lleva a la vez las dos válvulas. La orden responde en cuanto sale la escritura y el sostenido sigue en segundo plano.",
+              "required": ["channel", "sourceBuffer", "index", "open", "close", "fault"],
+              "properties": {
+                "channel": { "const": "intIn", "description": "La palabra la escribe el PLC (MSG_READ): un canal de entrada entero." },
+                "sourceBuffer": { "type": "string", "minLength": 1 },
+                "index": { "type": "integer", "minimum": 0 },
+                "open": { "$ref": "#/$defs/mascaraDeUnBit" },
+                "close": { "$ref": "#/$defs/mascaraDeUnBit" },
+                "fault": { "$ref": "#/$defs/mascaraDeUnBit" }
+              }
+            },
             "until": {
               "type": "object",
               "additionalProperties": false,
@@ -357,7 +405,7 @@
         },
         "rollbackValue": {
           "type": ["number", "boolean"],
-          "description": "Valor seguro a re-escribir si la confirmación falla (best-effort), y con el que se limpia un pulso en absolute. Obligatorio en todo spec SALVO en una orden sostenida (sustained), donde está PROHIBIDO: allí no se deshace nada, y volver a este valor dejaría la válvula sin señal."
+          "description": "Valor seguro a re-escribir si la confirmación falla (best-effort), y con el que se limpia un pulso en absolute. Obligatorio en todo spec SALVO en una orden sostenida (sustained, retirada) y en un pulso con realimentación por bits (pulse.feedback), donde está PROHIBIDO: la sostenida no se deshacía nunca, y la de realimentación se limpia apagando SOLO su bit (un valor absoluto borraría la otra válvula de la palabra)."
         },
         "permission": {
           "type": "string",

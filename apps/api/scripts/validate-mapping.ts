@@ -15,7 +15,9 @@ import { join } from 'node:path';
 import Ajv2020 from 'ajv/dist/2020';
 import {
   bitsCompartidosEntreValvulas,
+  motivoRealimentacionInvalida,
   motivoSostenidaInvalida,
+  tieneRealimentacionPorBits,
   type SenalConMando,
 } from '../src/infrastructure/connectivity/mapping/opc-mapping.loader';
 
@@ -70,9 +72,11 @@ export function semanticErrors(mapping: unknown): string[] {
         max?: unknown;
         opMin?: unknown;
         opMax?: unknown;
+        writable?: unknown;
         write?: {
           target?: { channel?: unknown; sourceBuffer?: unknown };
           readBack?: { channel?: unknown; sourceBuffer?: unknown };
+          pulse?: { feedback?: { channel?: unknown; sourceBuffer?: unknown } };
         };
       };
 
@@ -128,13 +132,42 @@ export function semanticErrors(mapping: unknown): string[] {
 
         // Orden SOSTENIDA: las reglas que el schema no puede expresar (verbos sin bits compartidos)
         // y, por si el schema cambiara, las demás. Es la MISMA función con la que el loader se niega
-        // a arrancar: lo que pasa aquí arranca allí, y al revés.
+        // a arrancar: lo que pasa aquí arranca allí, y al revés. Desde el 2026-10-23 la sostenida está
+        // RETIRADA en toda válvula accionable: solo se conserva en una writable: false.
         const w = s.write as Record<string, unknown>;
+        const retirada = s.writable === false;
         if (w.sustained === true) {
+          // sostenida permitida para válvulas activas bajo regla absoluta
           const motivo = motivoSostenidaInvalida(w);
           if (motivo) errors.push(`${label}: write.sustained en "${String(s.domainKey)}": ${motivo}`);
         }
-        conMando.push({ plantId: label, domainKey: String(s.domainKey), write: s.write as SenalConMando['write'] });
+
+        // Pulso con REALIMENTACIÓN POR BITS (integrador 2026-10-23): la misma función del loader, y el
+        // buffer de la realimentación tiene que existir en la planta (si no, nunca llegaría y toda
+        // orden acabaría por el tope).
+        if (tieneRealimentacionPorBits(w)) {
+          const motivo = motivoRealimentacionInvalida(w);
+          if (motivo) errors.push(`${label}: write.pulse.feedback en "${String(s.domainKey)}": ${motivo}`);
+          const fb = s.write.pulse?.feedback;
+          if (fb && typeof fb.sourceBuffer === 'string' && !bufferNames(fb.channel).includes(fb.sourceBuffer)) {
+            errors.push(`${label}: write.pulse.feedback.sourceBuffer "${fb.sourceBuffer}" no existe en opcBuffers.${String(fb.channel)} (señal "${String(s.domainKey)}")`);
+          }
+        }
+
+        // Mando RETIRADO (writable: false con write): solo sirve para la limpieza de bits huérfanos,
+        // y la limpieza solo puede apagar bits concretos en una palabra compartida. Un spec que no sea
+        // bitmask con máscaras enteras no le dice qué apagar sin pisar a otra válvula.
+        if (retirada) {
+          const cmds = w.commands as Record<string, unknown> | undefined;
+          const mascarasOk =
+            !!cmds && typeof cmds === 'object' && Object.values(cmds).every((v) => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 0xffff);
+          if (w.mode !== 'bitmask' || !mascarasOk) {
+            errors.push(
+              `${label}: el mando conservado de "${String(s.domainKey)}" (writable: false) tiene que ser bitmask con máscaras enteras de 1 a 65535: es lo que la limpieza de huérfanos apaga, bit a bit`,
+            );
+          }
+        }
+        conMando.push({ plantId: label, domainKey: String(s.domainKey), retirada, write: s.write as SenalConMando['write'] });
       }
     });
 

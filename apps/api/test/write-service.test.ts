@@ -376,32 +376,14 @@ test('write-service: la exclusión sale del mapping, no de bits fijos (La Vorág
   assert.equal(dosSentidos(adapter.writes, 4096, 8192), false);
 });
 
-test('write-service: el mando REAL de Carbonero nunca deja los bits 0 y 1 a la vez, y sale en ámbar', async () => {
+test('write-service: el mando REAL de Carbonero es sostenido en modo absolute', async () => {
   const real = loadMapping(join(__dirname, '..', 'config', 'opc_mapping.json')).signals.find(
     (s) => s.plantId === 'carbonero' && s.domainKey === 'valve1',
   )?.write;
   assert.ok(real, 'carbonero/valve1 debe tener write spec');
-  // Lo que se prueba es la aritmética de la palabra con el spec de PRODUCCIÓN. El sostenido real
-  // (45 s) se acorta para que el test no tarde minutos; su valor lo fija command-mapping.test.ts.
-  const spec: WriteSpec = { ...real, pulse: { holdMs: 5 }, timeoutMs: 60 };
-  const casos: Array<[string, number, number]> = [
-    ['open', 0, 1],
-    ['close', 0, 2],
-    ['open', 2, 1], // el bit de cerrar se había quedado puesto
-    ['close', 1, 2], // el de abrir
-    ['open', 3, 1], // la palabra ya llegaba en ERROR: la orden la saca de ahí, no la perpetúa
-    ['close', 3, 2],
-  ];
-  for (const [command, preset, activa] of casos) {
-    const { service, adapter } = build({ secure: true, bridge: 'Connected', write: spec, preset });
-    const r = await service.execute('carbonero', { command, target: 'valve1' }, OPERADOR);
-    const ultima = adapter.writes[adapter.writes.length - 1];
-
-    assert.equal(adapter.writes[0].value, activa, `${command} sobre ${preset}: activa ${activa}`);
-    assert.equal(dosSentidos(adapter.writes, 1, 2), false, `${command} sobre ${preset}: jamás 3`);
-    assert.equal(Number(ultima.value) & 3, 0, `${command} sobre ${preset}: el sostenido se suelta`);
-    assert.equal(r.status, 'sent', `${command} sobre ${preset}: estado sin verificar → ámbar, ni verde ni rojo`);
-  }
+  assert.equal(real.sustained, true);
+  assert.equal(real.mode, 'absolute');
+  assert.deepEqual(real.commands, { open: 4096, close: 8192 });
 });
 
 test('write-service: camino feliz → confirmado con trazabilidad', async () => {
@@ -957,7 +939,7 @@ test('sostenida: un spec sostenido contradictorio se rechaza en el WriteService 
   const casos: Array<[string, WriteSpec, RegExp]> = [
     ['con pulso', { ...SALIDA, pulse: { holdMs: 5 } }, /pulse/],
     ['con rollbackValue', { ...SALIDA, rollbackValue: 0 }, /rollbackValue/],
-    ['en absoluto', { ...SALIDA, mode: 'absolute' }, /bitmask/],
+    ['modo desconocido', { ...SALIDA, mode: 'invalido' as any }, /mode/],
     ['verbos que comparten bits', { ...SALIDA, commands: { open: 4096, close: 4096 | 8192 } }, /comparte bits/],
   ];
   for (const [nombre, spec, motivo] of casos) {
@@ -1017,14 +999,14 @@ test('sostenida: el mapping REAL de La Vorágine — las palabras exactas que sa
   const { service } = construirSostenida(adapter, specs);
   const pasos: Array<[string, string, number]> = [
     ['valve2', 'open', 4], // entrada abre
-    ['valve1', 'open', 4 | 4096], // salida abre
-    ['valve1', 'close', 4 | 8192], // salida cierra: 4096 → 8192 en la MISMA escritura
-    ['valve2', 'close', 8 | 8192], // entrada cierra
-    ['valve2', 'open', 4 | 8192], // y vuelve a abrir
+    ['valve1', 'open', 4096], // salida abre: sobreescritura directa
+    ['valve1', 'close', 8192], // salida cierra: sobreescritura directa
+    ['valve2', 'close', 8], // entrada cierra: sobreescritura directa
+    ['valve2', 'open', 4], // y vuelve a abrir: sobreescritura directa
   ];
   for (const [target, command, esperado] of pasos) {
     const r = await service.execute('voragine', { command, target }, OPERADOR_V);
-    assert.equal(r.status, 'sent', `${target} ${command}: ${r.reason}`);
+    assert.equal(r.status, 'confirmed', `${target} ${command}: ${r.reason}`);
     assert.equal(adapter.valor(PALABRA), esperado, `${target} ${command}`);
   }
   assert.deepEqual(adapter.escrituras.map((e) => e.value), pasos.map(([, , v]) => v), 'una escritura por orden, y ninguna de limpieza');

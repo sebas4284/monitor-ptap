@@ -52,6 +52,24 @@ export const FAIL = {
    * borra justo el dato que sirve para distinguirlas.
    */
   HOLD_FEEDBACK_TIMEOUT: 'HOLD_FEEDBACK_TIMEOUT',
+  /**
+   * Realimentación por bits (`pulse.feedback`): durante el sostenido el PLC informó FALLA de la
+   * válvula. La orden se soltó. No es lo mismo que un tope agotado: aquí el equipo SÍ respondió, y
+   * lo que dijo es que no puede moverse (en La Vorágine, el temporizador de falla de 90 s del PLC, o
+   * una falla anterior que hay que rearmar desde la HMI).
+   */
+  VALVE_FAULT: 'VALVE_FAULT',
+  /**
+   * El sostenido se cortó porque llegó la orden CONTRARIA sobre la misma válvula (cerrar mientras se
+   * sostenía abrir). Se soltó sin confirmación: ni el equipo falló ni se agotó el tope.
+   */
+  HOLD_REPLACED: 'HOLD_REPLACED',
+  /**
+   * El proceso se detuvo (reinicio, despliegue, caída) con el sostenido en marcha. El bit lo apagó el
+   * apagado ordenado o la limpieza de huérfanos al volver a conectar el puente; qué hizo la válvula
+   * no se sabe.
+   */
+  HOLD_INTERRUPTED: 'HOLD_INTERRUPTED',
 } as const;
 
 /** Motivos de desenlace `sent`: se escribió y se verificó, pero no hay con qué confirmar el estado. */
@@ -62,6 +80,22 @@ export const SENT = {
    * captura. No se afirma que el equipo se movió, ni se lo acusa de no haberlo hecho.
    */
   SENT_STATE_UNVERIFIED: 'SENT_STATE_UNVERIFIED',
+  /**
+   * Realimentación por bits (`pulse.feedback`, integrador 2026-10-23): la orden salió y se mantiene en
+   * SEGUNDO PLANO hasta que el PLC confirme o informe falla (máx. `holdMs`). La respuesta HTTP no
+   * espera: el resultado final queda en `command_log` (fila de resultado), en la auditoría y en la
+   * bandeja, y la app lo ve en el estado en vivo de la válvula.
+   *
+   * Mientras el sostenido sigue, la fila de la orden conserva este motivo; es lo que permite saber,
+   * tras un reinicio, qué órdenes se quedaron sin resultado (ver `FAIL.HOLD_INTERRUPTED`).
+   */
+  SENT_HOLDING_UNTIL_FEEDBACK: 'SENT_HOLDING_UNTIL_FEEDBACK',
+} as const;
+
+/** Resultado del sostenido con realimentación: lo que va al aviso, a la auditoría y a `command_log`. */
+export const RESULTADO_DEL_SOSTENIDO = {
+  /** El PLC informó el estado del verbo (abierta con abrir, cerrada con cerrar). */
+  FEEDBACK_CONFIRMED: 'FEEDBACK_CONFIRMED',
 } as const;
 
 export interface CommandResult {

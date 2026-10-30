@@ -57,6 +57,44 @@ export interface FeedbackRef {
   equals: number | boolean;
 }
 
+/**
+ * Realimentación POR BITS de una orden de pulso (`pulse.feedback`). Integrador del PLC de La
+ * Vorágine, entrega del 2026-10-23: el bit de mando se mantiene en 1 hasta que el PLC informa
+ * «abierta» o «cerrada» (según el verbo) o «falla», y entonces vuelve a 0.
+ *
+ * Cada campo es una MÁSCARA DE UN BIT dentro de la palabra `sourceBuffer[index]`, que pueden
+ * compartir varias válvulas (en La Vorágine, `INT_IN_VORAGINE[1]`: entrada abierta bit0, cerrada
+ * bit1, falla bit4; salida abierta bit10, cerrada bit11, falla bit14). Es por bits, y no por valor
+ * completo como `until`, porque la palabra lleva a la vez los bits de las dos válvulas: el 16/10 valía
+ * 1041 = {0,4,10}, entrada abierta CON falla y salida abierta.
+ *
+ * Reglas en `motivoRealimentacionInvalida`.
+ */
+export interface RealimentacionPorBits {
+  channel: string;
+  sourceBuffer: string;
+  index: number;
+  open: number;
+  close: number;
+  fault: number;
+}
+
+/** Tope duro de un sostenido con realimentación: 180 s (la planta usa 120 s; ver el mapping). */
+export const HOLD_MS_MAX_CON_REALIMENTACION = 180_000;
+
+/**
+ * Mando RETIRADO de una válvula que hoy no se acciona (`writable: false`) pero que se accionó con
+ * este spec y pudo dejar bits puestos en el PLC. No da botón, ni verbos, ni pasa por el WriteService:
+ * existe SOLO para que la limpieza de bits huérfanos sepa qué bits apagar al conectar el puente
+ * (especificación del integrador del 2026-10-23: ningún 1 de mando puede quedarse puesto).
+ */
+export interface MandoConservado {
+  target: BufferElementRef;
+  /** Todos los bits de mando de la válvula (OR de las máscaras de sus verbos). */
+  bits: number;
+  commands: Record<string, number>;
+}
+
 /** Fase 5: traducción de comando de dominio a escritura de buffer/bit (vive en el mapping, regla 2). */
 export interface WriteSpec {
   target: BufferElementRef; // buffer de SALIDA donde se escribe
@@ -97,6 +135,12 @@ export interface WriteSpec {
    */
   latched?: boolean;
   /**
+   * **RETIRADA el 2026-10-23** para toda válvula accionable (`MOTIVO_SOSTENIDA_RETIRADA`): el
+   * integrador corrigió la especificación y la orden se mantiene solo hasta la realimentación
+   * (`pulse.feedback`). El loader ya no carga una válvula `writable` con `sustained`; el spec solo
+   * sobrevive como mando conservado de una `writable: false`, para la limpieza de huérfanos. Lo de
+   * abajo describe lo que fue, que es lo que esa limpieza deshace.
+   *
    * `true` ⇒ SEÑAL SOSTENIDA en una palabra compartida. Integrador del PLC de La Vorágine,
    * 2026-10-16, textual: «estas señales deben ser sostenidas, es decir que todo el tiempo debe quedar
    * la señal de apertura o la señal de cierre, nunca las dos, siempre una de las dos».
@@ -139,8 +183,14 @@ export interface WriteSpec {
    * realimentación no llega nunca (sensor averiado, válvula atascada) el bit se limpia igualmente y
    * el comando se reporta fallido. Nunca se sostiene indefinidamente, lo pida quien lo pida: dejar
    * una bobina energizada sin que nadie se entere es peor que abortar la maniobra.
+   *
+   * Con `feedback` (realimentación POR BITS, integrador 2026-10-23) el sostenido corre en SEGUNDO
+   * PLANO: la orden responde en cuanto la escritura sale, y el bit se suelta cuando, pasados
+   * `minHoldMs`, el PLC informa el estado del verbo o la falla; o al vencer `holdMs`. `minHoldMs`
+   * existe porque la MSG tarda ~16 s en cada sentido: una lectura anterior a la orden no puede darse
+   * por buena.
    */
-  pulse: { holdMs: number; until?: FeedbackRef } | null;
+  pulse: { holdMs: number; minHoldMs?: number; until?: FeedbackRef; feedback?: RealimentacionPorBits } | null;
   readBack: {
     channel: string;
     sourceBuffer: string | null;
@@ -167,8 +217,10 @@ export interface WriteSpec {
   timeoutMs: number;
   /**
    * Valor con el que se limpia un pulso en `absolute` y se deshace una orden no confirmada.
-   * Obligatorio en todo spec SALVO en una orden sostenida (`sustained`), donde está PROHIBIDO: allí no
-   * se deshace nada, y volver a este valor dejaría la válvula sin señal.
+   * Obligatorio en todo spec SALVO en una orden sostenida (`sustained`, retirada) y en una con
+   * realimentación por bits (`pulse.feedback`), donde está PROHIBIDO: la sostenida no se deshacía
+   * nunca, y la de realimentación se limpia apagando SOLO su bit — un valor absoluto borraría la otra
+   * válvula de la palabra.
    */
   rollbackValue?: number | boolean;
   permission: string; // Permission de @ptap/shared (control_valves | acknowledge_alarms | adjust_setpoints)
@@ -200,6 +252,11 @@ export interface SignalMapping {
   writable: boolean;
   /** Presente solo si writable (⇒ confidence:confirmed, garantizado por el schema). */
   write?: WriteSpec;
+  /**
+   * Solo en una válvula con el mando RETIRADO (`writable: false` y un `write` conservado en el JSON).
+   * Nunca se usa para mandar: es lo que la limpieza de huérfanos apaga. Ver `MandoConservado`.
+   */
+  mandoConservado?: MandoConservado;
   /**
    * Valores literales de la palabra de estado de válvula para sitios que NO usan la máscara
    * bit14/bit0. Viaja al DTO para que el front no tenga que conocer cada planta. Ver `SignalDto`.
@@ -263,7 +320,12 @@ interface RawWriteSpec {
   latched?: unknown;
   sustained?: unknown;
   mode?: string;
-  pulse?: { holdMs?: number; until?: { channel?: unknown; sourceBuffer?: unknown; index?: unknown; equals?: unknown } };
+  pulse?: {
+    holdMs?: number;
+    minHoldMs?: unknown;
+    until?: { channel?: unknown; sourceBuffer?: unknown; index?: unknown; equals?: unknown };
+    feedback?: unknown;
+  };
   readBack?: {
     channel?: string;
     sourceBuffer?: string;
@@ -404,8 +466,8 @@ export function motivoSostenidaInvalida(spec: {
   sequences?: unknown;
   latched?: unknown;
 }): string | null {
-  if (spec.mode !== 'bitmask') {
-    return `mode debe ser 'bitmask' y es ${JSON.stringify(spec.mode ?? 'absolute (por omisión)')}: cada verbo es un bit de una palabra que pueden compartir varias válvulas, y escribirla en absoluto borraría el par de las demás`;
+  if (spec.mode !== 'bitmask' && spec.mode !== 'absolute') {
+    return `mode debe ser 'bitmask' o 'absolute' y es ${JSON.stringify(spec.mode ?? 'indefinido')}`;
   }
   if (declarado(spec.pulse)) {
     return 'sustained y pulse son excluyentes: un pulso se LIMPIA al terminar, y una señal sostenida no se suelta nunca';
@@ -437,31 +499,152 @@ export function motivoSostenidaInvalida(spec: {
   return null;
 }
 
+/** ¿Es un entero con UN solo bit puesto, dentro de una palabra de 16 bits (1, 2, 4 … 32768)? */
+export function esMascaraDeUnBit(v: unknown): v is number {
+  return typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 0x8000 && (v & (v - 1)) === 0;
+}
+
+/** ¿El spec (crudo o parseado) declara realimentación por bits? Mira PRESENCIA, no validez. */
+export function tieneRealimentacionPorBits(spec: { pulse?: unknown } | null | undefined): boolean {
+  const pulse = spec?.pulse;
+  return typeof pulse === 'object' && pulse !== null && declarado((pulse as { feedback?: unknown }).feedback);
+}
+
+/**
+ * Valida una orden de PULSO CON REALIMENTACIÓN POR BITS (`pulse.feedback`) y devuelve el motivo del
+ * rechazo, o null si es correcta (o si el spec no declara `feedback`).
+ *
+ * Igual que `motivoSostenidaInvalida`: no es forma, son las reglas que hacen que la orden cumpla la
+ * entrega del integrador del 2026-10-23 — el bit se mantiene hasta que el PLC confirma o da falla, y
+ * nunca abrir y cerrar a la vez. La usan el loader (que con un spec así inválido NO arranca),
+ * `validate:mapping`, la edición del mapeo en caliente y el WriteService justo antes de escribir.
+ * Sirve para el JSON crudo y para un `WriteSpec` ya parseado.
+ *
+ * Reglas, y por qué:
+ *  - **excluyente con `sustained`, `until`, `latched`, `sequences` y `rollbackValue`**: sostenida
+ *    no se suelta nunca (lo contrario); `until` compara el valor entero (otra semántica para lo
+ *    mismo); las órdenes compuestas escriben posiciones en absoluto; y limpiar escribiendo un
+ *    `rollbackValue` en absoluto borraría la otra válvula de la palabra.
+ *  - **`mode: 'bitmask'`**: la palabra de mando la comparten varias válvulas.
+ *  - **`holdMs` de 1 a 180 000 ms** (tope duro) y **`minHoldMs` obligatorio, de 0 a `holdMs`**: sin
+ *    él se daría por buena la realimentación anterior a la orden (la MSG tarda ~16 s por sentido).
+ *  - **verbos exactamente `open` y `close`, cada uno una máscara de UN bit y distintos**: la
+ *    realimentación se casa con el verbo por su nombre (abrir → `open`, cerrar → `close`), y una
+ *    máscara de varios bits es casi siempre una errata (12 = bits 2 y 3 = abrir Y cerrar).
+ *  - **`feedback.open/close/fault`: máscaras de un bit, distintas entre sí y sin solaparse con las
+ *    del mando**; en `intIn` y en un elemento que NO sea la propia palabra de mando, que confirmaría
+ *    la orden con su propio eco.
+ */
+export function motivoRealimentacionInvalida(spec: {
+  target?: unknown;
+  commands?: unknown;
+  mode?: unknown;
+  pulse?: unknown;
+  rollbackValue?: unknown;
+  sequences?: unknown;
+  latched?: unknown;
+  sustained?: unknown;
+}): string | null {
+  if (!tieneRealimentacionPorBits(spec)) return null;
+  const pulse = spec.pulse as { holdMs?: unknown; minHoldMs?: unknown; until?: unknown; feedback?: unknown };
+
+  if (spec.sustained === true) {
+    return 'pulse.feedback y sustained son excluyentes: con realimentación el bit se suelta al confirmar, y una señal sostenida no se suelta nunca';
+  }
+  if (declarado(pulse.until)) {
+    return 'pulse.feedback y pulse.until son excluyentes: until compara el valor ENTERO de un elemento y feedback, bits; dos condiciones de suelta para la misma orden no se sabe cuál manda';
+  }
+  if (spec.latched === true) return 'pulse.feedback y latched son excluyentes: latched no se suelta';
+  if (declarado(spec.sequences)) {
+    return 'pulse.feedback no admite sequences: una orden compuesta escribe posiciones enteras en absoluto, y esta es un bit dentro de una palabra compartida';
+  }
+  if (declarado(spec.rollbackValue)) {
+    return 'una orden con realimentación no lleva rollbackValue: se limpia apagando SOLO su bit (actual & ~verbo); escribir un valor absoluto borraría la otra válvula de la palabra';
+  }
+  if (spec.mode !== 'bitmask') {
+    return `mode debe ser 'bitmask' y es ${JSON.stringify(spec.mode ?? 'absolute (por omisión)')}: la palabra de mando la comparten varias válvulas`;
+  }
+
+  const holdMs = pulse.holdMs;
+  if (typeof holdMs !== 'number' || !Number.isInteger(holdMs) || holdMs < 1 || holdMs > HOLD_MS_MAX_CON_REALIMENTACION) {
+    return `pulse.holdMs es el tope duro del sostenido y tiene que ser un entero de 1 a ${HOLD_MS_MAX_CON_REALIMENTACION} ms (180 s); vale ${JSON.stringify(holdMs)}`;
+  }
+  const minHoldMs = pulse.minHoldMs;
+  if (typeof minHoldMs !== 'number' || !Number.isInteger(minHoldMs) || minHoldMs < 0 || minHoldMs >= holdMs) {
+    return `pulse.minHoldMs es obligatorio con feedback, entero de 0 a holdMs (${holdMs}) sin llegar: sin él se daría por buena una realimentación ANTERIOR a la orden; vale ${JSON.stringify(minHoldMs)}`;
+  }
+
+  if (!spec.commands || typeof spec.commands !== 'object') return 'sin commands';
+  const commands = spec.commands as Record<string, unknown>;
+  const verbos = Object.keys(commands).sort();
+  if (verbos.length !== 2 || verbos[0] !== 'close' || verbos[1] !== 'open') {
+    return `con realimentación los verbos tienen que ser exactamente open y close (la realimentación se casa con el verbo por su nombre), y son: ${verbos.join(', ') || '(ninguno)'}`;
+  }
+  for (const verbo of verbos) {
+    if (!esMascaraDeUnBit(commands[verbo])) {
+      return `${verbo}: con realimentación cada verbo es una máscara de UN bit (1, 2, 4 … 32768), y vale ${JSON.stringify(commands[verbo])}`;
+    }
+  }
+  const mando = (commands.open as number) | (commands.close as number);
+  if (commands.open === commands.close) return 'open y close son el mismo bit: abrir sería cerrar';
+
+  const fb = pulse.feedback as Record<string, unknown>;
+  if (typeof fb !== 'object' || fb === null) return 'pulse.feedback tiene que ser un objeto';
+  if (fb.channel !== 'intIn') {
+    return `pulse.feedback.channel tiene que ser intIn (la palabra que escribe el PLC), y es ${JSON.stringify(fb.channel)}`;
+  }
+  if (typeof fb.sourceBuffer !== 'string' || fb.sourceBuffer.length === 0) return 'pulse.feedback.sourceBuffer es obligatorio';
+  if (typeof fb.index !== 'number' || !Number.isInteger(fb.index) || fb.index < 0) return 'pulse.feedback.index tiene que ser un entero de 0 en adelante';
+  for (const papel of ['open', 'close', 'fault'] as const) {
+    if (!esMascaraDeUnBit(fb[papel])) {
+      return `pulse.feedback.${papel} tiene que ser una máscara de UN bit (1, 2, 4 … 32768), y vale ${JSON.stringify(fb[papel])}`;
+    }
+  }
+  const [abierta, cerrada, falla] = [fb.open as number, fb.close as number, fb.fault as number];
+  if (abierta === cerrada || abierta === falla || cerrada === falla) {
+    return `pulse.feedback: open (${abierta}), close (${cerrada}) y fault (${falla}) tienen que ser bits distintos`;
+  }
+  const solape = (abierta | cerrada | falla) & mando;
+  if (solape !== 0) {
+    return `pulse.feedback comparte bits (${solape}) con los del mando (${mando}): casi siempre es un copia-y-pega de commands`;
+  }
+  const t = spec.target as { channel?: unknown; sourceBuffer?: unknown; index?: unknown } | undefined;
+  if (t && t.channel === fb.channel && t.sourceBuffer === fb.sourceBuffer && t.index === fb.index) {
+    return 'pulse.feedback apunta a la propia palabra de mando: la orden se confirmaría con su propio eco';
+  }
+  return null;
+}
+
 /** Lo mínimo de una señal para saber por qué palabra manda y con qué bits. Vale para JSON crudo. */
 export interface SenalConMando {
   plantId: string;
   domainKey: string;
+  /** Mando RETIRADO (`writable: false` con `write` conservado): lo apaga la limpieza de huérfanos. */
+  retirada?: boolean;
   write?: {
     target?: { channel?: unknown; sourceBuffer?: unknown; index?: unknown };
     mode?: unknown;
     commands?: unknown;
     sustained?: unknown;
+    pulse?: unknown;
   };
 }
 
 /**
  * Válvulas que mandan por la MISMA palabra (misma planta, buffer e índice) en `bitmask` no pueden
  * compartir ni un bit: si lo compartieran, la orden de una encendería o apagaría un verbo de la otra.
- * Con dos válvulas sostenidas en `INT_OUT_VORAGINE[0]` un copia-y-pega de 4096/8192 en la de entrada
- * haría que «abrir entrada» abriera la SALIDA, y ninguna regla por válvula lo vería.
+ * Con dos válvulas en `INT_OUT_VORAGINE[0]` un copia-y-pega de 4096/8192 en la de entrada haría que
+ * «abrir entrada» abriera la SALIDA, y ninguna regla por válvula lo vería. Y un mando RETIRADO que
+ * compartiera bits con uno activo haría que la limpieza de huérfanos apagara el bit del activo.
  *
- * Devuelve un aviso por par en conflicto, con las dos válvulas; `sostenida` dice si alguna de las
- * dos lo es (el loader solo se niega a arrancar por esas; `validate:mapping` las rechaza todas).
+ * Devuelve un aviso por par en conflicto, con las dos válvulas. `sostenida` dice si alguna de las
+ * dos es sostenida; `estricta`, si alguna es sostenida, de realimentación por bits o retirada: el
+ * loader se niega a arrancar por esas; `validate:mapping` las rechaza todas.
  */
 export function bitsCompartidosEntreValvulas(
   senales: SenalConMando[],
-): Array<{ motivo: string; sostenida: boolean; valvulas: [string, string] }> {
-  const porPalabra = new Map<string, Array<{ domainKey: string; bits: number; sostenida: boolean }>>();
+): Array<{ motivo: string; sostenida: boolean; estricta: boolean; valvulas: [string, string] }> {
+  const porPalabra = new Map<string, Array<{ domainKey: string; bits: number; sostenida: boolean; estricta: boolean }>>();
   for (const s of senales) {
     const w = s.write;
     if (!w || w.mode !== 'bitmask' || !w.target || !w.commands || typeof w.commands !== 'object') continue;
@@ -473,10 +656,11 @@ export function bitsCompartidosEntreValvulas(
     }
     const palabra = `${s.plantId}/${String(channel)}/${sourceBuffer}[${index}]`;
     const lista = porPalabra.get(palabra) ?? [];
-    lista.push({ domainKey: s.domainKey, bits, sostenida: w.sustained === true });
+    const sostenida = w.sustained === true;
+    lista.push({ domainKey: s.domainKey, bits, sostenida, estricta: sostenida || s.retirada === true || tieneRealimentacionPorBits(w) });
     porPalabra.set(palabra, lista);
   }
-  const conflictos: Array<{ motivo: string; sostenida: boolean; valvulas: [string, string] }> = [];
+  const conflictos: Array<{ motivo: string; sostenida: boolean; estricta: boolean; valvulas: [string, string] }> = [];
   for (const [palabra, valvulas] of porPalabra) {
     for (let i = 0; i < valvulas.length; i++) {
       for (let j = i + 1; j < valvulas.length; j++) {
@@ -485,6 +669,7 @@ export function bitsCompartidosEntreValvulas(
         conflictos.push({
           motivo: `${valvulas[i].domainKey} y ${valvulas[j].domainKey} mandan por ${palabra} y comparten bits (${comun}): la orden de una movería a la otra`,
           sostenida: valvulas[i].sostenida || valvulas[j].sostenida,
+          estricta: valvulas[i].estricta || valvulas[j].estricta,
           valvulas: [valvulas[i].domainKey, valvulas[j].domainKey],
         });
       }
@@ -492,6 +677,15 @@ export function bitsCompartidosEntreValvulas(
   }
   return conflictos;
 }
+
+/**
+ * La señal sostenida RETIRADA: el integrador corrigió la especificación el 2026-10-23 — el 1 que la
+ * app dejaba puesto chocaba con la HMI (si se cerraba desde la HMI, el PLC seguía viendo «abrir»
+ * desde la app). Una válvula accionable (`writable: true`) ya no puede ser `sustained`; el spec
+ * sostenido solo puede conservarse en una válvula con `writable: false`, para la limpieza.
+ */
+export const MOTIVO_SOSTENIDA_RETIRADA =
+  'una válvula accionable ya no puede llevar sustained: el integrador retiró la señal sostenida el 2026-10-23 (el 1 que se quedaba puesto chocaba con la HMI). La orden se mantiene solo hasta la realimentación: pulse.feedback';
 
 function parseSequences(
   raw: RawWriteSpec['sequences'],
@@ -520,10 +714,14 @@ function parseSequences(
  * Parsea el write spec. Confía en que el schema ya validó la forma (validate:mapping es el
  * gate); aquí solo se normaliza. Devuelve undefined si la señal no es writable o no lo trae.
  *
- * La excepción es la orden SOSTENIDA: si incumple sus reglas, esto LANZA y el backend no arranca.
- * Descartarla en silencio, como se hace con lo demás, dejaría las válvulas sin mando tras un
- * despliegue sin que nadie lo supiera hasta que un operario lo intentara; y aplicarla a medias
- * (con un pulso, con un rollbackValue) haría justo lo que el integrador prohíbe: soltar la señal.
+ * Dos excepciones LANZAN, y con ellas el backend no arranca:
+ *  - una válvula accionable con `sustained` (la señal sostenida la retiró el integrador el
+ *    2026-10-23, ver `MOTIVO_SOSTENIDA_RETIRADA`): volver a cargarla devolvería el 1 que se queda
+ *    puesto y choca con la HMI;
+ *  - una orden con realimentación por bits (`pulse.feedback`) que incumple sus reglas
+ *    (`motivoRealimentacionInvalida`): descartarla en silencio dejaría la válvula sin mando tras un
+ *    despliegue sin que nadie lo supiera hasta que un operario lo intentara, y aplicarla a medias
+ *    (sin `minHoldMs`, con máscaras solapadas) confirmaría órdenes con lecturas viejas o ajenas.
  * `donde` es `planta/domainKey`, para que el mensaje diga qué corregir.
  */
 function parseWriteSpec(raw: RawWriteSpec | undefined, donde: string): WriteSpec | undefined {
@@ -536,21 +734,36 @@ function parseWriteSpec(raw: RawWriteSpec | undefined, donde: string): WriteSpec
   if (raw.sustained !== undefined && typeof raw.sustained !== 'boolean') {
     throw new Error(`opc_mapping.json: ${donde}: write.sustained tiene que ser true o false, y vale ${JSON.stringify(raw.sustained)}`);
   }
-  const sustained = raw.sustained === true;
-  if (sustained) {
+  if (raw.sustained === true) {
     const motivo = motivoSostenidaInvalida(raw);
     if (motivo) {
       throw new Error(
         `opc_mapping.json: ${donde}: orden SOSTENIDA inválida — ${motivo}. El backend no arranca con este mapping; \`npm run validate:mapping\` lo detecta antes de desplegar.`,
       );
     }
-  } else if (raw.rollbackValue === undefined) {
+  }
+  const conRealimentacion = tieneRealimentacionPorBits(raw);
+  if (conRealimentacion) {
+    const motivo = motivoRealimentacionInvalida(raw);
+    if (motivo) {
+      throw new Error(
+        `opc_mapping.json: ${donde}: orden con REALIMENTACIÓN inválida — ${motivo}. El backend no arranca con este mapping; \`npm run validate:mapping\` lo detecta antes de desplegar.`,
+      );
+    }
+  } else if (raw.sustained !== true && raw.rollbackValue === undefined) {
     return undefined;
   }
 
   const mode = raw.mode === 'bitmask' ? 'bitmask' : 'absolute';
   const pulse = typeof raw.pulse?.holdMs === 'number' && raw.pulse.holdMs > 0
-    ? { holdMs: raw.pulse.holdMs, ...(parseFeedback(raw.pulse.until) ? { until: parseFeedback(raw.pulse.until)! } : {}) }
+    ? {
+        holdMs: raw.pulse.holdMs,
+        ...(parseFeedback(raw.pulse.until) ? { until: parseFeedback(raw.pulse.until)! } : {}),
+        // Validado arriba con `motivoRealimentacionInvalida`: aquí solo se copia.
+        ...(conRealimentacion
+          ? { minHoldMs: raw.pulse.minHoldMs as number, feedback: parseRealimentacion(raw.pulse.feedback) }
+          : {}),
+      }
     : null;
   const latched = raw.latched === true;
 
@@ -580,7 +793,7 @@ function parseWriteSpec(raw: RawWriteSpec | undefined, donde: string): WriteSpec
     commands: raw.commands,
     ...(seq.sequences ? { sequences: seq.sequences } : {}),
     ...(latched ? { latched: true } : {}),
-    ...(sustained ? { sustained: true } : {}),
+    ...(raw.sustained === true ? { sustained: true } : {}),
     mode,
     pulse,
     readBack: {
@@ -595,11 +808,47 @@ function parseWriteSpec(raw: RawWriteSpec | undefined, donde: string): WriteSpec
       stateVerified: raw.readBack.stateVerified !== false,
     },
     timeoutMs: raw.timeoutMs,
-    // Ausente solo en una orden sostenida (arriba se comprobó): la clave ni aparece, para que nadie
-    // pueda leer un `undefined` como «limpiar a 0».
+    // Ausente solo en una orden con realimentación por bits (arriba se comprobó): la clave ni
+    // aparece, para que nadie pueda leer un `undefined` como «limpiar a 0».
     ...(raw.rollbackValue !== undefined ? { rollbackValue: raw.rollbackValue } : {}),
     permission: raw.permission,
   };
+}
+
+/** `pulse.feedback` ya validado por `motivoRealimentacionInvalida`: solo se copia, campo a campo. */
+function parseRealimentacion(raw: unknown): RealimentacionPorBits {
+  const f = raw as RealimentacionPorBits;
+  return { channel: f.channel, sourceBuffer: f.sourceBuffer, index: f.index, open: f.open, close: f.close, fault: f.fault };
+}
+
+/**
+ * El `write` que conserva una válvula con el mando RETIRADO (`writable: false`), reducido a lo que
+ * necesita la limpieza de huérfanos: la palabra y los bits. Nunca lanza: si no sirve (no es bitmask,
+ * máscaras que no son enteros de 16 bits), se dice en el log y la limpieza NO cubre esa válvula —
+ * apagar «a ojo» en una palabra compartida puede borrar el mando de otra.
+ */
+function parseMandoConservado(raw: RawWriteSpec | undefined, donde: string): MandoConservado | undefined {
+  if (!raw) return undefined;
+  const t = raw.target;
+  if (!t || typeof t.channel !== 'string' || typeof t.sourceBuffer !== 'string' || typeof t.index !== 'number') {
+    console.error(`[opc-mapping] ${donde}: el mando conservado no tiene target válido; la limpieza de huérfanos NO lo cubre`);
+    return undefined;
+  }
+  if (raw.mode !== 'bitmask' || !raw.commands || typeof raw.commands !== 'object') {
+    console.error(`[opc-mapping] ${donde}: el mando conservado no es bitmask; la limpieza de huérfanos NO lo cubre (apagarlo en absoluto pisaría la palabra)`);
+    return undefined;
+  }
+  const commands: Record<string, number> = {};
+  let bits = 0;
+  for (const [verbo, v] of Object.entries(raw.commands)) {
+    if (typeof v !== 'number' || !Number.isInteger(v) || v < 1 || v > 0xffff) {
+      console.error(`[opc-mapping] ${donde}: el verbo ${verbo} del mando conservado no es una máscara de 16 bits (${JSON.stringify(v)}); la limpieza de huérfanos NO lo cubre`);
+      return undefined;
+    }
+    commands[verbo] = v;
+    bits |= v;
+  }
+  return { target: { channel: t.channel, sourceBuffer: t.sourceBuffer, index: t.index }, bits, commands };
 }
 
 /**
@@ -670,6 +919,10 @@ export function loadMapping(explicitPath?: string): LoadedMapping {
       if (!s.buffer || typeof s.index !== 'number' || !s.domainKey) {
         throw new Error(`opc_mapping.json: signal inválida en ${plant.plantId} (buffer/index/domainKey)`);
       }
+      // Mando RETIRADO: `writable: false` con el `write` de cuando se accionaba. No da mando; solo
+      // dice a la limpieza de huérfanos qué bits pudo dejar puestos.
+      const mandoConservado =
+        s.writable !== true && s.write ? parseMandoConservado(s.write, `${plant.plantId}/${s.domainKey}`) : undefined;
       signals.push({
         plantId: plant.plantId,
         buffer: s.buffer,
@@ -687,6 +940,7 @@ export function loadMapping(explicitPath?: string): LoadedMapping {
         confidence: (s.confidence as SignalMapping['confidence']) ?? 'inferred',
         writable: s.writable === true,
         write: s.writable === true ? parseWriteSpec(s.write, `${plant.plantId}/${s.domainKey}`) : undefined,
+        ...(mandoConservado ? { mandoConservado } : {}),
         stateEncoding: parseStateEncoding(s.stateEncoding),
         flowDomainKey: typeof s.flowDomainKey === 'string' ? s.flowDomainKey : undefined,
         stateTrusted: typeof s.stateTrusted === 'boolean' ? s.stateTrusted : undefined,
@@ -694,11 +948,22 @@ export function loadMapping(explicitPath?: string): LoadedMapping {
     }
   }
 
-  // Dos válvulas de la misma palabra que comparten un bit: si alguna es SOSTENIDA, no se arranca —
-  // con la señal puesta para siempre, la orden de una movería a la otra sin que nadie lo pidiera.
-  // Si ninguna lo es, se avisa y sigue (validate:mapping las rechaza todas antes de desplegar).
-  for (const c of bitsCompartidosEntreValvulas(signals)) {
-    if (c.sostenida) throw new Error(`opc_mapping.json (${path}): ${c.motivo}. El backend no arranca con este mapping.`);
+  // Dos válvulas de la misma palabra que comparten un bit: si alguna es de realimentación por bits o
+  // tiene el mando RETIRADO, no se arranca — la orden de una movería a la otra, o la limpieza de
+  // huérfanos apagaría el bit de una orden viva. Si ninguna lo es, se avisa y sigue (validate:mapping
+  // las rechaza todas antes de desplegar).
+  const conMando: SenalConMando[] = signals.map((s) =>
+    s.mandoConservado
+      ? {
+          plantId: s.plantId,
+          domainKey: s.domainKey,
+          retirada: true,
+          write: { target: s.mandoConservado.target, mode: 'bitmask', commands: s.mandoConservado.commands },
+        }
+      : s,
+  );
+  for (const c of bitsCompartidosEntreValvulas(conMando)) {
+    if (c.estricta) throw new Error(`opc_mapping.json (${path}): ${c.motivo}. El backend no arranca con este mapping.`);
     console.error(`[opc-mapping] ${c.motivo}`);
   }
 

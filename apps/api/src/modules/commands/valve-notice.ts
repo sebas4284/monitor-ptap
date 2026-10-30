@@ -58,6 +58,26 @@ export interface ManiobraInput {
    * que la válvula se movió, por muy bien que respondiera el canal de comando.
    */
   estadoVerificado: boolean;
+  /**
+   * Motivo del desenlace. Con realimentación por bits (integrador 2026-10-23) distingue cuatro
+   * finales que comparten `failed` y que piden cosas distintas a quien lee el aviso: falla de la
+   * válvula, tope sin confirmar, orden reemplazada y servidor reiniciado.
+   */
+  reason?: string | null;
+  /** Tope del sostenido, en segundos, para decir «no confirmó en 120 s». */
+  topeSegundos?: number | null;
+  /**
+   * `false` si el bit de mando NO se pudo apagar al terminar el sostenido: queda puesto hasta que la
+   * limpieza de huérfanos lo apague al reconectar el puente. Es lo primero que hay que saber.
+   */
+  bitSoltado?: boolean;
+}
+
+/** Lo que se añade al mensaje cuando el bit no se pudo apagar. */
+function avisoBitPuesto(m: ManiobraInput): string {
+  return m.bitSoltado === false
+    ? ' ATENCIÓN: el bit de mando NO se pudo apagar y sigue puesto; se apagará al reconectar el puente o hay que apagarlo a mano.'
+    : '';
 }
 
 /**
@@ -87,6 +107,41 @@ export function avisoDeManiobra(m: ManiobraInput): ManiobraNotice {
     };
   }
 
+  // ── Desenlaces del sostenido con realimentación por bits (integrador, 2026-10-23) ──
+  if (m.status === 'failed' && m.reason === 'VALVE_FAULT') {
+    return {
+      severity: 'critical',
+      title: `Falla en ${m.valveName}`,
+      message: `${quien} ordenó ${enInfinitivo(m.command)} ${m.valveName} a las ${cuando} y el PLC respondió con FALLA de la válvula. La orden se soltó; mientras la falla siga activa el mando queda bloqueado${sello}.${avisoBitPuesto(m)}`,
+      action: `Revisar ${m.valveName} en sitio y rearmar la falla desde la HMI o el PLC antes de volver a mandarla.`,
+    };
+  }
+  if (m.status === 'failed' && m.reason === 'HOLD_FEEDBACK_TIMEOUT') {
+    const tope = m.topeSegundos ? `${m.topeSegundos} s` : 'el tiempo máximo';
+    return {
+      severity: 'warning',
+      title: `Maniobra sin confirmar: ${m.valveName}`,
+      message: `${quien} ordenó ${enInfinitivo(m.command)} ${m.valveName} a las ${cuando} y el PLC no confirmó en ${tope}. La orden se soltó; la válvula puede haberse movido o no${sello}.${avisoBitPuesto(m)}`,
+      action: `Verificar en sitio cómo quedó ${m.valveName} antes de dar la maniobra por hecha.`,
+    };
+  }
+  if (m.status === 'failed' && m.reason === 'HOLD_REPLACED') {
+    return {
+      severity: 'info',
+      title: `Maniobra interrumpida: ${m.valveName}`,
+      message: `La orden de ${enInfinitivo(m.command)} ${m.valveName} que dio ${quien} a las ${cuando} se soltó sin confirmación porque llegó la orden contraria antes de que el PLC respondiera${sello}.${avisoBitPuesto(m)}`,
+      action: null,
+    };
+  }
+  if (m.status === 'failed' && m.reason === 'HOLD_INTERRUPTED') {
+    return {
+      severity: 'warning',
+      title: `Maniobra sin resultado: ${m.valveName}`,
+      message: `${quien} ordenó ${enInfinitivo(m.command)} ${m.valveName} a las ${cuando}, pero el servidor se detuvo mientras esperaba la confirmación del PLC. El bit de mando se apagó al parar o al volver a conectar; cómo quedó la válvula no se sabe${sello}.${avisoBitPuesto(m)}`,
+      action: `Verificar en sitio cómo quedó ${m.valveName}.`,
+    };
+  }
+
   if (m.status === 'failed') {
     return {
       severity: 'warning',
@@ -108,9 +163,11 @@ export function avisoDeManiobra(m: ManiobraInput): ManiobraNotice {
   }
 
   return {
-    severity: 'info',
+    // Confirmada pero con el bit de mando sin soltar: la maniobra salió bien y aun así hay algo que
+    // atender ya (un 1 puesto es justo lo que choca con la HMI).
+    severity: m.bitSoltado === false ? 'warning' : 'info',
     title: `${quien} ${enPasado(m.command)} ${m.valveName}`,
-    message: `Maniobra confirmada por el equipo a las ${cuando}${sello}.`,
+    message: `Maniobra confirmada por el equipo a las ${cuando}${sello}.${avisoBitPuesto(m)}`,
     action: null,
   };
 }

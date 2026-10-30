@@ -570,6 +570,13 @@ export interface Valve {
   isOpen: boolean;
 }
 
+/**
+ * Estado de una válvula derivado de su palabra de REALIMENTACIÓN por bits (integrador de La
+ * Vorágine). Lo devuelve `estadoPorRealimentacion` en el backend; `undefined` cuando la lectura
+ * no permite afirmar ningún estado. Debe leerse igual en el motor de mapeo y en el WriteService.
+ */
+export type ValveFeedback = 'open' | 'closed' | 'moving' | 'fault';
+
 export interface Tank {
   id: string;
   name: string;
