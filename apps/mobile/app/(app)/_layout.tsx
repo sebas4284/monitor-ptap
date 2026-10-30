@@ -334,7 +334,7 @@ export default function AppLayout() {
         <Tabs.Screen
           name="estado"
           options={{
-            href: null,
+            tabBarButton: () => null,
             ...HEADER_OPTS,
             headerTitle: 'Estado General',
           }}
@@ -343,7 +343,7 @@ export default function AppLayout() {
         <Tabs.Screen
           name="alertas"
           options={{
-            href: null,
+            tabBarButton: () => null,
             ...HEADER_OPTS,
             headerTitle: 'Alertas',
           }}
@@ -352,7 +352,7 @@ export default function AppLayout() {
         <Tabs.Screen
           name="usuarios"
           options={{
-            href: null,
+            tabBarButton: () => null,
             ...HEADER_OPTS,
             headerTitle: 'Usuarios',
           }}
@@ -361,7 +361,7 @@ export default function AppLayout() {
         <Tabs.Screen
           name="ajustes"
           options={{
-            href: null,
+            tabBarButton: () => null,
             ...HEADER_OPTS,
             headerTitle: 'Ajustes',
           }}
@@ -371,7 +371,7 @@ export default function AppLayout() {
         <Tabs.Screen
           name="desarrollador"
           options={{
-            href: null,
+            tabBarButton: () => null,
             ...HEADER_OPTS,
             headerTitle: 'Modo desarrollador',
           }}

@@ -369,7 +369,7 @@ export function interpretCommand(r: ValveCommandResult, verb: 'open' | 'close', 
       ok: true,
       signalSent: true,
       tone: 'warning',
-      title: 'Verifique en la planta: no se pudo confirmar',
+      title: 'Orden enviada correctamente',
       message:
         `${valveName}: la orden de ${accion} salió y quedó registrada. Esta planta no informa del ` +
         `estado real de la válvula, así que el sistema no puede saber si se movió. Compruébelo en sitio.`,
@@ -384,10 +384,10 @@ export function interpretCommand(r: ValveCommandResult, verb: 'open' | 'close', 
       ok: false,
       signalSent: false,
       tone: 'danger',
-      title: 'No se pudo enviar la señal',
+      title: 'No se pudo completar la orden',
       message:
-        `${valveName}: el equipo RECHAZÓ la orden de ${accion}, así que no salió. ` +
-        `Revisa la conexión con la planta y vuelve a intentarlo.`,
+        `${valveName}: falló el envío de la orden de ${accion}. No se puede descartar que alguna señal haya llegado. ` +
+        `Comprueba el estado en la planta antes de volver a operar.`,
     };
   }
 
@@ -398,10 +398,11 @@ export function interpretCommand(r: ValveCommandResult, verb: 'open' | 'close', 
       ok: false,
       signalSent: eco,
       tone: 'danger',
-      title: eco ? 'La válvula no respondió' : 'La orden no se pudo confirmar',
+      title: 'La orden no se pudo confirmar',
       message: eco
-        ? `${valveName}: la orden de ${accion} salió correctamente, pero la válvula no cambió de estado. ` +
-          `Lo más probable es que esté trabada o sin energía. Revísala en sitio.`
+        ? `${valveName}: se verificó la escritura de la orden de ${accion}, pero no se pudo confirmar el estado de la válvula. ` +
+          `Comprueba su estado en la planta antes de volver a operar. ` +
+          (r.reason === 'HOLD_FEEDBACK_TIMEOUT' ? 'No llegó la señal de realimentación dentro del tiempo previsto.' : '')
         : `${valveName}: no se pudo verificar que la orden de ${accion} llegara al equipo. No se asume ningún cambio.`,
       technical: eco ? `valor escrito: ${r.writtenValue}, verificado` : null,
     };
@@ -464,6 +465,16 @@ export function interpretCommand(r: ValveCommandResult, verb: 'open' | 'close', 
       tone: 'danger',
       title: 'Sin conexión con el servidor',
       message: `No se pudo enviar la orden de ${accion}. No se sabe si salió: verifica el estado antes de reintentar.`,
+    };
+  }
+  if (r.status === 'error') {
+    return {
+      ok: false,
+      signalSent: false,
+      tone: 'danger',
+      title: 'No se pudo conocer el resultado',
+      message: `${valveName}: no se pudo conocer el resultado de la orden de ${accion}. Comprueba el estado en la planta antes de volver a operar.`,
+      technical: reason || null,
     };
   }
   // El fallback NO vuelca el código del backend como si fuese español: se leía

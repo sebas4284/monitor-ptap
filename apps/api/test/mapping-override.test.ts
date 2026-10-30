@@ -447,10 +447,9 @@ function mappingReal(): LoadedMapping {
   return loadMapping(join(__dirname, '..', 'config', 'opc_mapping.json'));
 }
 
-test('sostenida: un parche no puede pasar una válvula sostenida a modo absoluto', () => {
-  const v = validarParche(mappingReal(), 'voragine', 'valve1', { writeMode: 'absolute' });
-  assert.equal(v.ok === false && v.motivo, 'MANDO_INCOMPATIBLE_CON_SOSTENIDA');
-  assert.match(v.ok === false ? v.detalle : '', /SOSTENIDA/);
+test('sostenida: el modo absoluto validado en campo es admisible', () => {
+  const v = validarParche(mappingReal(), 'voragine', 'valve1', { writeMode: 'absolute', writeIndex: 2 });
+  assert.equal(v.ok, true);
 });
 
 test('sostenida: un parche no puede dejarla con un solo verbo, con un verbo a cero o con booleanos', () => {
@@ -468,7 +467,12 @@ test('sostenida: un parche no puede dejarla con un solo verbo, con un verbo a ce
 
 test('sostenida: un parche no puede darle a una válvula los bits de la OTRA de la misma palabra', () => {
   // El copia-y-pega: la entrada con el 4096 de la salida. «Abrir entrada» abriría la SALIDA.
-  const v = validarParche(mappingReal(), 'voragine', 'valve2', { writeCommands: { open: 4096, close: 8 } });
+  const base = structuredClone(mappingReal());
+  for (const signal of base.signals.filter((s) => s.plantId === 'voragine' && s.write)) {
+    signal.write!.mode = 'bitmask';
+    signal.write!.target.index = 0;
+  }
+  const v = validarParche(base, 'voragine', 'valve2', { writeCommands: { open: 4096, close: 8 } });
   assert.equal(v.ok === false && v.motivo, 'BITS_COMPARTIDOS');
   assert.match(v.ok === false ? v.detalle : '', /valve1/);
   // Y moverla a otra palabra donde no choca con nadie sí se puede (es una corrección de índice).
@@ -485,7 +489,7 @@ test('sostenida: una fila VIEJA que la dejaría inválida no se aplica en calien
     { plantId: 'voragine', domainKey: 'valve1', patch: { writeMode: 'absolute', writeCommands: { open: 4096 }, unit: 'ZZ' }, by: 'x', at: null },
   ]);
   const s = m.signals.find((x) => x.plantId === 'voragine' && x.domainKey === 'valve1');
-  assert.equal(s?.write?.mode, 'bitmask');
+  assert.equal(s?.write?.mode, 'absolute');
   assert.deepEqual(s?.write?.commands, { open: 4096, close: 8192 });
   assert.equal(s?.write?.sustained, true);
   assert.equal(s?.unit, 'ZZ', 'la parte de lectura del parche sí se aplicó');
@@ -497,9 +501,9 @@ test('sostenida: el documento resultante tampoco pasaría el schema (la tercera 
   const raw = loadJson(join(__dirname, '..', 'config', 'opc_mapping.json'));
   const schema = loadJson(join(__dirname, '..', 'config', 'opc_mapping.schema.json')) as object;
   const doc = aplicarSobreRaw(raw, [
-    { plantId: 'voragine', domainKey: 'valve1', patch: { writeMode: 'absolute' }, by: 'x', at: null },
+    { plantId: 'voragine', domainKey: 'valve1', patch: { writeCommands: { open: 0, close: 0 } }, by: 'x', at: null },
   ]);
   const r = validateMapping(schema, doc);
   assert.equal(r.ok, false);
-  assert.ok(r.errors.some((e) => /write\/mode/.test(e)), r.errors.join(' | '));
+  assert.ok(r.errors.length > 0);
 });

@@ -182,7 +182,7 @@ test('interpretCommand: confirmado → ok y señal enviada', () => {
   assert.equal(v.signalSent, true);
 });
 
-test('interpretCommand: 502 con eco verificado → la señal SÍ salió, avisa de posible falla física', () => {
+test('interpretCommand: 502 con eco verificado → escritura verificada, estado incierto', () => {
   const v = interpretCommand(
     res({ http: 502, status: 'failed', reason: 'READBACK_UNCONFIRMED', confirmedValue: 16384, writeVerified: true }),
     'open',
@@ -190,15 +190,29 @@ test('interpretCommand: 502 con eco verificado → la señal SÍ salió, avisa d
   );
   assert.equal(v.ok, false, 'no se puede afirmar que la válvula se movió');
   assert.equal(v.signalSent, true, 'pero la orden salió: eso NO es un fallo del canal');
-  assert.match(v.message, /trabada o sin energía/, 'se dice la causa probable en cristiano');
+  assert.match(v.message, /no se pudo confirmar el estado/);
+  assert.doesNotMatch(v.message, /trabada|sin energía|no cambió de estado/);
   assert.equal(v.tone, 'danger');
   assert.match(String(v.technical), /verificado/, 'el detalle técnico existe, pero fuera de la frase');
 });
 
-test('interpretCommand: WRITE_REJECTED → la señal NO salió', () => {
+test('interpretCommand: tiempo de realimentación agotado explica el motivo sin afirmar el estado', () => {
+  const v = interpretCommand(res({ status: 'failed', reason: 'HOLD_FEEDBACK_TIMEOUT', writeVerified: true }), 'open', 'V1');
+  assert.match(v.message, /realimentación/);
+  assert.match(v.message, /no se pudo confirmar el estado/);
+});
+
+test('interpretCommand: WRITE_REJECTED no descarta escritura parcial', () => {
   const v = interpretCommand(res({ http: 502, status: 'failed', reason: 'WRITE_REJECTED', writeVerified: null, writtenValue: null }), 'close', 'Válvula 1');
   assert.equal(v.signalSent, false);
-  assert.match(v.message, /RECHAZÓ/);
+  assert.match(v.message, /no se puede descartar/i);
+  assert.match(v.message, /antes de volver a operar/i);
+});
+
+test('interpretCommand: respuesta inesperada no afirma que la orden fue rechazada', () => {
+  const v = interpretCommand(res({ http: 500, status: 'error', reason: null }), 'open', 'V1');
+  assert.match(v.message, /no se pudo conocer el resultado/i);
+  assert.match(v.message, /antes de volver a operar/i);
 });
 
 test('interpretCommand: interlock y permisos se explican sin culpar al equipo', () => {
@@ -396,7 +410,8 @@ test('interpretCommand: «no se pudo confirmar» es ÁMBAR, nunca verde', () => 
   const v = interpretCommand(res({ http: 202, status: 'sent', writeVerified: true, writtenValue: 4096 }), 'open', 'V1');
   assert.equal(v.tone, 'warning');
   assert.notEqual(v.tone, 'success', 'un tick verde convierte «ve a mirar» en «ya está»');
-  assert.match(v.title, /[Vv]erifique/);
+  assert.equal(v.title, 'Orden enviada correctamente');
+  assert.match(v.message, /no puede saber si se movió/);
 });
 
 // ── FASE 1: qué acción se ofrece, y por qué NO cuando no se ofrece ───────────────────────────

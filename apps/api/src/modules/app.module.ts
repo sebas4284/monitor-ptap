@@ -43,6 +43,6 @@ export class AppModule implements NestModule {
   // El filtrado por prefijo vive en AuditMiddleware, evitando el gotcha de forRoutes con el
   // prefijo global 'api'.
   configure(consumer: MiddlewareConsumer): void {
-    consumer.apply(AuditMiddleware).forRoutes('*');
+    consumer.apply(AuditMiddleware).forRoutes('{*path}');
   }
 }

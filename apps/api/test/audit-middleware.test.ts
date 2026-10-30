@@ -75,7 +75,7 @@ async function buildApp(): Promise<{ app: INestApplication; jwt: JwtService; rec
   })
   class AuditProbeModule implements NestModule {
     configure(consumer: MiddlewareConsumer): void {
-      consumer.apply(AuditMiddleware).forRoutes('*');
+      consumer.apply(AuditMiddleware).forRoutes('{*path}');
     }
   }
 
