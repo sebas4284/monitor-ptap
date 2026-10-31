@@ -160,66 +160,47 @@ Dos adaptadores implementan el mismo puerto `ConnectivityAdapter` y se eligen co
 
 ## Índice del repositorio
 
-```txt
+El proyecto se organiza por aplicación y responsabilidad. El índice de guías y protocolos está en
+[docs/README.md](docs/README.md); los archivos de operación y los contratos conservan sus rutas para
+no romper los scripts de despliegue ni los enlaces existentes.
+
+```text
 monitor-ptap/
 ├── apps/
-│   ├── api/                         # Backend NestJS (bridge OPC UA + pipeline + REST + Socket.IO)
-│   │   ├── config/
-│   │   │   ├── opc_mapping.json          # Contrato de mapping (fuente de semántica; NO editar a mano)
-│   │   │   └── opc_mapping.schema.json   # JSON Schema del mapping
-│   │   ├── fixtures/plc-discovery/       # Evidencia congelada de topología (fuente del generador)
-│   │   ├── scripts/
-│   │   │   ├── generate-mapping.ts       # Genera opc_mapping.json (idempotente)
-│   │   │   ├── validate-mapping.ts       # Valida schema + reglas semánticas
-│   │   │   ├── resolve-namespaces.ts     # nsUri → índice de namespace
-│   │   │   ├── read-opcua-node.ts        # Lectura puntual de un nodo (debug)
-│   │   │   ├── migrate.ts                # Runner de migraciones SQL (users, audit_log)
-│   │   │   └── seed-admin-user.ts        # Siembra el primer usuario admin desde SEED_ADMIN_*
-│   │   ├── src/
-│   │   │   ├── main.ts                    # Arranque COMPLETO (requiere MySQL)
-│   │   │   ├── main.telemetry.ts          # Arranque de TELEMETRÍA (bridge+pipeline+REST+socket, sin BD)
-│   │   │   ├── config/load-env.ts         # Carga .env de la raíz del monorepo
-│   │   │   ├── infrastructure/
-│   │   │   │   ├── database/               # Pool MySQL + migrations/ (users, audit_log)
-│   │   │   │   ├── audit/                  # ★ Fase 4: AuditLogService, AuditMiddleware (accesos), eventos de conexión
-│   │   │   │   ├── metrics/                # ★ Fase 4: MetricsService, /metrics, subscriber de métricas
-│   │   │   │   ├── logging/                # ★ Fase 4: JsonLogger (pino), eventos estructurados
-│   │   │   │   ├── validation/             # ★ Fase 4: ZodValidationPipe, schema de plantId
-│   │   │   │   ├── http-hardening.config.ts # ★ Fase 4: CORS/rate-limit desde .env
-│   │   │   │   └── connectivity/           # ★ El corazón del sistema (Fases 1-3, sin BD)
-│   │   │   │       ├── adapters/opcua/     #   Adaptador OPC UA real (+ identidad certificate, Fase 4)
-│   │   │   │       ├── adapters/simulator/ #   Adaptador simulado (testbed)
-│   │   │   │       ├── bridge/             #   watchdog, heartbeat-monitor, frame-coalescer, state-machine
-│   │   │   │       ├── pipeline/           #   parser/liveness/mapping/quality/snapshot/cache/dead-letter
-│   │   │   │       ├── ports/              #   ConnectivityAdapter (contrato único del puente)
-│   │   │   │       ├── mapping/            #   Loader de opc_mapping.json
-│   │   │   │       ├── connectivity.config.ts    # TODA la config OPC/liveness desde .env
-│   │   │   │       ├── connectivity.module.ts    # Wiring DI (sin BD — usado por main.ts Y main.telemetry.ts)
-│   │   │   │       ├── opc-observability.module.ts # ★ Fase 4: OpcController + RBAC/audit/métricas (CON BD; solo main.ts)
-│   │   │   │       ├── connectivity.gateway.ts   # Socket.IO (opc:snapshot / opc:liveness) — JWT en el handshake
-│   │   │   │       ├── bridge-orchestrator.service.ts  # Ciclo de vida + retry del adaptador
-│   │   │   │       └── opc.controller.ts   # /api/opc/status|info|buffers|dead-letter (RBAC, Fase 4)
-│   │   │   └── modules/                    # Dominios HTTP: auth, users, plants, health (+/opc), commands, hmi, reports
-│   │   └── test/                          # Suite (node:test + tsx) — 245 tests en 31 archivos (ver §11)
-│   └── mobile/                       # App Expo (Android / iOS / Web)
-│       ├── app/                          # Rutas (expo-router): (auth)/login, (app)/tablero…
-│       ├── components/                   # GaugeCard, TankGaugeCard, ValveItem, LiveBadge, PlantSelector…
-│       ├── hooks/                        # useSnapshot (REST + Socket.IO), useAlerts, useValveSupervisor…
-│       ├── services/
-│       │   ├── api.ts                     # Cliente REST REAL (cero mocks en toda la app)
-│       │   ├── socket.ts                  # Cliente Socket.IO
-│       │   ├── valves.ts / reports.ts     # Válvulas y reportes contra el backend real
-│       │   └── auth.ts                    # Login JWT real contra /api/auth/login
-│       ├── context/                      # PlantContext (12 slugs canónicos), AuthContext
-│       └── constants/colors.ts
-├── packages/
-│   └── shared/                      # @ptap/shared: roles, permisos y tipos compartidos (única fuente)
+│   ├── api/                 # Backend NestJS: API, autenticación, OPC UA y simulador
+│   │   ├── config/          # Mapping de plantas y su esquema
+│   │   ├── fixtures/        # Escenarios de simulación y muestras de PLC
+│   │   ├── scripts/         # Validación, migraciones y herramientas operativas
+│   │   ├── src/             # Servicios, módulos, conectividad y pipeline
+│   │   └── test/            # Pruebas del backend
+│   └── mobile/              # App Expo para web y dispositivos
+│       ├── app/             # Rutas y pantallas Expo Router
+│       ├── components/       # Componentes visuales
+│       ├── context/         # Sesión y selección de planta
+│       ├── hooks/           # Suscripciones y estado de interfaz
+│       ├── services/        # API, notificaciones y lógica de presentación
+│       └── assets/          # Recursos gráficos
+├── packages/shared/         # Contratos, roles y permisos compartidos
 ├── tools/
-│   └── plc-discovery/               # Herramienta standalone de ingeniería inversa OPC UA (solo lectura)
-├── docs/                            # Documentación técnica, hallazgos y evidencia (ver §13)
-├── .env / .env.example             # Configuración local (el .env NO se commitea)
-└── package.json                    # Workspaces + scripts del monorepo
+│   ├── plc-discovery/       # Inspección OPC UA de solo lectura
+│   └── vm/                  # Scripts de despliegue y publicación en la VM
+├── docs/                    # Guías, protocolos, arquitectura y archivos históricos
+├── .github/                 # Automatización del repositorio
+├── .env.example             # Plantilla de configuración sin secretos
+├── package.json             # Workspaces y comandos principales
+└── README.md                # Entrada general al proyecto
 ```
+
+### Continuar en otro equipo
+
+1. Clona el repositorio y cambia a la rama `yosh`. Instala la versión de Node indicada en `.nvmrc` y ejecuta `npm install`.
+2. Prepara la configuración y MySQL siguiendo [docs/SETUP.md](docs/SETUP.md). Los archivos `.env`, las claves SSH, los certificados y los datos locales no viajan en Git: configúralos en el otro equipo por un canal seguro.
+3. Para probar la aplicación completa con el PLC simulado, ejecuta las migraciones indicadas en la guía y luego `npm run dev:sim -- produccion` y `npm run web` en terminales separadas. Consulta [las pruebas locales de válvulas](docs/PRUEBAS_LOCALES_VALVULAS.md).
+4. Antes de actualizar la VM, revisa [el runbook de producción](docs/RUNBOOK_PRODUCCION.md) y el acceso de red autorizado. Un push a GitHub no implica que la VM se haya actualizado.
+
+`node_modules/`, las compilaciones `dist/` y `apps/mobile/dist-audit/` son artefactos locales
+regenerables y no forman parte del repositorio. La carpeta `docs/archivo/` reúne material histórico;
+para orientación actual empieza por el índice de documentación.
 
 ---
 

@@ -7,6 +7,7 @@ node_modules/
 # Expo
 .expo/
 dist/
+apps/mobile/dist-audit/
 web-build/
 expo-env.d.ts
 packages/shared/dist/
