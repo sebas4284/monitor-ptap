@@ -27,6 +27,7 @@ import { FrameCoalescer } from '../../bridge/frame-coalescer';
 import { HeartbeatMonitor } from '../../bridge/heartbeat-monitor';
 import { Watchdog } from '../../bridge/watchdog';
 import type { OpcIdentity, OpcUaConfig } from '../../connectivity.config';
+import { canWriteOnConnection } from '../../write-connection-policy';
 import type { LoadedMapping, MonitorTarget } from '../../mapping/opc-mapping.loader';
 import { NamespaceNotFoundError, resolveNamespaces } from '../../opcua/namespace-resolver';
 import type {
@@ -718,8 +719,8 @@ export class OpcUaConnectivityAdapter implements ConnectivityAdapter {
   }
 
   async writeBufferElement(target: BufferElementTarget, value: number | boolean): Promise<void> {
-    if (!this.config.writesEnabled || !this.getWriteSecurity().secure) {
-      throw new Error('WRITES_DISABLED_INSECURE_SESSION: se requiere escritura habilitada y sesión autenticada y cifrada');
+    if (!canWriteOnConnection(this.config, this.getWriteSecurity())) {
+      throw new Error('WRITES_DISABLED_INSECURE_SESSION: se requiere escritura habilitada y sesión cifrada o autorización de red para el endpoint autenticado');
     }
     const resolved = this.findResolvedElement(target);
     await escribirElemento(this.session!, resolved.nodeId, target, value);

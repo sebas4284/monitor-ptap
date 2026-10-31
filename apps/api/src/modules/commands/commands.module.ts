@@ -20,7 +20,8 @@ import { ChannelProbeService } from './channel-probe.service';
  * importa → la demo sin BD sigue sin poder escribir, y sin requerir MySQL.
  *
  * La escritura real está triplemente cerrada: OPCUA_WRITES_ENABLED=false por defecto,
- * el WriteService exige sesión cifrada, y el mapping de producción no tiene señales writable.
+ * el WriteService exige sesión cifrada o aprobación de red fijada al endpoint, y solo admite
+ * destinos/verbo declarados en el mapping. El sondeo de canales conserva la exigencia de cifrado.
  */
 @Module({
   // NotificationsModule: cada maniobra deja un aviso en la bandeja, que es el registro que

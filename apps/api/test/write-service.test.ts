@@ -158,12 +158,22 @@ function fakeAudit(): { service: AuditLogService; calls: AuditEntry[] } {
 const OPERADOR: CommandActor = { userId: 'u1', userEmail: 'op@ptap.co', role: 'operador', ip: '10.0.0.1' };
 const JEFE: CommandActor = { userId: 'u2', userEmail: 'jefe@ptap.co', role: 'jefe', ip: '10.0.0.2' };
 
-function build(opts: { secure: boolean; bridge: BridgeStatus; confirms?: boolean; writesEnabled?: boolean; write?: WriteSpec | null; snapshot?: PlantSnapshotDto | null; writeThrows?: boolean; preset?: number; echoFails?: boolean }) {
+function build(opts: { secure: boolean; bridge: BridgeStatus; confirms?: boolean; writesEnabled?: boolean; write?: WriteSpec | null; snapshot?: PlantSnapshotDto | null; writeThrows?: boolean; preset?: number; echoFails?: boolean; trustedNetwork?: boolean }) {
   const adapter = fakeAdapter({ secure: opts.secure, bridge: opts.bridge, confirms: opts.confirms, writeThrows: opts.writeThrows, preset: opts.preset, echoFails: opts.echoFails });
+  const config = fakeConfig(opts.writesEnabled ?? true);
+  if (opts.trustedNetwork) {
+    Object.assign(config.opcua, {
+      endpoint: 'opc.tcp://synthetic.invalid:59100', securityMode: 'None', securityPolicy: 'None',
+      identity: { type: 'username', userName: 'test', password: 'synthetic' },
+      trustedNetworkWrites: true, trustedNetworkEndpoint: 'opc.tcp://synthetic.invalid:59100',
+      trustedNetworkApproval: 'synthetic-operator-approval',
+    });
+    adapter.getWriteSecurity = () => ({ secure: false, securityMode: 'None', identity: 'username' });
+  }
   const audit = fakeAudit();
   const service = new WriteService(
     adapter,
-    fakeConfig(opts.writesEnabled ?? true),
+    config,
     fakeCache(opts.snapshot === undefined ? snap('live') : opts.snapshot),
     fakeResolver(opts.write === undefined ? WRITE : opts.write),
     fakeRepo(),
@@ -187,6 +197,25 @@ test('write-service: OPCUA_WRITES_ENABLED=false → rechazado, sin escribir', as
   const r = await service.execute('voragine', { command: 'openValve', target: 'valveEV01' }, OPERADOR);
   assert.equal(r.reason, REJECT.WRITES_DISABLED_INSECURE_SESSION);
   assert.equal(adapter.writes.length, 0);
+});
+
+test('write-service: approved authenticated network permits mapped command, read-back and audit', async () => {
+  const { service, adapter, audit } = build({ secure: false, bridge: 'Connected', trustedNetwork: true });
+  const r = await service.execute('voragine', { command: 'openValve', target: 'valveEV01' }, OPERADOR);
+  assert.equal(r.status, 'confirmed');
+  assert.ok(adapter.writes.length > 0);
+  assert.ok(audit.calls.length > 0);
+  assert.equal(adapter.getWriteSecurity().secure, false);
+});
+
+test('write-service: approved network preserves RBAC, freshness and the master switch', async () => {
+  for (const variant of ['rbac', 'stale', 'disabled'] as const) {
+    const { service, adapter } = build({ secure: false, bridge: 'Connected', trustedNetwork: true,
+      writesEnabled: variant !== 'disabled', snapshot: snap(variant === 'stale' ? 'stale' : 'live') });
+    const r = await service.execute('voragine', { command: 'openValve', target: 'valveEV01' }, variant === 'rbac' ? JEFE : OPERADOR);
+    assert.equal(r.status, 'rejected', variant);
+    assert.equal(adapter.writes.length, 0, variant);
+  }
 });
 
 test('write-service: target sin señal writable → TARGET_NOT_WRITABLE', async () => {

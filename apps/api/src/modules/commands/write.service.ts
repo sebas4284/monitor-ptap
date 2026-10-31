@@ -3,6 +3,7 @@ import { hasPermission, type Permission, type Role } from '@ptap/shared';
 import { AuditLogService } from '../../infrastructure/audit/audit-log.service';
 import { CONNECTIVITY_ADAPTER, CONNECTIVITY_CONFIG } from '../../infrastructure/connectivity/connectivity.tokens';
 import type { ConnectivityConfig } from '../../infrastructure/connectivity/connectivity.config';
+import { canWriteOnConnection } from '../../infrastructure/connectivity/write-connection-policy';
 import {
   motivoSecuenciaInvalida,
   motivoSostenidaInvalida,
@@ -60,7 +61,8 @@ function bitsDeLosOtrosVerbos(commands: Record<string, number | boolean>, value:
  * WriteService (Fase 5): único punto que ejecuta comandos de escritura al PLC.
  *
  * PRECONDICIÓN DURA (regla 9): rechaza TODO si OPCUA_WRITES_ENABLED=false o si la sesión
- * no es autenticada+cifrada — sin excepciones, ni "para probar". Flujo por comando:
+ * no es autenticada+cifrada ni tiene autorización administrativa de red para ese endpoint.
+ * La excepción no habilita el sondeo de canales ni convierte la sesión en cifrada. Flujo por comando:
  * resolver target → verbo válido → precondición segura → RBAC (permiso del mapping) →
  * interlock (bridge Connected + snapshot fresco) → idempotencia (insert-pending-first) →
  * write → read-back con timeout → confirmado|fallido (+ rollback best-effort) → audit SIEMPRE.
@@ -83,7 +85,12 @@ export class WriteService {
     @Inject(AuditLogService) private readonly auditLog: AuditLogService,
     @Inject(CommandSignatureService) private readonly firmas: CommandSignatureService,
     @Inject(NotificationRepository) private readonly avisos: NotificationRepository,
-  ) {}
+  ) {
+    const security = this.adapter.getWriteSecurity();
+    if (!security.secure && canWriteOnConnection(this.config.opcua, security)) {
+      this.logger.warn('Maniobras mapeadas habilitadas por autorización administrativa de red; OPC UA sin cifrar. El sondeo de canales sigue exigiendo cifrado.');
+    }
+  }
 
   /**
    * Válvulas con una orden EN CURSO (`plantId/target`).
@@ -231,9 +238,9 @@ export class WriteService {
       }
     }
 
-    // 3) PRECONDICIÓN DURA: writes habilitados Y sesión segura (autenticada+cifrada).
+    // 3) Escrituras habilitadas y canal cifrado o excepción autenticada fijada al endpoint.
     const security = this.adapter.getWriteSecurity();
-    if (!this.config.opcua.writesEnabled || !security.secure) {
+    if (!canWriteOnConnection(this.config.opcua, security)) {
       return this.audit(actor, req, await this.finalizeNoReserve(reject(REJECT.WRITES_DISABLED_INSECURE_SESSION)));
     }
 

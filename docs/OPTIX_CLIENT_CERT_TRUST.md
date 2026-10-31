@@ -1,5 +1,29 @@
 # Canal OPC UA autenticado y cifrado: preparación y confianza mutua
 
+## Excepción de red autorizada para maniobras mapeadas
+
+El responsable de la instalación confirmó el 2026-10-31 que la red y la conexión
+actuales están autorizadas y que el acceso ya fue probado desde otro equipo. Para
+esa instalación se admite una excepción explícita con usuario/contraseña. Esta
+autorización administrativa **no demuestra cifrado OPC UA**: `secure` sigue siendo
+`false` con `None/None`, y el fallo de la prueba cifrada sigue documentado.
+
+La excepción exige `OPCUA_WRITES_ENABLED=true`, `OPCUA_TRUSTED_NETWORK_WRITES=true`,
+`OPCUA_TRUSTED_NETWORK_APPROVAL` no vacío y `OPCUA_TRUSTED_NETWORK_ENDPOINT`
+exactamente igual a `OPC_ENDPOINT`. Solo admite identidad `username`; el antiguo
+`OPCUA_ALLOW_INSECURE_WRITES` sigue sin autorizar nada. Una configuración nueva
+mantiene la excepción desactivada por defecto.
+
+Los permisos, el ámbito por planta, el mapeo de destinos/verbos, los interbloqueos,
+la idempotencia y el registro firmado permanecen vigentes. El probador de canales
+arbitrarios sigue requiriendo una sesión cifrada, incluso con la excepción activa.
+Activar esta política no ejecuta por sí mismo órdenes de apertura o cierre. Las
+pruebas de software usan dobles locales y nunca accionan la instalación.
+
+La migración cifrada descrita a continuación sigue siendo la vía predeterminada.
+No habilitar autoaceptación de certificados ni atribuir confianza criptográfica a
+esta excepción de red.
+
 El preflight del 2026-10-31 confirmó que el servidor real anuncia `SignAndEncrypt`
 con `Basic256Sha256`, `Aes128_Sha256_RsaOaep` y `Aes256_Sha256_RsaPss`.
 El gateway sigue configurado en producción con `None/None`; esta inspección **no**

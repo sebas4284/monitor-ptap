@@ -45,9 +45,13 @@ export interface OpcUaConfig {
   writesEnabled: boolean; // OPCUA_WRITES_ENABLED (Fase 5); aquí solo se lee, nunca habilita write en Fase 1
   /**
    * @deprecated Legacy configuration retained for diagnostics/migration only. This flag can no
-   * longer authorize writes: authenticated SignAndEncrypt is mandatory, including at adapter I/O.
+   * longer authorize writes. Network approval uses separate endpoint-bound configuration.
    */
   allowInsecureWrites: boolean; // OPCUA_ALLOW_INSECURE_WRITES
+  /** Explicit operator-approved network exception for mapped commands, never anonymous access. */
+  trustedNetworkWrites?: boolean;
+  trustedNetworkEndpoint?: string;
+  trustedNetworkApproval?: string;
 }
 
 export interface LivenessConfig {
@@ -161,6 +165,9 @@ export function loadConnectivityConfig(): ConnectivityConfig {
       staleThresholdMs: num('OPCUA_STALE_THRESHOLD_MS', 300000), // 5 min (FASE 0.3: frescura de datos)
       writesEnabled: bool('OPCUA_WRITES_ENABLED', false),
       allowInsecureWrites: bool('OPCUA_ALLOW_INSECURE_WRITES', false),
+      trustedNetworkWrites: bool('OPCUA_TRUSTED_NETWORK_WRITES', false),
+      trustedNetworkEndpoint: str('OPCUA_TRUSTED_NETWORK_ENDPOINT', ''),
+      trustedNetworkApproval: str('OPCUA_TRUSTED_NETWORK_APPROVAL', ''),
       autoAcceptUnknownCertificate: bool('OPC_AUTO_ACCEPT_UNKNOWN_CERTIFICATE', false),
     },
     liveness: {

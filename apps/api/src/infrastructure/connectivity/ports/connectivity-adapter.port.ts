@@ -114,8 +114,8 @@ export interface BufferElementTarget {
 
 /**
  * Fase 5: contexto de seguridad de la sesión, para la PRECONDICIÓN DURA de escritura.
- * `secure` = sesión autenticada Y cifrada (SignAndEncrypt + identidad no anónima). El
- * WriteService rechaza toda escritura si !secure, sin excepciones.
+ * `secure` = sesión autenticada Y cifrada (SignAndEncrypt + identidad no anónima).
+ * Una autorización administrativa de red se evalúa por separado y nunca cambia `secure`.
  */
 export interface WriteSecurity {
   secure: boolean;
