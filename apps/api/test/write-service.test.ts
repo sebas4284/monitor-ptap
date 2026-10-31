@@ -1024,7 +1024,7 @@ test('sostenida: firma, auditoría y aviso de maniobra, igual que cualquier orde
   assert.match(String(avisos[0].eventId), /firma-de-prueba/);
 });
 
-test('sostenida: el mapping REAL de La Vorágine escribe palabras exactas y el eco no confirma movimiento', async () => {
+test('sostenida: el mapping REAL de La Vorágine escribe palabras exactas y la realimentación verificada ausente no confirma movimiento', async () => {
   // Desde 0: así quedó INT_OUT[0] con los pulsos (las dos válvulas 0/0). La primera orden de cada
   // válvula fija su señal, y a partir de ahí cada orden mueve SOLO su par.
   const real = loadMapping(join(__dirname, '..', 'config', 'opc_mapping.json')).signals.filter(
@@ -1033,7 +1033,7 @@ test('sostenida: el mapping REAL de La Vorágine escribe palabras exactas y el e
   const specs = Object.fromEntries(real.map((s) => [s.domainKey, { ...s.write!, timeoutMs: 20 }]));
   assert.deepEqual(Object.keys(specs).sort(), ['valve1', 'valve2']);
 
-  const adapter = adaptadorPalabra({ inicial: { [PALABRA]: 0 } });
+  const adapter = adaptadorPalabra({ inicial: { [PALABRA]: 0 }, estado: 0 });
   const { service } = construirSostenida(adapter, specs);
   const pasos: Array<[string, string, number]> = [
     ['valve2', 'open', 4], // entrada abre
@@ -1045,7 +1045,7 @@ test('sostenida: el mapping REAL de La Vorágine escribe palabras exactas y el e
   for (const [target, command, esperado] of pasos) {
     const r = await service.execute('voragine', { command, target }, OPERADOR_V);
     assert.equal(r.status, 'sent', `${target} ${command}: el eco de mando no demuestra movimiento`);
-    assert.equal(r.reason, SENT.SENT_STATE_UNVERIFIED);
+    assert.equal(r.reason, SENT.SENT_FEEDBACK_PENDING);
     assert.equal(r.writeVerified, true);
     assert.equal(adapter.valor(PALABRA), esperado, `${target} ${command}`);
   }
@@ -1152,4 +1152,148 @@ test('simulator: write + read-back hacen echo; setWriteConfirms(false) fuerza mi
   assert.equal((await sim.readBufferElement(target)).value, 1);
   sim.setWriteConfirms(false);
   assert.notEqual((await sim.readBufferElement(target)).value, 1);
+});
+
+function confirmedVoragineSpecs(): Record<string, WriteSpec> {
+  return Object.fromEntries(loadMapping(join(__dirname, '..', 'config', 'opc_mapping.json')).signals
+    .filter((s) => s.plantId === 'voragine' && s.write)
+    .map((s) => [s.domainKey, { ...s.write!, timeoutMs: 20 }]));
+}
+function feedbackAdapter(word: number | boolean | null, quality = 'Good') {
+  const adapter = adaptadorPalabra({ inicial: { [PALABRA]: 4096 } });
+  const originalRead = adapter.readBufferElement.bind(adapter);
+  const feedbackReads: string[] = [];
+  adapter.readBufferElement = async (target) => {
+    if (target.channel === 'intIn') {
+      feedbackReads.push(`${target.sourceBuffer}[${target.index}]`);
+      return { value: word, quality: quality as 'Good', sourceTimestamp: '2026-10-30T00:00:00.000Z' };
+    }
+    return originalRead(target);
+  };
+  return { adapter, feedbackReads };
+}
+test('confirmed feedback: 0x4001 blocks both outlet directions before reservation/output IO and audits rejection', async () => {
+  for (const command of ['open', 'close']) {
+    const { adapter, feedbackReads } = feedbackAdapter(0x4001);
+    const audit = fakeAudit();
+    let reservations = 0;
+    const repo = fakeRepo();
+    repo.reserve = async () => { reservations++; throw new Error('must never reserve'); };
+    const specs = confirmedVoragineSpecs();
+    const service = new WriteService(adapter, fakeConfig(true), fakeCache(snap('live')),
+      fakeResolver(specs.valve1), repo, audit.service, fakeFirmas(), fakeAvisos());
+    const result = await service.execute('voragine', { command, target: 'valve1' }, OPERADOR_V);
+    assert.equal(result.status, 'rejected');
+    assert.equal(result.reason, 'INTERLOCK_FAILED: VALVE_FAULT');
+    assert.equal(result.writeVerified, null);
+    assert.equal(result.writtenValue, null);
+    assert.equal(reservations, 0);
+    assert.equal(adapter.intentos, 0);
+    assert.equal(adapter.valor(PALABRA), 4096);
+    assert.deepEqual(feedbackReads, ['INT_IN_VORAGINE[1]']);
+    assert.equal(audit.calls.length, 1);
+    assert.equal(audit.calls[0].detail?.reason, 'INTERLOCK_FAILED: VALVE_FAULT');
+  }
+});
+test('confirmed feedback: inlet ignores outlet fault bit14 and confirms its own open bit0', async () => {
+  const { adapter } = feedbackAdapter(0x4001);
+  const result = await construirSostenida(adapter, confirmedVoragineSpecs()).service.execute(
+    'voragine', { command: 'open', target: 'valve2' }, OPERADOR_V);
+  assert.equal(result.status, 'confirmed');
+  assert.equal(result.confirmedValue, 0x4001);
+  assert.deepEqual(adapter.escrituras.map((w) => w.value), [4]);
+});
+test('confirmed feedback: outlet confirms masked open1025 with a stable source timestamp, and closed2049', async () => {
+  for (const [word, command, value] of [[1025, 'open', 4096], [2049, 'close', 8192]] as const) {
+    const { adapter, feedbackReads } = feedbackAdapter(word);
+    const result = await construirSostenida(adapter, confirmedVoragineSpecs()).service.execute(
+      'voragine', { command, target: 'valve1' }, OPERADOR_V);
+    assert.equal(result.status, 'confirmed');
+    assert.equal(result.confirmedValue, word);
+    assert.deepEqual(adapter.escrituras.map((w) => w.value), [value]);
+    assert.deepEqual(feedbackReads, ['INT_IN_VORAGINE[1]', 'INT_IN_VORAGINE[1]']);
+  }
+});
+test('confirmed feedback: bad/uncertain quality, invalid word and read failure deny all writes', async () => {
+  const cases: Array<[number | boolean | null, string]> = [
+    [1024, 'Bad'], [1024, 'Uncertain'], [1024.5, 'Good'], [null, 'Good'],
+    [true, 'Good'], [65536, 'Good'], [-32769, 'Good'], [NaN, 'Good'],
+  ];
+  for (const [word, quality] of cases) {
+    const { adapter } = feedbackAdapter(word, quality);
+    const result = await construirSostenida(adapter, confirmedVoragineSpecs()).service.execute(
+      'voragine', { command: 'open', target: 'valve1' }, OPERADOR_V);
+    assert.equal(result.reason, 'INTERLOCK_FAILED: VALVE_FEEDBACK_UNAVAILABLE');
+    assert.equal(result.status, 'rejected');
+    assert.equal(adapter.intentos, 0);
+  }
+  const { adapter } = feedbackAdapter(0);
+  adapter.readBufferElement = async () => { throw new Error('feedback unavailable'); };
+  const result = await construirSostenida(adapter, confirmedVoragineSpecs()).service.execute(
+    'voragine', { command: 'close', target: 'valve1' }, OPERADOR_V);
+  assert.equal(result.reason, 'INTERLOCK_FAILED: VALVE_FEEDBACK_UNAVAILABLE');
+  assert.equal(adapter.intentos, 0);
+});
+test('confirmed feedback: post-write fault beats matching open feedback and leaves sustained output set', async () => {
+  const { adapter } = feedbackAdapter(0);
+  const originalRead = adapter.readBufferElement.bind(adapter);
+  adapter.readBufferElement = async (target) => target.channel === 'intIn' && adapter.intentos > 0
+    ? { value: 0x4401, quality: 'Good', sourceTimestamp: null }
+    : originalRead(target);
+  const result = await construirSostenida(adapter, confirmedVoragineSpecs()).service.execute(
+    'voragine', { command: 'open', target: 'valve1' }, OPERADOR_V);
+  assert.equal(result.status, 'failed');
+  assert.equal(result.reason, FAIL.VALVE_FAULT);
+  assert.equal(result.confirmedValue, 0x4401);
+  assert.equal(adapter.valor(PALABRA), 4096);
+  assert.deepEqual(adapter.escrituras.map((w) => w.value), [4096]);
+});
+test('confirmed feedback: simultaneous own endpoints reject both directions before reservation or physical write', async () => {
+  for (const command of ['open', 'close']) {
+    const { adapter, feedbackReads } = feedbackAdapter(3073); // outlet open+closed, unrelated inlet open
+    const audit = fakeAudit();
+    let reservations = 0;
+    const repo = fakeRepo();
+    repo.reserve = async () => { reservations++; throw new Error('must never reserve'); };
+    const service = new WriteService(adapter, fakeConfig(true), fakeCache(snap('live')),
+      fakeResolver(confirmedVoragineSpecs().valve1), repo, audit.service, fakeFirmas(), fakeAvisos());
+    const result = await service.execute('voragine', { command, target: 'valve1' }, OPERADOR_V);
+    assert.equal(result.status, 'rejected');
+    assert.equal(result.reason, 'INTERLOCK_FAILED: VALVE_FEEDBACK_CONFLICT');
+    assert.equal(result.writtenValue, null);
+    assert.equal(result.writeVerified, null);
+    assert.equal(reservations, 0);
+    assert.equal(adapter.intentos, 0);
+    assert.equal(adapter.valor(PALABRA), 4096, 'existing sustained output remains untouched');
+    assert.deepEqual(feedbackReads, ['INT_IN_VORAGINE[1]']);
+    assert.equal(audit.calls.length, 1);
+    assert.equal(audit.calls[0].detail?.reason, 'INTERLOCK_FAILED: VALVE_FEEDBACK_CONFLICT');
+  }
+});
+
+test('confirmed feedback: verified sustained output acknowledges pending physical position within 600ms observation', async () => {
+  const { adapter } = feedbackAdapter(2); // inlet closed; outlet between endpoints
+  const specs = confirmedVoragineSpecs();
+  specs.valve1.timeoutMs = 5000;
+  const started = Date.now();
+  const result = await construirSostenida(adapter, specs).service.execute(
+    'voragine', { command: 'open', target: 'valve1' }, OPERADOR_V);
+  assert.equal(result.status, 'sent');
+  assert.equal(result.reason, SENT.SENT_FEEDBACK_PENDING);
+  assert.equal(httpStatusForCommand(result), 202);
+  assert.equal(result.writeVerified, true);
+  assert.equal(result.confirmedValue, 2);
+  assert.ok(Date.now() - started < 2000, 'does not wait the 5s physical feedback timeout');
+  assert.equal(adapter.valor(PALABRA), 4096);
+  assert.deepEqual(adapter.escrituras.map((w) => w.value), [4096]);
+});
+
+test('confirmed feedback: sustained command without verified echo cannot acknowledge pending physical feedback', async () => {
+  const adapter = adaptadorPalabra({ estado: 0, ecoFalla: true });
+  const result = await construirSostenida(adapter, confirmedVoragineSpecs()).service.execute(
+    'voragine', { command: 'open', target: 'valve1' }, OPERADOR_V);
+  assert.equal(result.status, 'failed');
+  assert.equal(result.reason, FAIL.READBACK_UNCONFIRMED);
+  assert.equal(result.writeVerified, null);
+  assert.deepEqual(adapter.escrituras.map((w) => w.value), [4096]);
 });

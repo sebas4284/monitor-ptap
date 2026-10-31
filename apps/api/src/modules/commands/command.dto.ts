@@ -13,12 +13,9 @@ export const commandRequestSchema = z
 export type CommandRequest = z.infer<typeof commandRequestSchema>;
 
 /**
- * `sent` es un desenlace intermedio deliberado, no un "casi confirmado": la escritura salió y el
- * eco la verificó en el canal, pero el canal de ESTADO de ese sitio no tiene semántica verificada
- * en campo (`readBack.stateVerified: false`), así que el sistema **no puede afirmar ni negar** que
- * el equipo se movió. Reportarlo como `failed` acusaría al equipo con base en un valor inferido;
- * reportarlo como `confirmed` afirmaría un movimiento que nadie observó. Ninguna de las dos es
- * cierta, y por eso existe este tercer estado.
+ * `sent` acknowledges a verified command echo without claiming physical movement. Its reason
+ * distinguishes unverified state semantics from verified endpoint feedback still pending while
+ * a sustained command remains set. The live telemetry pipeline reports the actual position.
  */
 export type CommandOutcome = 'confirmed' | 'sent' | 'failed' | 'rejected';
 
@@ -54,7 +51,8 @@ export const FAIL = {
   HOLD_FEEDBACK_TIMEOUT: 'HOLD_FEEDBACK_TIMEOUT',
   /**
    * Realimentación por bits (`pulse.feedback`): durante el sostenido el PLC informó FALLA de la
-   * válvula. La orden se soltó. No es lo mismo que un tope agotado: aquí el equipo SÍ respondió, y
+   * válvula. En una orden sostenida la salida permanece puesta; este resultado no la libera.
+   * No es lo mismo que un tope agotado: aquí el equipo SÍ respondió, y
    * lo que dijo es que no puede moverse (en La Vorágine, el temporizador de falla de 90 s del PLC, o
    * una falla anterior que hay que rearmar desde la HMI).
    */
@@ -72,8 +70,13 @@ export const FAIL = {
   HOLD_INTERRUPTED: 'HOLD_INTERRUPTED',
 } as const;
 
-/** Motivos de desenlace `sent`: se escribió y se verificó, pero no hay con qué confirmar el estado. */
+/** Motivos de `sent`: escritura verificada, estado físico aún sin confirmar. */
 export const SENT = {
+  /** The sustained command echo is verified; physical endpoint feedback is still pending.
+   * The output stays set and the normal telemetry pipeline continues reporting actual position.
+   * This acknowledgment does not start a background hold, timer, cleanup or later command write.
+   */
+  SENT_FEEDBACK_PENDING: 'SENT_FEEDBACK_PENDING',
   /**
    * El eco confirma que el valor quedó en el canal de comando, pero el canal de ESTADO de este
    * sitio está declarado `stateVerified: false` — su valor esperado es una inferencia, no una

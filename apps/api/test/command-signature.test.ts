@@ -20,7 +20,7 @@ import {
   verificarCadena,
   type CommandFacts,
 } from '../src/modules/commands/command-signature';
-import { avisoDeManiobra } from '../src/modules/commands/valve-notice';
+import { avisoDeManiobra, tituloDeManiobraHistorica } from '../src/modules/commands/valve-notice';
 
 const SECRETO = 'secreto-de-prueba-que-no-es-el-de-produccion';
 
@@ -151,9 +151,19 @@ test('el aviso dice quién, qué válvula y a qué hora, y no afirma lo que no s
   // El caso de estas plantas: el canal de comando responde, pero NADIE puede confirmar que la
   // válvula se movió. El aviso no puede decir "confirmada".
   const sinEstado = avisoDeManiobra({ ...base, status: 'confirmed', estadoVerificado: false });
+  assert.match(sinEstado.title, /Ana Ruiz solicitó abrir Válvula de entrada/);
+  assert.doesNotMatch(sinEstado.title, /abrió|cerró/);
   assert.equal(sinEstado.severity, 'warning');
   assert.match(sinEstado.message, /no reporta el estado eléctrico|no se puede confirmar/i);
   assert.match(sinEstado.action ?? '', /Verificar en sitio/i);
+
+  const enviada = avisoDeManiobra({ ...base, command: 'close', status: 'sent', estadoVerificado: false });
+  assert.match(enviada.title, /solicitó cerrar/);
+  assert.doesNotMatch(enviada.title, /abrió|cerró/);
+
+  const pendiente = avisoDeManiobra({ ...base, status: 'sent', reason: 'SENT_FEEDBACK_PENDING', estadoVerificado: true });
+  assert.match(pendiente.message, /pendiente de confirmación física/);
+  assert.doesNotMatch(pendiente.message, /no reporta el estado eléctrico/);
 
   const rechazada = avisoDeManiobra({ ...base, status: 'rejected', estadoVerificado: true });
   assert.match(rechazada.message, /NO se tocó/);
@@ -161,6 +171,25 @@ test('el aviso dice quién, qué válvula y a qué hora, y no afirma lo que no s
   const fallida = avisoDeManiobra({ ...base, status: 'failed', estadoVerificado: true });
   assert.equal(fallida.severity, 'warning');
   assert.match(fallida.action ?? '', /Verificar en sitio/i);
+});
+
+test('el aviso de falla distingue rechazo antes de escribir de falla después del envío', () => {
+  const base = { userName: 'Ana Ruiz', userEmail: null, valveName: 'Válvula de salida', command: 'open', at: '2026-10-31T10:35:00', firma: null, estadoVerificado: true };
+  const rejected = avisoDeManiobra({ ...base, status: 'rejected', reason: 'INTERLOCK_FAILED: VALVE_FAULT' });
+  assert.equal(rejected.severity, 'critical');
+  assert.match(rejected.message, /No se envió ninguna orden/);
+  const failed = avisoDeManiobra({ ...base, status: 'failed', reason: 'VALVE_FAULT' });
+  assert.match(failed.message, /FALLA/);
+  assert.doesNotMatch(failed.message, /se soltó/);
+});
+
+test('los títulos históricos no confirman movimientos que el aviso declara no verificables', () => {
+  const original = 'Ana Ruiz abrió Válvula de salida';
+  const message = 'Orden enviada y aceptada por el equipo a las 10:21. Esta planta no reporta el estado eléctrico de la válvula, así que la maniobra no se puede confirmar desde aquí · firma abc.';
+  assert.equal(tituloDeManiobraHistorica('valve_command', original, message), 'Ana Ruiz solicitó abrir Válvula de salida');
+  assert.equal(tituloDeManiobraHistorica('valve_command', 'Ana Ruiz cerró Válvula de salida', message), 'Ana Ruiz solicitó cerrar Válvula de salida');
+  assert.equal(tituloDeManiobraHistorica('valve_command', original, 'Maniobra confirmada por el equipo'), original);
+  assert.equal(tituloDeManiobraHistorica('valve_manual', original, message), original);
 });
 
 test('sin nombre, el aviso cae al correo antes que a un identificador ilegible', () => {

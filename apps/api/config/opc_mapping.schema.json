@@ -178,9 +178,18 @@
           "minProperties": 1,
           "properties": {
             "closed": { "type": "number" },
-            "open": { "type": "number" }
+            "open": { "type": "number" },
+            "bits": {
+              "type": "object", "additionalProperties": false, "required": ["open", "close", "fault"],
+              "description": "Máscaras de bits reales (1024 = bit10), NO posiciones. Falla tiene prioridad; apertura y cierre simultáneos no confirman posición.",
+              "properties": {
+                "open": { "type": "integer", "minimum": 1, "maximum": 65535 },
+                "close": { "type": "integer", "minimum": 1, "maximum": 65535 },
+                "fault": { "type": "integer", "minimum": 1, "maximum": 65535 }
+              }
+            }
           },
-          "description": "Valores LITERALES de la palabra de estado de una válvula, para sitios que no usan la máscara de bits de Vorágine/Sirena (bit14 = estado válido, bit0 = abierta). Cascajal reporta 251 = CERRADA en INT_IN[1], verificado en campo (2026-08-13); ese valor no trae el bit14, así que sin esta declaración el front lo descarta como 'sin estado válido'. Solo se declara lo VERIFICADO: un valor que no coincida con ninguno no se interpreta, y el estado cae al método del caudal."
+          "description": "Codificación explícita de estado: closed/open son valores LITERALES; bits declara máscaras verificadas de apertura, cierre y falla. La Vorágine usa INT_IN[1]: entrada 1/2/16 y salida 1024/2048/16384; bit14 es falla de salida, no validez. Cascajal reporta 251 = CERRADA en INT_IN[1], verificado en campo (2026-08-13); ese valor no trae el bit14, así que sin esta declaración el front lo descarta como 'sin estado válido'. Solo se declara lo VERIFICADO: un valor que no coincida con ninguno no se interpreta, y el estado cae al método del caudal."
         }
       },
       "allOf": [
@@ -391,6 +400,8 @@
             "sourceBuffer": { "type": "string", "minLength": 1 },
             "index": { "type": "integer", "minimum": 0 },
             "confirmsWrittenValue": { "type": "boolean" },
+            "mask": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "faultMask": { "type": "integer", "minimum": 1, "maximum": 65535 },
             "expectedValue": { "type": ["number", "boolean"] },
             "stateVerified": {
               "type": "boolean",

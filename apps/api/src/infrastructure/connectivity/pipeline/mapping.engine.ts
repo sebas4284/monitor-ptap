@@ -11,8 +11,8 @@ export interface ExtractedSignal {
   max: number | null;
   opMin: number | null;
   opMax: number | null;
-  /** Convención literal de la palabra de estado de válvula, si el sitio no usa la de bits. */
-  stateEncoding?: { closed?: number; open?: number };
+  /** Conserva tanto la convención literal como las máscaras independientes verificadas. */
+  stateEncoding?: SignalMapping['stateEncoding'];
   /** Solo en válvulas: el caudal que corresponde a ESA válvula. */
   flowDomainKey?: string;
   /** Solo en palabras de estado: si es false no decide el veredicto. */

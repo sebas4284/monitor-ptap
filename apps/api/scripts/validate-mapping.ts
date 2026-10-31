@@ -15,6 +15,8 @@ import { join } from 'node:path';
 import Ajv2020 from 'ajv/dist/2020';
 import {
   bitsCompartidosEntreValvulas,
+  motivoBitsEstadoInvalido,
+  motivoMascarasReadBackInvalido,
   motivoRealimentacionInvalida,
   motivoSostenidaInvalida,
   tieneRealimentacionPorBits,
@@ -56,7 +58,7 @@ export function semanticErrors(mapping: unknown): string[] {
     const label = typeof p.plantId === 'string' ? p.plantId : `plants[${pIdx}]`;
 
     const signals = Array.isArray(p.signals) ? p.signals : [];
-    const seenSlot = new Set<string>();
+    const seenSlot = new Map<string, { sourceBuffer?: unknown; bits: number | null }>();
     const seenDomainKey = new Set<string>();
     /** Las válvulas de la planta, para la regla de bits compartidos en una misma palabra. */
     const conMando: SenalConMando[] = [];
@@ -73,19 +75,28 @@ export function semanticErrors(mapping: unknown): string[] {
         opMin?: unknown;
         opMax?: unknown;
         writable?: unknown;
+        stateEncoding?: { bits?: { open: number; close: number; fault: number } };
         write?: {
           target?: { channel?: unknown; sourceBuffer?: unknown };
-          readBack?: { channel?: unknown; sourceBuffer?: unknown };
+          readBack?: { channel?: unknown; sourceBuffer?: unknown; mask?: unknown; faultMask?: unknown };
           pulse?: { feedback?: { channel?: unknown; sourceBuffer?: unknown } };
         };
       };
 
+      const bits = s.stateEncoding?.bits;
+      const bitsError = bits === undefined ? null : motivoBitsEstadoInvalido(bits);
+      if (bitsError) errors.push(`${label}: ${bitsError} (${String(s.domainKey)})`);
+      const stateMask = s.writable === false && bits && !bitsError ? bits.open | bits.close | bits.fault : null;
       if (typeof s.buffer === 'string' && typeof s.index === 'number') {
         const slot = `${s.buffer}[${s.index}]`;
-        if (seenSlot.has(slot)) {
+        const previous = seenSlot.get(slot);
+        // Distinct read-only valve states can share a physical word only with explicit disjoint bits.
+        if (previous && (previous.bits === null || stateMask === null || !s.sourceBuffer
+          || s.sourceBuffer !== previous.sourceBuffer || (previous.bits & stateMask) !== 0)) {
           errors.push(`${label}: índice duplicado ${slot} (señal #${sIdx})`);
         }
-        seenSlot.add(slot);
+        seenSlot.set(slot, { sourceBuffer: s.sourceBuffer, bits: previous?.bits === null || stateMask === null
+          ? null : (previous?.bits ?? 0) | stateMask });
       }
 
       if (typeof s.domainKey === 'string') {
@@ -125,6 +136,8 @@ export function semanticErrors(mapping: unknown): string[] {
         if (t && typeof t.sourceBuffer === 'string' && !bufferNames(t.channel).includes(t.sourceBuffer)) {
           errors.push(`${label}: write.target.sourceBuffer "${t.sourceBuffer}" no existe en opcBuffers.${String(t.channel)} (señal "${String(s.domainKey)}")`);
         }
+        const maskError = motivoMascarasReadBackInvalido(s.write);
+        if (maskError) errors.push(`${label}: ${maskError} (${String(s.domainKey)})`);
         const rb = s.write.readBack;
         if (rb && typeof rb.sourceBuffer === 'string' && !bufferNames(rb.channel).includes(rb.sourceBuffer)) {
           errors.push(`${label}: write.readBack.sourceBuffer "${rb.sourceBuffer}" no existe en opcBuffers.${String(rb.channel)} (señal "${String(s.domainKey)}")`);

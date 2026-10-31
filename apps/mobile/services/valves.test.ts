@@ -7,6 +7,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   valvesFromSnapshot,
   isValveSignal,
@@ -98,6 +99,89 @@ test('valves: stateEncoding — también sirve para declarar el valor de abierta
 test('valves: sin stateEncoding se conserva la regla de bits de siempre', () => {
   assert.equal(valvesFromSnapshot(snap({ valve1: sig(0), valve1State: sig(16384) }))[0].byState, 'closed');
   assert.equal(valvesFromSnapshot(snap({ valve1: sig(0), valve1State: sig(251) }))[0].byState, null);
+});
+
+function voragine(word: number | null) {
+  return valvesFromSnapshot(snap({
+    valve1: sig(4096, { commands: ['open', 'close'], flowDomainKey: 'outletFlow1' }),
+    valve2: sig(4096, { commands: ['open', 'close'], flowDomainKey: 'inletFlow1' }),
+    valve1State: sig(word, { stateEncoding: { bits: { open: 1024, close: 2048, fault: 16384 } } }),
+    valve2State: sig(word, { stateEncoding: { bits: { open: 1, close: 2, fault: 16 } } }),
+    inletFlow1: sig(0), outletFlow1: sig(50),
+  }));
+}
+
+test('Vorágine: 0x4001 indica entrada abierta y falla de salida, sin inventar posición por caudal', () => {
+  const [outlet, inlet] = voragine(0x4001);
+  assert.equal(inlet.state, 'open');
+  assert.equal(inlet.fault, false);
+  assert.equal(outlet.fault, true);
+  assert.equal(outlet.state, 'unknown');
+  assert.equal(outlet.byFlow, 'open');
+  assert.equal(outlet.source, 'estado');
+  assert.equal(outlet.physicalFeedback, true);
+  assert.equal(vigilaOperacionManual(outlet), false);
+  assert.equal(vigilaOperacionManual(inlet), false);
+  for (const verb of [undefined, 'open', 'close'] as const) {
+    assert.equal(motivo(accionDisponible(outlet, false, verb)), 'fault');
+  }
+});
+
+test('Vorágine: finales de carrera distinguen salida abierta, cerrada y realimentación inválida', () => {
+  assert.equal(voragine(1025)[0].state, 'open');
+  assert.equal(voragine(2049)[0].state, 'closed');
+  for (const word of [1, 3073, null]) {
+    const outlet = voragine(word)[0];
+    assert.equal(outlet.state, 'unknown', `palabra ${word}: no sustituir finales por caudal`);
+    assert.equal(outlet.fault, false);
+    assert.equal(vigilaOperacionManual(outlet), false);
+  }
+  assert.equal(voragine(0x4000 | 1025)[0].state, 'unknown', 'la falla domina al final abierto');
+});
+
+test('Vorágine: la decodificación usa las máscaras del mapping de producción, no posiciones de bit', () => {
+  const mapping = JSON.parse(readFileSync(new URL('../../api/config/opc_mapping.json', import.meta.url), 'utf8'));
+  const plant = mapping.plants.find((p: { plantId: string }) => p.plantId === 'voragine');
+  assert.ok(plant);
+  const signals = plant.signals as Array<{ domainKey: string; stateEncoding?: SignalDto['stateEncoding'] }>;
+  const outletEncoding = signals.find((s) => s.domainKey === 'valve1State')?.stateEncoding;
+  const inletEncoding = signals.find((s) => s.domainKey === 'valve2State')?.stateEncoding;
+  assert.deepEqual(outletEncoding?.bits, { open: 1024, close: 2048, fault: 16384 });
+  assert.deepEqual(inletEncoding?.bits, { open: 1, close: 2, fault: 16 });
+  for (const [word, outletState, outletFault] of [[16385, 'unknown', true], [1025, 'open', false], [2049, 'closed', false]] as const) {
+    const [outlet, inlet] = valvesFromSnapshot(snap({
+      valve1: sig(4096, { commands: ['open', 'close'] }),
+      valve2: sig(4096, { commands: ['open', 'close'] }),
+      valve1State: sig(word, { stateEncoding: outletEncoding }),
+      valve2State: sig(word, { stateEncoding: inletEncoding }),
+      outletFlow1: sig(50),
+    }));
+    assert.equal(outlet.state, outletState);
+    assert.equal(outlet.fault, outletFault);
+    assert.equal(inlet.state, 'open');
+  }
+});
+
+test('interpretCommand: falla PLC explica bloqueo antes y después de escribir sin afirmar posición', () => {
+  const rejected = interpretCommand({ status: 'rejected', reason: 'INTERLOCK_FAILED: VALVE_FAULT' } as ValveCommandResult, 'open', 'Salida');
+  assert.equal(rejected.signalSent, false);
+  assert.equal(rejected.ok, false);
+  assert.match(rejected.message, /PLC reporta una falla/);
+  assert.match(rejected.message, /No se envió/);
+  const failed = interpretCommand({ status: 'failed', reason: 'VALVE_FAULT' } as ValveCommandResult, 'close', 'Salida');
+  assert.equal(failed.ok, false);
+  assert.match(failed.message, /no se confirma movimiento/);
+});
+
+test('interpretCommand: orden sostenida aceptada con realimentación pendiente no afirma posición ni ausencia de señal', () => {
+  const result = interpretCommand({ status: 'sent', reason: 'SENT_FEEDBACK_PENDING', writtenValue: 4096, writeEcho: 4096, writeVerified: true } as ValveCommandResult, 'open', 'Salida');
+  assert.equal(result.ok, true);
+  assert.equal(result.signalSent, true);
+  assert.equal(result.tone, 'warning');
+  assert.equal(result.title, 'Orden enviada; esperando confirmación');
+  assert.match(result.message, /PLC aceptó la orden de abrir/);
+  assert.match(result.message, /posición.*pendiente de confirmación/);
+  assert.doesNotMatch(result.message, /no informa|no puede saber si se movió|Ahora está|ABIERTA/);
 });
 
 test('valves: método 1 — sin bit14 el PLC no reporta estado válido → no se afirma nada', () => {
@@ -484,6 +568,22 @@ function apertura(value: number | null, over: Partial<SignalDto> = {}): SignalDt
 }
 
 /** Motivo del bloqueo, o null si la acción no está bloqueada. */
+test('mando explícito: permite reenviar cada verbo mapeado aunque la lectura ya indique ese estado', () => {
+  const open = valvula({ state: 'open', commands: ['open', 'close'] });
+  const closed = valvula({ state: 'closed', commands: ['open', 'close'] });
+  assert.deepEqual(accionDisponible(open, false, 'open'), { kind: 'command', verb: 'open' });
+  assert.deepEqual(accionDisponible(closed, false, 'close'), { kind: 'command', verb: 'close' });
+});
+
+test('mando explícito: elige dirección sin inventar estado y conserva los bloqueos', () => {
+  const valve = valvula({ state: 'unknown', commands: ['open', 'close'] });
+  assert.deepEqual(accionDisponible(valve, false, 'open'), { kind: 'command', verb: 'open' });
+  assert.equal(motivo(accionDisponible(valve, true, 'open')), 'frozen');
+  assert.equal(motivo(accionDisponible({ ...valve, commandable: false }, false, 'open')), 'no-channel');
+  assert.equal(motivo(accionDisponible({ ...valve, commands: ['open'] }, false, 'close')), 'verb-missing');
+  assert.equal(motivo(accionDisponible({ ...valve, kind: 'proportional' }, false, 'open')), 'setpoint-pending');
+});
+
 function motivo(a: ReturnType<typeof accionDisponible>): string | null {
   return a.kind === 'blocked' ? a.reason : null;
 }

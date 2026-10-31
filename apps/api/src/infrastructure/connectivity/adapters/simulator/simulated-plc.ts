@@ -158,6 +158,8 @@ interface Regla {
   booleano: boolean;
   entero: boolean;
   origen: SimFeedbackView['origin'];
+  /** Owned feedback bits; disjoint valve rules may share this physical word. */
+  mask?: number;
   /** undefined = no escribir (se queda lo que hubiera). */
   valor: (v: Valvula) => SimValue | undefined;
   /** La válvula dueña de la regla; se fija al registrarla. */
@@ -596,7 +598,11 @@ export class SimulatedPlc {
     for (const r of p.reglas) {
       if (!r.valvula) continue;
       const valor = r.valor(r.valvula);
-      if (valor !== undefined) this.maestro.set(r.clave, valor);
+      if (valor !== undefined) {
+        const previous = this.maestro.get(r.clave);
+        this.maestro.set(r.clave, r.mask === undefined ? valor
+          : (((typeof previous === 'number' ? previous : 0) & ~r.mask) | (Number(valor) & r.mask)) & 0xffff);
+      }
     }
   }
 
@@ -747,7 +753,8 @@ export class SimulatedPlc {
     const manuales = new Set(reglas.filter((r) => r.origen === 'scenario').map((r) => r.clave));
     for (const r of reglas) {
       if (r.origen !== 'scenario' && manuales.has(r.clave)) continue;
-      if (p.reglas.some((otra) => otra.clave === r.clave)) {
+      if (p.reglas.some((otra) => otra.clave === r.clave
+        && (r.mask === undefined || otra.mask === undefined || (r.mask & otra.mask) !== 0))) {
         v.avisos.push(`${r.clave} (${r.origen}): otra regla de realimentación ya escribe en ese elemento; se queda la primera`);
         continue;
       }
@@ -799,7 +806,7 @@ export class SimulatedPlc {
    * hará, y nada que el mapping no diga. Por eso NO se emula:
    *  - un read-back sin valor esperado declarado (Carbonero hoy): inventar uno daría un verde falso;
    *  - un read-back AMBIGUO, que espera el mismo valor para abrir y para cerrar (el `expectedValue`
-   *    único de La Vorágine): ese número no puede decir en qué tope está la válvula.
+   *    único de un canal aún no verificado): ese número no puede decir en qué tope está la válvula.
    */
   private reglasAutomaticas(s: SignalMapping, w: WriteSpec, v: Valvula): Regla[] {
     const reglas: Regla[] = [];
@@ -831,11 +838,13 @@ export class SimulatedPlc {
             booleano: el.booleano,
             entero: el.entero,
             origen: 'readBack',
+            ...(rb.mask !== undefined ? { mask: rb.mask | (rb.faultMask ?? 0) } : {}),
             valor: (x) => {
+              if (rb.mask !== undefined && x.error) return rb.faultMask ?? 0;
               const estado = this.estadoDe(x);
               if (estado === 'open' && abierta !== undefined) return abierta;
               if (estado === 'closed' && cerrada !== undefined) return cerrada;
-              return this.neutro(x, el.booleano);
+              return rb.mask !== undefined ? 0 : this.neutro(x, el.booleano);
             },
           });
         }

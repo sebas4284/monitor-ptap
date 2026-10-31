@@ -203,6 +203,9 @@ export interface WriteSpec {
      * no está aquí, se cae a `confirmsWrittenValue`/`expectedValue`.
      */
     expectedByCommand?: Record<string, number | boolean>;
+    /** Compare only these status bits; the fault mask always takes priority. */
+    mask?: number;
+    faultMask?: number;
     /**
      * ¿La semántica de este canal de estado está VERIFICADA en campo? Default `true`.
      *
@@ -261,7 +264,8 @@ export interface SignalMapping {
    * Valores literales de la palabra de estado de válvula para sitios que NO usan la máscara
    * bit14/bit0. Viaja al DTO para que el front no tenga que conocer cada planta. Ver `SignalDto`.
    */
-  stateEncoding?: { closed?: number; open?: number };
+  /** bits contains actual masks (1024 = bit10), never bit positions. */
+  stateEncoding?: { closed?: number; open?: number; bits?: { open: number; close: number; fault: number } };
   /** Solo en válvulas: el caudal que corresponde a ESA válvula. Ver `SignalDto.flowDomainKey`. */
   flowDomainKey?: string;
   /** Solo en palabras de estado: `false` = se lee como diagnóstico pero NO decide el veredicto. */
@@ -333,6 +337,9 @@ interface RawWriteSpec {
     confirmsWrittenValue?: boolean;
     expectedValue?: number | boolean;
     expectedByCommand?: Record<string, number | boolean>;
+    /** Compare only these status bits; the fault mask always takes priority. */
+    mask?: number;
+    faultMask?: number;
     stateVerified?: boolean;
   };
   timeoutMs?: number;
@@ -356,7 +363,7 @@ interface RawSignal {
   confidence?: string;
   writable?: boolean;
   write?: RawWriteSpec;
-  stateEncoding?: { closed?: unknown; open?: unknown };
+  stateEncoding?: { closed?: unknown; open?: unknown; bits?: { open?: unknown; close?: unknown; fault?: unknown } };
   flowDomainKey?: unknown;
   stateTrusted?: unknown;
 }
@@ -366,12 +373,54 @@ interface RawSignal {
  * dejarla pasar: un `closed: "251"` que llegara como texto nunca casaría con el número del PLC y
  * daría una válvula eternamente "sin estado" difícil de explicar.
  */
+function validMask(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= 0xffff;
+}
+
+export function motivoBitsEstadoInvalido(bits: unknown): string | null {
+  const b = bits as { open?: unknown; close?: unknown; fault?: unknown } | null;
+  if (!b || !validMask(b.open) || !validMask(b.close) || !validMask(b.fault)
+    || (b.open & b.close) !== 0 || (b.open & b.fault) !== 0 || (b.close & b.fault) !== 0) {
+    return 'stateEncoding.bits requiere máscaras no solapadas de 16 bits';
+  }
+  return null;
+}
+
+export function motivoMascarasReadBackInvalido(raw: { readBack?: { mask?: unknown; faultMask?: unknown; expectedByCommand?: Record<string, number | boolean>; expectedValue?: number | boolean; confirmsWrittenValue?: boolean }; commands?: Record<string, number | boolean> }): string | null {
+  const rb = raw.readBack;
+  if (!rb) return null;
+  const { mask, faultMask } = rb;
+  if ((mask !== undefined && !validMask(mask)) || (faultMask !== undefined && !validMask(faultMask))
+    || (validMask(faultMask) && (!validMask(mask) || (mask & faultMask) !== 0))) {
+    return 'readBack.mask/faultMask deben ser máscaras de 16 bits no solapadas';
+  }
+  if (validMask(mask)) {
+    const expected = Object.values(rb.expectedByCommand ?? {});
+    if (rb.expectedValue !== undefined) expected.push(rb.expectedValue);
+    for (const [command, written] of Object.entries(raw.commands ?? {})) {
+      expected.push(rb.expectedByCommand?.[command] ?? (rb.confirmsWrittenValue !== false ? written : rb.expectedValue ?? written));
+    }
+    if (expected.length === 0 || expected.some((v) => typeof v !== 'number' || !Number.isInteger(v) || v <= 0 || (v & mask) !== v)) {
+      return 'readBack esperado debe pertenecer a mask y ser distinto de cero';
+    }
+  }
+  return null;
+}
+
 function parseStateEncoding(raw: RawSignal['stateEncoding']): SignalMapping['stateEncoding'] {
   if (!raw || typeof raw !== 'object') return undefined;
-  const enc: { closed?: number; open?: number } = {};
+  const enc: NonNullable<SignalMapping['stateEncoding']> = {};
   if (typeof raw.closed === 'number') enc.closed = raw.closed;
   if (typeof raw.open === 'number') enc.open = raw.open;
-  return enc.closed === undefined && enc.open === undefined ? undefined : enc;
+  if (raw.bits !== undefined) {
+    const bits = raw.bits;
+    if (!bits || !validMask(bits.open) || !validMask(bits.close) || !validMask(bits.fault)
+      || (bits.open & bits.close) !== 0 || (bits.open & bits.fault) !== 0 || (bits.close & bits.fault) !== 0) {
+      throw new Error('opc_mapping.json: stateEncoding.bits requiere máscaras no solapadas de 16 bits');
+    }
+    enc.bits = { open: bits.open, close: bits.close, fault: bits.fault };
+  }
+  return enc.closed === undefined && enc.open === undefined && enc.bits === undefined ? undefined : enc;
 }
 
 /** Normaliza `pulse.until`. Devuelve undefined si le falta algo: nunca se completa a medias. */
@@ -730,6 +779,9 @@ function parseWriteSpec(raw: RawWriteSpec | undefined, donde: string): WriteSpec
   if (typeof channel !== 'string' || typeof sourceBuffer !== 'string' || typeof index !== 'number') return undefined;
   if (typeof raw.readBack.channel !== 'string' || typeof raw.readBack.index !== 'number') return undefined;
   if (typeof raw.timeoutMs !== 'number' || typeof raw.permission !== 'string') return undefined;
+  const { mask, faultMask } = raw.readBack;
+  const readBackError = motivoMascarasReadBackInvalido(raw);
+  if (readBackError) throw new Error(`opc_mapping.json: ${donde}: ${readBackError}`);
 
   if (raw.sustained !== undefined && typeof raw.sustained !== 'boolean') {
     throw new Error(`opc_mapping.json: ${donde}: write.sustained tiene que ser true o false, y vale ${JSON.stringify(raw.sustained)}`);
@@ -803,6 +855,8 @@ function parseWriteSpec(raw: RawWriteSpec | undefined, donde: string): WriteSpec
       confirmsWrittenValue: raw.readBack.confirmsWrittenValue !== false,
       expectedValue: raw.readBack.expectedValue,
       expectedByCommand: raw.readBack.expectedByCommand,
+      ...(mask !== undefined ? { mask } : {}),
+      ...(faultMask !== undefined ? { faultMask } : {}),
       // Default true: un canal se presume verificado salvo que el mapping diga lo contrario. Así,
       // omitir la clave conserva el comportamiento estricto de siempre.
       stateVerified: raw.readBack.stateVerified !== false,

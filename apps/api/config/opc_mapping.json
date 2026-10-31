@@ -171,11 +171,17 @@
             "mode": "absolute",
             "sustained": true,
             "readBack": {
-              "channel": "intOut",
-              "sourceBuffer": "INT_OUT_VORAGINE",
-              "index": 0,
-              "confirmsWrittenValue": true,
-              "stateVerified": false
+              "channel": "intIn",
+              "sourceBuffer": "INT_IN_VORAGINE",
+              "index": 1,
+              "confirmsWrittenValue": false,
+              "expectedByCommand": {
+                "open": 1024,
+                "close": 2048
+              },
+              "mask": 3072,
+              "faultMask": 16384,
+              "stateVerified": true
             },
             "timeoutMs": 5000,
             "permission": "control_valves",
@@ -205,15 +211,57 @@
             "mode": "absolute",
             "sustained": true,
             "readBack": {
-              "channel": "intOut",
-              "sourceBuffer": "INT_OUT_VORAGINE",
-              "index": 0,
-              "confirmsWrittenValue": true,
-              "stateVerified": false
+              "channel": "intIn",
+              "sourceBuffer": "INT_IN_VORAGINE",
+              "index": 1,
+              "confirmsWrittenValue": false,
+              "expectedByCommand": {
+                "open": 1,
+                "close": 2
+              },
+              "mask": 3,
+              "faultMask": 16,
+              "stateVerified": true
             },
             "timeoutMs": 5000,
             "permission": "control_valves",
             "_riesgo": "FUENTE: integrador del PLC (2026-10-16 / 2026-10-29). Valvula de ENTRADA: abrir = bit2 (4), cerrar = bit3 (8), sobreescritura directa en modo absolute sobre INT_OUT[0]. Senal SOSTENIDA. ANCLA, NO MANDO: la senal cuelga de index 1 pero MANDA por INT_OUT[0]."
+          }
+        },
+        {
+          "buffer": "intIn",
+          "sourceBuffer": "INT_IN_VORAGINE",
+          "index": 1,
+          "domainKey": "valve1State",
+          "label": "Estado válvula de salida",
+          "mappingStatus": "mapped",
+          "confidence": "confirmed",
+          "writable": false,
+          "stateTrusted": true,
+          "stateEncoding": {
+            "bits": {
+              "open": 1024,
+              "close": 2048,
+              "fault": 16384
+            }
+          }
+        },
+        {
+          "buffer": "intIn",
+          "sourceBuffer": "INT_IN_VORAGINE",
+          "index": 1,
+          "domainKey": "valve2State",
+          "label": "Estado válvula de entrada",
+          "mappingStatus": "mapped",
+          "confidence": "confirmed",
+          "writable": false,
+          "stateTrusted": true,
+          "stateEncoding": {
+            "bits": {
+              "open": 1,
+              "close": 2,
+              "fault": 16
+            }
           }
         },
         {

@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { Pool, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import type { NotificationKind, NotificationSeverity } from '@ptap/shared';
 import { MYSQL_POOL } from '../../infrastructure/database/database.tokens';
+import { tituloDeManiobraHistorica } from '../commands/valve-notice';
 
 export type { NotificationKind, NotificationSeverity };
 
@@ -227,7 +228,7 @@ export class NotificationRepository {
       severity: r.severity as NotificationSeverity,
       plantId: r.plant_id as string,
       subject: (r.subject as string | null) ?? null,
-      title: r.title as string,
+      title: tituloDeManiobraHistorica(r.kind as string, r.title as string, r.message as string),
       message: r.message as string,
       action: (r.action as string | null) ?? null,
       createdAt: new Date(r.created_at as Date).toISOString(),

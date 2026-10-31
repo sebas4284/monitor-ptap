@@ -1,5 +1,35 @@
 # Protocolo de válvulas — La Vorágine (`voragine`)
 
+> ## Actualización 2026-10-31 — retorno por bits independientes
+>
+> El esquema entregado identifica la confirmación en **`INT_IN_VORAGINE[1]`**:
+>
+> | Válvula | Abierta | Cerrada | Falla |
+> |---|---|---|---|
+> | Entrada | bit 0 (`1`) | bit 1 (`2`) | bit 4 (`16`) |
+> | Salida | bit 10 (`1024`) | bit 11 (`2048`) | bit 14 (`16384`) |
+>
+> Para este retorno, **bit 14 significa falla de salida, no validez**. La regla
+> heredada bit14/bit0 del registro original no aplica a esta palabra. Las dos
+> señales comparten el índice, pero cada válvula interpreta sus propias máscaras.
+> `stateEncoding.bits` contiene máscaras numéricas, no posiciones de bits.
+>
+> La falla tiene prioridad sobre los finales y bloquea apertura/cierre, también
+> los reenvíos explícitos. Una lectura mala o no disponible tampoco autoriza el
+> mando. No se borra ni rearma la falla escribiendo sobre el retorno: ese paso
+> corresponde al procedimiento autorizado de la planta.
+>
+> Contrato ratificado por operación el 2026-10-31: el PLC conserva una única orden
+> hasta recibir la siguiente. No sumar el mando de otra válvula ni generar un cero
+> de limpieza, un segundo pulso o un reintento automático.
+>
+> El mando conserva la especificación absoluta confirmada: una escritura en
+> `INT_OUT_VORAGINE[0]`, salida abrir `4096`/cerrar `8192`, entrada abrir `4`/cerrar
+> `8`, sin sumas ni pulsos añadidos. El eco del mando nunca prueba movimiento.
+> La confirmación se obtiene de los bits de retorno de la válvula correspondiente.
+> Una escritura aceptada cuyo movimiento aún no llegó se informa como pendiente,
+> sin confundir el tiempo de recorrido con un fallo ni repetir la escritura.
+
 > ## ✅ ACTUALIZACIÓN 2026-10-16 — codificación entregada por el integrador del PLC
 >
 > Las DOS válvulas mandan por la misma palabra, `INT_OUT_VORAGINE[0]`:

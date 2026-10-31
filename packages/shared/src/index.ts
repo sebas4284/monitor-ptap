@@ -154,7 +154,8 @@ export interface SignalDto {
    * Ausente ⇒ se aplica la regla de bits de siempre. Un valor que no coincida con ninguno de los
    * declarados NO se interpreta: se prefiere no afirmar nada antes que inventar un estado.
    */
-  stateEncoding?: { closed?: number; open?: number };
+  /** bits contains actual masks (1024 = bit10), never bit positions. Fault takes priority. */
+  stateEncoding?: { closed?: number; open?: number; bits?: { open: number; close: number; fault: number } };
   /**
    * Solo en señales de VÁLVULA: qué caudal corresponde a ESA válvula, para inferir su estado.
    *

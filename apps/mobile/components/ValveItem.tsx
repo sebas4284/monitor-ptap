@@ -11,7 +11,7 @@ interface Props {
   /** Acción de mando; recibe la válvula. Si falta, la fila es de solo lectura (rol sin permiso).
    *  Recibe la válvula en vez de cerrarse sobre ella para que la pantalla pueda pasar UNA función
    *  estable a todas las filas y el `memo` sirva de algo. */
-  onToggle?: (valve: SupervisedValve) => void;
+  onToggle?: (valve: SupervisedValve, verb?: 'open' | 'close') => void;
   /** La planta perdió la conexión: los valores mostrados son la última lectura. */
   frozen?: boolean;
   /** Hay una orden en vuelo para esta válvula. */
@@ -47,12 +47,15 @@ function ValveItemBase({ valve, onToggle, frozen = false, busy = false }: Props)
   // Estado EFECTIVO: el que sigue al caudal si se detectó operación manual, para no mandar "abrir"
   // a algo que ya abrieron a mano.
   const shown = valve.effectiveState;
-  const color = shown === 'open' ? Colors.success : shown === 'closed' ? Colors.danger : Colors.neutral;
+  const color = valve.fault ? Colors.danger : shown === 'open' ? Colors.success : shown === 'closed' ? Colors.danger : Colors.neutral;
 
   const accion = accionDisponible(valve, frozen);
   // El mando exige LAS DOS cosas: que la válvula lo permita y que el rol tenga el permiso (sin
   // `onToggle` la pantalla ya decidió que esta persona no acciona).
-  const accionable = accion.kind === 'command' && Boolean(onToggle);
+  const actions = (['open', 'close'] as const).filter((verb) =>
+    accionDisponible(valve, frozen, verb).kind === 'command',
+  );
+  const accionable = actions.length > 0 && Boolean(onToggle);
 
   return (
     <View style={[styles.row, frozen && styles.rowFrozen]}>
@@ -103,44 +106,39 @@ function ValveItemBase({ valve, onToggle, frozen = false, busy = false }: Props)
 
       <View style={styles.right}>
         <View style={[styles.badge, { backgroundColor: color + '18' }]}>
-          <Text style={[styles.badgeText, { color }]}>{STATE_LABEL[shown]}</Text>
+          <Text style={[styles.badgeText, { color }]}>{valve.fault ? 'Falla' : STATE_LABEL[shown]}</Text>
         </View>
 
-        {accionable && onToggle && accion.kind === 'command' && (
+        {accionable && onToggle && actions.map((verb) => (
           <TouchableOpacity
-            style={[styles.toggleBtn, { backgroundColor: Colors.primary + '15' }]}
-            onPress={() => onToggle(valve)}
+            key={verb}
+            style={[styles.toggleBtn, { backgroundColor: Colors.primary + '15', opacity: busy ? 0.5 : 1 }]}
+            onPress={() => onToggle(valve, verb)}
             activeOpacity={0.7}
             disabled={busy}
             accessibilityRole="button"
             accessibilityState={{ disabled: busy }}
-            accessibilityLabel={
-              busy
-                ? `Enviando orden a ${valve.name}`
-                : `${accion.verb === 'close' ? 'Cerrar' : 'Abrir'} ${valve.name}. Pedirá confirmación.`
-            }
+            accessibilityLabel={`${verb === 'close' ? 'Cerrar' : 'Abrir'} ${valve.name}. Pedirá confirmación.`}
           >
-            {busy ? (
-              <ActivityIndicator size="small" color={Colors.primary} />
-            ) : (
+            {busy ? <ActivityIndicator size="small" color={Colors.primary} /> : (
               <Ionicons
-                name={accion.verb === 'close' ? 'close-circle-outline' : 'checkmark-circle-outline'}
+                name={verb === 'close' ? 'close-circle-outline' : 'checkmark-circle-outline'}
                 size={16}
                 color={Colors.primary}
               />
             )}
             <Text style={[styles.toggleText, { color: Colors.primary }]}>
-              {busy ? 'Enviando…' : accion.verb === 'close' ? 'Cerrar' : 'Abrir'}
+              {verb === 'close' ? 'Cerrar' : 'Abrir'}
             </Text>
           </TouchableOpacity>
-        )}
+        ))}
 
         {/* Sin acción: se dice el motivo. Un hueco mudo se lee como un fallo de la app o como un
             permiso que falta, y casi nunca es ninguna de las dos cosas. */}
         {/* 4 líneas y no 3: el motivo de `setpoint-pending` (~100 caracteres) en esta columna de
             ~46 % de ancho y a 10 pt no cabría en 3 en un teléfono estrecho, y se cortaría justo en
             «solo se muestra la apertura». */}
-        {accion.kind === 'blocked' && (
+        {!accionable && accion.kind === 'blocked' && (
           <Text style={styles.sinMando} numberOfLines={4}>
             {accion.explain}
           </Text>

@@ -31,6 +31,7 @@ import Colors from '../../constants/colors';
 
 /** Maniobra a la espera de que el operador confirme en el diálogo. */
 interface Pendiente {
+  plantId: string;
   valve: SupervisedValve;
   verb: 'open' | 'close';
 }
@@ -74,16 +75,17 @@ export default function ElectrovalvulasScreen() {
   /** El toque en la lista ya NO ejecuta: solo propone la maniobra y abre la confirmación.
    *  Estable (`useCallback`) para que las N filas compartan la MISMA función y su memo funcione. */
   const onToggle = useCallback(
-    (valve: SupervisedValve) => {
+    (valve: SupervisedValve, requestedVerb?: 'open' | 'close') => {
       // El verbo lo decide `accionDisponible`, la MISMA función con la que la fila decidió qué
       // botón dibujar. Calcularlo aquí por separado —como se hacía antes— permite que el botón
       // diga "Abrir" y salga un "close" si los dos criterios se separan al evolucionar. Y si la
       // acción está bloqueada no se abre ningún diálogo: la fila no debería haber ofrecido nada.
-      const accion = accionDisponible(valve, frozen);
+      if (!canControl || busy) return;
+      const accion = accionDisponible(valve, frozen, requestedVerb);
       if (accion.kind !== 'command') return;
-      setPendiente({ valve, verb: accion.verb });
+      setPendiente({ plantId: selectedPlant.id, valve, verb: accion.verb });
     },
-    [frozen],
+    [frozen, canControl, busy, selectedPlant.id],
   );
 
   // Guard de rol de pantalla (coherente con tablero/reportes). Va tras TODOS los hooks: si a
@@ -103,9 +105,17 @@ export default function ElectrovalvulasScreen() {
   /** Segundo paso: el operador aceptó en el diálogo. Recién aquí sale la orden al PLC. */
   async function onConfirmar() {
     if (!pendiente) return;
-    const { valve, verb } = pendiente;
+    const { valve, verb, plantId } = pendiente;
     setPendiente(null);
-    const verdict = await send(valve, verb);
+    if (plantId !== selectedPlant.id) return;
+    const current = valves.find((v) => v.id === valve.id);
+    if (!current || !canControl || busy) return;
+    const action = accionDisponible(current, frozen, verb);
+    if (action.kind === 'blocked') {
+      setResultado({ ok: false, signalSent: false, tone: 'danger', title: 'Orden bloqueada', message: action.explain, valveName: current.name });
+      return;
+    }
+    const verdict = await send(current, verb);
     // A un diálogo con acuse de recibo, NO a un toast: aquí se movió un actuador físico y el
     // veredicto puede ser "enviado pero sin confirmar", que el operador debe leer sí o sí.
     setResultado({ ...verdict, valveName: valve.name });
@@ -190,7 +200,7 @@ export default function ElectrovalvulasScreen() {
               key={valve.id}
               valve={valve}
               frozen={frozen}
-              busy={busy === valve.id}
+              busy={busy !== null}
               compact={compact}
               // Sin canal de comando no hay botón: hacer confirmar una maniobra que solo puede
               // acabar en 404 es peor que no ofrecerla. ValveItem pone la nota en su lugar.

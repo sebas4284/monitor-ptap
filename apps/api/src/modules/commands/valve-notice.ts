@@ -35,6 +35,15 @@ function enInfinitivo(command: string): string {
   return `ejecutar «${command}» en`;
 }
 
+/** Presentación de avisos antiguos: conserva el registro almacenado y evita afirmar movimiento. */
+export function tituloDeManiobraHistorica(kind: string, title: string, message: string): string {
+  if (kind !== 'valve_command'
+    || !message.startsWith('Orden enviada y aceptada por el equipo a las ')
+    || !message.includes('la maniobra no se puede confirmar desde aquí')) return title;
+  return title.replace(/ (abrió|cerró) (Válvula .+)$/, (_match, verb: string, valve: string) =>
+    ` solicitó ${verb === 'abrió' ? 'abrir' : 'cerrar'} ${valve}`);
+}
+
 /** `HH:MM` local, que es como la gente dice la hora. La fecha ya la pone la bandeja. */
 function hora(at: string): string {
   const d = new Date(at);
@@ -96,6 +105,14 @@ export function avisoDeManiobra(m: ManiobraInput): ManiobraNotice {
   const cuando = hora(m.at);
   const sello = m.firma ? ` · firma ${m.firma}` : '';
 
+  if (m.status === 'rejected' && m.reason?.includes('VALVE_FAULT')) {
+    return {
+      severity: 'critical',
+      title: `Maniobra bloqueada por falla: ${m.valveName}`,
+      message: `${quien} solicitó ${enInfinitivo(m.command)} ${m.valveName} a las ${cuando}, pero el PLC reporta una falla activa. No se envió ninguna orden al equipo${sello}.`,
+      action: 'El personal autorizado debe diagnosticar la alarma y aplicar el procedimiento de rearme de la planta antes de operar.',
+    };
+  }
   if (m.status === 'rejected') {
     return {
       severity: 'info',
@@ -112,8 +129,8 @@ export function avisoDeManiobra(m: ManiobraInput): ManiobraNotice {
     return {
       severity: 'critical',
       title: `Falla en ${m.valveName}`,
-      message: `${quien} ordenó ${enInfinitivo(m.command)} ${m.valveName} a las ${cuando} y el PLC respondió con FALLA de la válvula. La orden se soltó; mientras la falla siga activa el mando queda bloqueado${sello}.${avisoBitPuesto(m)}`,
-      action: `Revisar ${m.valveName} en sitio y rearmar la falla desde la HMI o el PLC antes de volver a mandarla.`,
+      message: `${quien} ordenó ${enInfinitivo(m.command)} ${m.valveName} a las ${cuando} y el PLC respondió con FALLA de la válvula. Mientras la falla siga activa el mando queda bloqueado; no se puede afirmar que haya abierto o cerrado${sello}.${avisoBitPuesto(m)}`,
+      action: `El personal autorizado debe revisar ${m.valveName} en sitio y aplicar el procedimiento de rearme de la planta antes de volver a operar.`,
     };
   }
   if (m.status === 'failed' && m.reason === 'HOLD_FEEDBACK_TIMEOUT') {
@@ -154,10 +171,12 @@ export function avisoDeManiobra(m: ManiobraInput): ManiobraNotice {
   if (m.status === 'sent' || !m.estadoVerificado) {
     return {
       severity: 'warning',
-      title: `${quien} ${enPasado(m.command)} ${m.valveName}`,
+      title: `${quien} solicitó ${enInfinitivo(m.command)} ${m.valveName}`,
       // El matiz que no se puede perder: esta planta no informa del estado eléctrico de la válvula.
       // Decir «confirmado» aquí sería afirmar algo que nadie ha comprobado.
-      message: `Orden enviada y aceptada por el equipo a las ${cuando}. Esta planta no reporta el estado eléctrico de la válvula, así que la maniobra no se puede confirmar desde aquí${sello}.`,
+      message: m.reason === 'SENT_FEEDBACK_PENDING'
+        ? `Orden enviada y aceptada por el equipo a las ${cuando}. El PLC todavía no ha confirmado la posición solicitada; la maniobra sigue pendiente de confirmación física${sello}.`
+        : `Orden enviada y aceptada por el equipo a las ${cuando}. Esta planta no reporta el estado eléctrico de la válvula, así que la maniobra no se puede confirmar desde aquí${sello}.`,
       action: `Verificar en sitio que ${m.valveName} quedó como se pidió.`,
     };
   }

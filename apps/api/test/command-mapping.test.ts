@@ -233,7 +233,7 @@ test('mapping de PRODUCCIÓN: solo las plantas con estado VERIFICADO exponen val
   const conEstado = prod.plants
     .filter((p) => (p.signals ?? []).some((s) => s.domainKey === 'valve1State'))
     .map((p) => p.plantId);
-  assert.deepEqual(conEstado, ['cascajal', 'sirena'], 'añadir otra planta exige confirmar su índice/patrón en campo primero');
+  assert.deepEqual(conEstado, ['voragine', 'cascajal', 'sirena'], 'añadir otra planta exige confirmar su índice/patrón en campo primero');
 
   // LA REGLA QUE DE VERDAD IMPORTA: exponer la palabra no es lo mismo que creerle. Cada una que
   // esté mapeada debe declarar POR QUÉ se le hace caso — o declarar que no se le hace.
@@ -309,9 +309,9 @@ test('mapping de PRODUCCIÓN: cada válvula escribe en el canal 0 en modo absolu
     assert.equal(w?.sustained, true, `${quien}: señal SOSTENIDA`);
     assert.equal(w?.pulse, undefined, `${quien}: sin pulso`);
     assert.equal(w?.rollbackValue, undefined, `${quien}: sin rollbackValue`);
-    assert.equal(w?.readBack?.channel, 'intOut', `${quien}: read-back va por canal de comando`);
-    assert.equal(w?.readBack?.confirmsWrittenValue, true, `${quien}: confirma eco`);
-    assert.equal(w?.readBack?.stateVerified, false, `${quien}: estado no verificado`);
+    assert.equal(w?.readBack?.channel, plantId === 'voragine' ? 'intIn' : 'intOut', `${quien}: canal verificado o eco`);
+    assert.equal(w?.readBack?.confirmsWrittenValue, plantId !== 'voragine', `${quien}: eco solo sin feedback verificado`);
+    assert.equal(w?.readBack?.stateVerified, plantId === 'voragine', `${quien}: estado confirmado solo en Vorágine`);
     if (domainKey === 'valve1') {
       assert.deepEqual(w?.commands, { open: 4096, close: 8192 }, `${quien}: salida 4096/8192`);
     } else {
@@ -332,7 +332,7 @@ test('mapping de PRODUCCIÓN: CERRAR solo existe donde hay respaldo (campo o int
   for (const [quien, entrega] of Object.entries(ENTREGA_INTEGRADOR_2026_10_16)) {
     const w = valvulasDeProduccion().find((v) => `${v.plantId}/${v.domainKey}` === quien)?.w;
     assert.ok(typeof w?._riesgo === 'string' && /integrador/i.test(w._riesgo) && /sosten/i.test(w._riesgo));
-    assert.equal(w?.readBack?.stateVerified, false);
+    assert.equal(w?.readBack?.stateVerified, quien.startsWith('voragine/'));
     assert.equal(entrega.open & entrega.close, 0);
   }
   const salida = valvulasDeProduccion().find((v) => v.plantId === 'voragine' && v.domainKey === 'valve1')?.w;
@@ -609,5 +609,54 @@ test('mapping de PRODUCCIÓN: la válvula de La Sirena declara cuál es SU cauda
       (planta?.signals ?? []).some((s) => s.domainKey === 'outletFlow1'),
       `${plantId}: la señal declarada en flowDomainKey debe estar mapeada en la misma planta`,
     );
+  }
+});
+
+test('mapping: confirmed Voragine feedback uses intIn[1] independent disjoint masks', () => {
+  const signals = loadMapping(join(__dirname, '..', 'config', 'opc_mapping.json')).signals.filter((s) => s.plantId === 'voragine');
+  for (const [key, bits, commands] of [
+    ['valve1', { open: 1024, close: 2048, fault: 16384 }, { open: 4096, close: 8192 }],
+    ['valve2', { open: 1, close: 2, fault: 16 }, { open: 4, close: 8 }],
+  ] as const) {
+    const state = signals.find((s) => s.domainKey === `${key}State`)!;
+    assert.equal(state.writable, false);
+    assert.equal(state.stateTrusted, true);
+    assert.equal(state.confidence, 'confirmed');
+    assert.equal(state.buffer, 'intIn');
+    assert.equal(state.sourceBuffer, 'INT_IN_VORAGINE');
+    assert.equal(state.index, 1);
+    assert.deepEqual(state.stateEncoding, { bits });
+    const write = signals.find((s) => s.domainKey === key)!.write!;
+    assert.deepEqual(write.commands, commands);
+    assert.equal(write.mode, 'absolute');
+    assert.equal(write.sustained, true);
+    assert.equal(write.pulse, null);
+    assert.equal(write.rollbackValue, undefined);
+    assert.equal(write.readBack.channel, 'intIn');
+    assert.equal(write.readBack.index, 1);
+    assert.equal(write.readBack.confirmsWrittenValue, false);
+    assert.equal(write.readBack.stateVerified, true);
+    assert.equal(write.readBack.mask, bits.open | bits.close);
+    assert.equal(write.readBack.faultMask, bits.fault);
+    assert.deepEqual(write.readBack.expectedByCommand, { open: bits.open, close: bits.close });
+  }
+});
+
+test('loader fails closed for invalid feedback masks and overlapping state bits', () => {
+  const source = loadJson(join(__dirname, '..', 'config', 'opc_mapping.json')) as {
+    plants: Array<{ signals: Array<{ domainKey: string; write?: { readBack: { mask?: number; faultMask?: number } };
+      stateEncoding?: { bits?: { open: number; close: number; fault: number } } }> }>;
+  };
+  for (const kind of ['readBack', 'state'] as const) {
+    const mapping = structuredClone(source);
+    if (kind === 'readBack') {
+      mapping.plants[0].signals.find((s) => s.domainKey === 'valve1')!.write!.readBack.faultMask = 1024;
+    } else {
+      mapping.plants[0].signals.find((s) => s.domainKey === 'valve1State')!.stateEncoding!.bits!.fault = 1024;
+    }
+    const dir = mkdtempSync(join(tmpdir(), 'ptap-feedback-masks-'));
+    const path = join(dir, 'mapping.json');
+    writeFileSync(path, JSON.stringify(mapping));
+    assert.throws(() => loadMapping(path), /máscaras|solapadas/);
   }
 });

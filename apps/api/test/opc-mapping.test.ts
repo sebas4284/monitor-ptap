@@ -191,3 +191,42 @@ test('H4: rechaza planta sin displayNameProvisional', () => {
   assert.equal(result.ok, false);
   assert.ok(result.errors.some((e) => e.startsWith('schema')), result.errors.join('\n'));
 });
+
+test('read-only bit states may share a word only with explicit nonoverlapping masks', () => {
+  const mapping = loadJson(join(CONFIG_DIR, 'opc_mapping.json')) as {
+    plants: Array<{ signals: Array<{ domainKey: string; stateEncoding?: { bits?: { open: number; close: number; fault: number } };
+      write?: { readBack: Record<string, unknown> } }> }>;
+  };
+  const signals = mapping.plants[0].signals;
+  const inlet = signals.find((s) => s.domainKey === 'valve2State')!;
+  assert.equal(validateMapping(schema, mapping).ok, true);
+  for (const mutate of [
+    () => { inlet.stateEncoding!.bits!.fault = 16384; },
+    () => { inlet.stateEncoding!.bits!.open = 16; },
+    () => { inlet.stateEncoding!.bits!.open = 65536; },
+    () => { delete inlet.stateEncoding!.bits; },
+  ]) {
+    const original = structuredClone(inlet);
+    mutate();
+    assert.equal(validateMapping(schema, mapping).ok, false);
+    delete inlet.stateEncoding;
+    Object.assign(inlet, original);
+  }
+});
+
+test('readBack masks reject zero, fractional, out-of-word, overlapping or meaningless expectations', () => {
+  const mapping = loadJson(join(CONFIG_DIR, 'opc_mapping.json')) as {
+    plants: Array<{ signals: Array<{ domainKey: string; stateEncoding?: { bits?: { open: number; close: number; fault: number } };
+      write?: { readBack: Record<string, unknown> } }> }>;
+  };
+  const feedback = mapping.plants[0].signals.find((s) => s.domainKey === 'valve1')!.write!.readBack;
+  const original = structuredClone(feedback);
+  for (const patch of [
+    { mask: 0 }, { mask: 1.5 }, { mask: 65536 }, { faultMask: 0 }, { faultMask: 1024 },
+    { expectedByCommand: { open: 4, close: 8 } }, { expectedByCommand: { open: 1024 } }, { expectedByCommand: { open: 0, close: 0 } },
+  ]) {
+    Object.assign(feedback, original, patch);
+    const result = validateMapping(schema, mapping);
+    assert.equal(result.ok, false, JSON.stringify(patch));
+  }
+});

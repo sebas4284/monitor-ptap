@@ -63,7 +63,7 @@ interface TankCardProps {
 
 interface ValveItemProps {
   valve: SupervisedValve;
-  onToggle?: (valve: SupervisedValve) => void;
+  onToggle?: (valve: SupervisedValve, verb?: 'open' | 'close') => void;
   frozen?: boolean;
   busy?: boolean;
   compact?: boolean;
@@ -89,6 +89,7 @@ export function sameValveItem(a: ValveItemProps, b: ValveItemProps): boolean {
     x.name === y.name &&
     x.effectiveState === y.effectiveState &&
     x.manualOverride === y.manualOverride &&
+    x.fault === y.fault &&
     // Proporcionales: el tipo decide si se pinta la apertura y la puerta `setpoint-pending`, y la
     // apertura se mueve sin que cambie el estado (30 % → 60 % sigue «Abierta»): sin compararla, el
     // número y la barra se quedarían congelados en la primera lectura.

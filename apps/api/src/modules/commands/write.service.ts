@@ -31,12 +31,8 @@ import {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-/**
- * Ventana de read-back cuando el canal de estado NO está verificado (`stateVerified: false`).
- * Suficiente para captar un cambio inmediato si lo hubiera, sin bloquear al operador esperando un
- * valor que de antemano sabemos que no es fiable.
- */
-const UNVERIFIED_READBACK_MS = 600;
+/** Short observation before acknowledging unverified state or a sustained command still in transit. */
+const SHORT_READBACK_MS = 600;
 
 /**
  * Cada cuánto se consulta la realimentación durante un sostenido (`pulse.until`).
@@ -256,6 +252,34 @@ export class WriteService {
       return this.audit(actor, req, await this.finalizeNoReserve({ ...reject(REJECT.INTERLOCK_FAILED), reason: `${REJECT.INTERLOCK_FAILED}: ${il.reason}` }));
     }
 
+    // Live feedback is read before reservation and before any output IO. A cached state cannot
+    // authorize a maneuver while the actuator itself reports a fault.
+    if (write.readBack.faultMask !== undefined) {
+      let reason: string | null = null;
+      try {
+        const feedback = await this.adapter.readBufferElement({
+          plantId, channel: write.readBack.channel,
+          sourceBuffer: write.readBack.sourceBuffer ?? write.target.sourceBuffer,
+          index: write.readBack.index,
+        });
+        if (!this.validFeedbackWord(feedback.value, feedback.quality)) reason = 'VALVE_FEEDBACK_UNAVAILABLE';
+        else if ((feedback.value & write.readBack.faultMask) !== 0) reason = FAIL.VALVE_FAULT;
+        else if (write.readBack.mask !== undefined) {
+          const endpoints = feedback.value & write.readBack.mask;
+          // Zero means between endpoints. Any other combination must be a declared physical
+          // position; contradictory endpoints cannot authorize even the first output write.
+          if (endpoints !== 0 && !Object.values(write.readBack.expectedByCommand ?? {}).includes(endpoints)) {
+            reason = 'VALVE_FEEDBACK_CONFLICT';
+          }
+        }
+      } catch {
+        reason = 'VALVE_FEEDBACK_UNAVAILABLE';
+      }
+      if (reason) {
+        return this.audit(actor, req, await this.finalizeNoReserve(reject(`${REJECT.INTERLOCK_FAILED}: ${reason}`)));
+      }
+    }
+
     // 6) Idempotencia (insert-pending-first): reserva ANTES de escribir (evita doble accionamiento).
     const reservation = await this.repo.reserve({
       idempotencyKey: req.idempotencyKey ?? null,
@@ -381,19 +405,26 @@ export class WriteService {
       }
 
       // 7c) Confirmación por el canal de ESTADO (que el equipo se movió).
-      const confirmation = await this.confirmReadBack(plantId, write, writtenValue, req.command);
+      const confirmation = await this.confirmReadBack(plantId, write, writtenValue, req.command, base.writeVerified === true);
       base.confirmedValue = confirmation.value;
 
       // El eco puede coincidir en el MISMO registro de mando: no acredita movimiento
       // cuando el mapping declara explícitamente que no hay estado físico verificado.
-      if (confirmation.confirmed && write.readBack.stateVerified !== false) {
+      if (confirmation.fault) {
+        // The physical command remains sustained. Reporting a fault never clears its output.
+        result = { ...base, status: 'failed', reason: FAIL.VALVE_FAULT };
+      } else if (confirmation.confirmed && write.readBack.stateVerified !== false) {
         result = { ...base, status: 'confirmed', reason: null };
+      } else if (write.sustained && write.readBack.mask !== undefined && base.writeVerified === true) {
+        // A short acknowledgment window is not the actuator's travel deadline. Leave the exact
+        // absolute command set; the live pipeline will report its physical position as it arrives.
+        result = { ...base, status: 'sent', reason: SENT.SENT_FEEDBACK_PENDING };
       } else if (write.readBack.stateVerified === false && base.writeVerified === true) {
         // El canal de estado de este sitio NO tiene semántica verificada en campo: su valor
         // esperado es una inferencia. Con el eco probando que la escritura quedó en el canal, no
         // hay base para declarar un fallo del equipo — pero tampoco para afirmar que se movió.
         // Ver CommandOutcome.'sent'. Un pulso ya se limpió en 7b-bis; no se hace rollback. Una orden
-        // SOSTENIDA acaba casi siempre aquí (La Vorágine no tiene estado verificado) y se queda puesta.
+        // SOSTENIDA con estado no verificado se queda puesta.
         await this.rollbackSteps(el, write, escritos);
         result = { ...base, status: 'sent', reason: SENT.SENT_STATE_UNVERIFIED };
       } else {
@@ -449,13 +480,20 @@ export class WriteService {
     return { ok: true, reason: 'ok', sequence: snap.sequence };
   }
 
+  private validFeedbackWord(value: CommandValue, quality: string): value is number {
+    // OPC Int16 may be signed; accept its unsigned 16-bit representation as well.
+    return quality === 'Good' && typeof value === 'number' && Number.isInteger(value)
+      && value >= -0x8000 && value <= 0xffff;
+  }
+
   /** Re-lee el elemento de confirmación hasta que coincida con el valor esperado o venza el timeout. */
   private async confirmReadBack(
     plantId: string,
     write: WriteSpec,
     writtenValue: CommandValue,
     command: string,
-  ): Promise<{ confirmed: boolean; value: CommandValue }> {
+    writeVerified: boolean,
+  ): Promise<{ confirmed: boolean; value: CommandValue; fault?: boolean }> {
     // El estado esperado depende del VERBO cuando cada comando deja un estado distinto
     // (abrir → 16385, cerrar → 16384). `expectedByCommand` manda sobre el valor único.
     const perCommand = write.readBack.expectedByCommand?.[command];
@@ -475,8 +513,11 @@ export class WriteService {
     // aguardando un valor que ya sabemos que no representa el estado (`stateVerified: false`), y
     // mientras tanto el operador mira un botón girando. Se hace una ventana corta —por si el estado
     // SÍ cambiara, que sería información valiosa— y se resuelve. La orden pasa de ~5,5 s a ~1 s.
-    const efectivo = write.readBack.stateVerified === false
-      ? Math.min(write.timeoutMs, UNVERIFIED_READBACK_MS)
+    // A verified sustained masked command needs a short acknowledgment window, while its
+    // physical travel continues under PLC control. No extra background observation is started.
+    const feedbackPending = write.sustained && write.readBack.mask !== undefined && writeVerified;
+    const efectivo = write.readBack.stateVerified === false || feedbackPending
+      ? Math.min(write.timeoutMs, SHORT_READBACK_MS)
       : write.timeoutMs;
     const deadline = Date.now() + efectivo;
     const pollMs = Math.max(5, Math.min(50, Math.floor(efectivo / 4)));
@@ -485,7 +526,16 @@ export class WriteService {
     do {
       const rb = await this.adapter.readBufferElement(rbTarget);
       last = rb.value;
-      if (last === expected) return { confirmed: true, value: last };
+      if (write.readBack.mask !== undefined || write.readBack.faultMask !== undefined) {
+        if (this.validFeedbackWord(last, rb.quality)) {
+          if (write.readBack.faultMask !== undefined && (last & write.readBack.faultMask) !== 0) {
+            return { confirmed: false, value: last, fault: true };
+          }
+          if (write.readBack.mask !== undefined && (last & write.readBack.mask) === expected) {
+            return { confirmed: true, value: last };
+          }
+        }
+      } else if (last === expected) return { confirmed: true, value: last };
       if (Date.now() >= deadline) break;
       await sleep(pollMs);
     } while (Date.now() < deadline);

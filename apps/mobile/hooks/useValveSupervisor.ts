@@ -114,7 +114,7 @@ export function useValveSupervisor(plantId: string, valves: ValveView[]) {
         const res = await sendValveCommand(plantId, verb, valve.id);
         const verdict = interpretCommand(res, verb, valve.name);
         const message = yaEstaba
-          ? `Ya estaba ${verb === 'open' ? 'ABIERTA' : 'CERRADA'}, pero la orden se envió igual.\n\n${verdict.message}`
+          ? `La lectura mostrada ya indicaba ${verb === 'open' ? 'ABIERTA' : 'CERRADA'}.\n\n${verdict.message}`
           : verdict.message;
 
         // Una orden confirmada es la verdad más fuerte: invalida cualquier override manual.

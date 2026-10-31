@@ -667,24 +667,29 @@ test('sim e2e: La Vorágine REAL — cada mando absoluto sustituye INT_OUT[0], s
     assert.equal(m.sim.getSimulatedValve('voragine', 'valve2')?.state, 'closed');
 
     const steps = [
-      { target: 'valve1', command: 'open', value: 4096, state: 'open' },
-      { target: 'valve2', command: 'open', value: 4, state: 'open' },
-      { target: 'valve1', command: 'close', value: 8192, state: 'closed' },
-      { target: 'valve2', command: 'close', value: 8, state: 'closed' },
+      { target: 'valve1', command: 'open', value: 4096, state: 'open', feedback: 1026 },
+      { target: 'valve2', command: 'open', value: 4, state: 'open', feedback: 1025 },
+      { target: 'valve1', command: 'close', value: 8192, state: 'closed', feedback: 2049 },
+      { target: 'valve2', command: 'close', value: 8, state: 'closed', feedback: 2050 },
     ];
     for (const [index, step] of steps.entries()) {
       const write = real.signals.find((s) => s.plantId === 'voragine' && s.domainKey === step.target)?.write;
-      assert.equal(write?.readBack.stateVerified, false, 'solo se confirma el canal de mando');
+      assert.equal(write?.readBack.stateVerified, true, 'posición física confirmada por bits en INT_IN[1]');
       const t0 = Date.now();
       const r = await esperar(t, orden(m, 'voragine', step.target, step.command), 10_000);
-      assert.equal(r.status, 'sent', `${step.target}: solo eco del mando ${r.reason}`);
+      assert.equal(r.status, 'sent', `${step.target}: el recorrido físico aún no terminó (${r.reason})`);
+      assert.equal(r.reason, 'SENT_FEEDBACK_PENDING');
       assert.equal(r.writeVerified, true);
       assert.equal(r.writtenValue, step.value, 'modo absoluto: no conserva el par de la otra válvula');
-      assert.equal(r.confirmedValue, step.value);
-      assert.ok(Date.now() - t0 < 3000, 'el eco no espera al recorrido físico de 30 s');
+      assert.notEqual(Number(r.confirmedValue) & write!.readBack.mask!, write!.readBack.expectedByCommand![step.command], 'el recorrido de 30 s aún no terminó');
+      assert.ok(Date.now() - t0 < 3000, 'acuse rápido: observación de 600 ms, sin esperar recorrido de 30 s');
       await avanzar(t, 60_000, 50);
       assert.equal(escriturasEn(m.sim.getWriteHistory(), PALABRA).length, index + 1, 'una escritura por orden y ninguna limpieza');
       assert.equal(m.sim.getSimulatedValve('voragine', step.target)?.state, step.state);
+      const feedback = await esperar(t, m.sim.readBufferElement({ plantId: 'voragine', channel: 'intIn', sourceBuffer: 'INT_IN_VORAGINE', index: 1 }), 1000);
+      assert.equal(feedback.value, step.feedback, 'la palabra conserva simultáneamente el estado de ambas válvulas');
+      assert.equal(Number(feedback.value) & write!.readBack.mask!, write!.readBack.expectedByCommand![step.command], 'final de carrera de esa válvula');
+      assert.equal(Number(feedback.value) & (16384 | 16), 0, 'ninguna falla simulada');
     }
     const ws = escriturasEn(m.sim.getWriteHistory(), PALABRA);
     assert.deepEqual(ws.map((w) => w.value), [4096, 4, 8192, 8], 'cada orden sustituye la palabra completa');
@@ -711,6 +716,34 @@ test('sim e2e: La Vorágine REAL — cada mando absoluto sustituye INT_OUT[0], s
   }
 });
 
+test('sim e2e: La Vorágine REAL — falla de salida bloquea sus dos órdenes sin afectar la realimentación de entrada', async (t) => {
+  relojFalso(t);
+  const real = loadMapping(RUTA_MAPPING_PRODUCCION);
+  const m = await montar(opciones(), { mapping: real, resolver: resolverDe(real) });
+  const feedbackTarget = { plantId: 'voragine', channel: 'intIn', sourceBuffer: 'INT_IN_VORAGINE', index: 1 };
+  try {
+    await avanzar(t, 100);
+    m.sim.forceValveError('voragine', 'valve1', 'falla de prueba');
+    const faulted = await m.sim.readBufferElement(feedbackTarget);
+    assert.equal(faulted.value, 16386, 'falla salida bit14 y entrada cerrada bit1 coexisten');
+    for (const command of ['open', 'close']) {
+      const result = await esperar(t, orden(m, 'voragine', 'valve1', command), 1000);
+      assert.equal(result.status, 'rejected');
+      assert.equal(result.reason, 'INTERLOCK_FAILED: VALVE_FAULT');
+    }
+    assert.deepEqual(escriturasEn(m.sim.getWriteHistory(), 'INT_OUT_VORAGINE'), []);
+    const inlet = await esperar(t, orden(m, 'voragine', 'valve2', 'open'), 10_000);
+    assert.equal(inlet.status, 'sent', 'bit14 pertenece a salida, no a entrada');
+    assert.equal(inlet.reason, 'SENT_FEEDBACK_PENDING');
+    await avanzar(t, 2000);
+    const inletOpen = await m.sim.readBufferElement(feedbackTarget);
+    assert.equal(inletOpen.value, 16385, 'falla salida persiste junto al fin de carrera de entrada');
+    assert.deepEqual(escriturasEn(m.sim.getWriteHistory(), 'INT_OUT_VORAGINE').map((w) => w.value), [4]);
+  } finally {
+    await m.parar();
+  }
+});
+
 // ── Válvulas en buffers distintos y en bitOut ─────────────────────────────────────────
 
 test('sim e2e: buffers distintos — absoluta, máscara con pulse.until en otro INT_OUT y dos bobinas en bitOut; cada una toca solo lo suyo', async (t) => {
@@ -731,7 +764,7 @@ test('sim e2e: buffers distintos — absoluta, máscara con pulse.until en otro 
     assert.deepEqual(w2.map((w) => w.value), [4096, 0]);
     const sostenido = w2[1].ms - w2[0].ms;
     assert.ok(sostenido >= 5000 && sostenido < 7000, `se soltó por la realimentación al llegar (5 s de recorrido), no a los 45 s: ${sostenido} ms`);
-    assert.equal(r2.status, 'sent', 'su read-back espera 16385 para abrir Y cerrar (como La Vorágine): ambiguo, no se emula');
+    assert.equal(r2.status, 'sent', 'su read-back espera 16385 para abrir Y cerrar: ambiguo, no se emula');
 
     // 3) Dos bobinas en bitOut: primero se suelta la contraria y después se energiza la propia; al
     //    soltar, en orden inverso.
