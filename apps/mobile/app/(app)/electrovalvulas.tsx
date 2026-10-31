@@ -13,7 +13,7 @@ import { ConnectionBanner } from '../../components/ConnectionBanner';
 import { LiveBadge } from '../../components/LiveBadge';
 import { ListSkeleton } from '../../components/Skeleton';
 import { OfflineNotice } from '../../components/OfflineNotice';
-import { valvesFromSnapshot, accionDisponible, type CommandVerdict } from '../../services/valves';
+import { valvesFromSnapshot, accionDisponible, resumenDeValvulas, type CommandVerdict } from '../../services/valves';
 import { useValveSupervisor, type SupervisedValve } from '../../hooks/useValveSupervisor';
 import { useDashboardPrefs } from '../../services/dashboard-prefs';
 import { EN_INTEGRACION } from '../../services/plant-status';
@@ -62,10 +62,9 @@ export default function ElectrovalvulasScreen() {
   const { compact } = useDashboardPrefs();
 
   // Memoizados: eran tres recorridos completos del array en CADA render.
-  const { openCount, closedCount, conLecturaDeEstado } = useMemo(
+  const { openCount, closedCount, unconfirmedCount, faultCount, conLecturaDeEstado } = useMemo(
     () => ({
-      openCount: valves.filter((v) => v.effectiveState === 'open').length,
-      closedCount: valves.filter((v) => v.effectiveState === 'closed').length,
+      ...resumenDeValvulas(valves),
       // Sin señal de estado eléctrico el read-back no puede confirmar la maniobra: hay que avisarlo.
       conLecturaDeEstado: valves.some((v) => v.byState !== null),
     }),
@@ -153,6 +152,8 @@ export default function ElectrovalvulasScreen() {
               <Text style={[styles.summaryCount, { color: Colors.success }]}>{openCount} abiertas</Text>
               <Text style={styles.summaryDot}> · </Text>
               <Text style={[styles.summaryCount, { color: Colors.danger }]}>{closedCount} cerradas</Text>
+              {unconfirmedCount > 0 && <Text style={[styles.summaryCount, { color: Colors.textSecondary }]}> · {unconfirmedCount} sin confirmar</Text>}
+              {faultCount > 0 && <Text style={[styles.summaryCount, { color: Colors.danger }]}> · {faultCount} en falla</Text>}
             </View>
           )}
         </View>
@@ -239,7 +240,7 @@ const styles = StyleSheet.create({
   sectionHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 12 },
   plantName: { fontSize: 17, fontWeight: '800', color: Colors.textPrimary },
   sectionSubtitle: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
-  summary: { flexDirection: 'row', alignItems: 'center', marginTop: 4 },
+  summary: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center', maxWidth: '65%', marginTop: 4 },
   summaryCount: { fontSize: 12, fontWeight: '700' },
   summaryDot: { color: Colors.textSecondary, fontSize: 12 },
   notice: {

@@ -8,7 +8,8 @@ import type { PlantSnapshotDto, SignalDto, ValveCommandResult } from './api';
  *   1. `valve<N>State`: usa los finales de carrera y falla declarados en `stateEncoding.bits`,
  *      o valores literales del sitio. Solo mappings heredados sin codificación usan bit14 válido
  *      y bit0 abierta. En Vorágine bit14 es FALLA de salida, no validez.
- *   2. Caudal: si el caudal es <= 0.1 la válvula está CERRADA; por encima, ABIERTA.
+ *   2. Caudal: conserva una estimación de estado para la supervisión heredada. Al mostrarla se
+ *      distingue «Con flujo / Sin flujo» de una posición leída: el caudal no es un final de carrera.
  *
  * Se muestran AMBOS y se cruzan: el método 1 manda (es la lectura del propio equipo) y el 2 corrobora.
  * Si discrepan se marca `disagreement` — eso es información valiosa para el operador (sensor de estado
@@ -96,6 +97,41 @@ export interface ValveView {
   /** Finales de carrera declarados: el caudal no sustituye esta realimentación física. */
   physicalFeedback?: boolean;
   ts: string | null;
+}
+
+type ValveWithShownState = ValveView & { effectiveState?: ValveState; manualOverride?: boolean };
+
+/** What the available evidence permits the screen to say, independent of command selection. */
+export function presentacionDeValvula(valve: ValveWithShownState): {
+  label: string;
+  kind: 'physical' | 'flow' | 'fault' | 'unknown';
+  physicalState: ValveState;
+} {
+  const shown = valve.effectiveState ?? valve.state;
+  if (valve.fault) return { label: 'Falla', kind: 'fault', physicalState: 'unknown' };
+  if (valve.manualOverride || valve.source === 'caudal') {
+    return {
+      label: shown === 'open' ? 'Con flujo' : shown === 'closed' ? 'Sin flujo' : 'Caudal sin dato',
+      kind: 'flow',
+      physicalState: 'unknown',
+    };
+  }
+  if ((valve.source === 'estado' || valve.source === 'posicion') && shown !== 'unknown') {
+    return { label: shown === 'open' ? 'Abierta' : 'Cerrada', kind: 'physical', physicalState: shown };
+  }
+  return { label: 'Sin confirmar', kind: 'unknown', physicalState: 'unknown' };
+}
+
+export function resumenDeValvulas(valves: ValveWithShownState[]) {
+  const result = { openCount: 0, closedCount: 0, unconfirmedCount: 0, faultCount: 0 };
+  for (const valve of valves) {
+    const evidence = presentacionDeValvula(valve);
+    if (evidence.kind === 'fault') result.faultCount++;
+    else if (evidence.physicalState === 'open') result.openCount++;
+    else if (evidence.physicalState === 'closed') result.closedCount++;
+    else result.unconfirmedCount++;
+  }
+  return result;
 }
 
 function numeric(signal: SignalDto | undefined): number | null {

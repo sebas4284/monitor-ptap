@@ -1,7 +1,7 @@
 import { memo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { accionDisponible, anchoBarraApertura, textoApertura } from '../services/valves';
+import { accionDisponible, anchoBarraApertura, textoApertura, presentacionDeValvula } from '../services/valves';
 import type { SupervisedValve } from '../hooks/useValveSupervisor';
 import Colors from '../constants/colors';
 import { sameValveItem } from './memo-compare';
@@ -18,12 +18,6 @@ interface Props {
   busy?: boolean;
   compact?: boolean;
 }
-
-const STATE_LABEL: Record<SupervisedValve['state'], string> = {
-  open: 'Abierta',
-  closed: 'Cerrada',
-  unknown: 'Sin dato',
-};
 
 /**
  * Una fila de electroválvula: su estado, y el mando SOLO si de verdad puede salir.
@@ -47,7 +41,8 @@ function ValveItemBase({ valve, onToggle, frozen = false, busy = false }: Props)
   // Estado EFECTIVO: el que sigue al caudal si se detectó operación manual, para no mandar "abrir"
   // a algo que ya abrieron a mano.
   const shown = valve.effectiveState;
-  const color = valve.fault ? Colors.danger : shown === 'open' ? Colors.success : shown === 'closed' ? Colors.danger : Colors.neutral;
+  const evidence = presentacionDeValvula(valve);
+  const color = evidence.kind === 'fault' ? Colors.danger : evidence.physicalState === 'open' ? Colors.success : evidence.physicalState === 'closed' ? Colors.danger : Colors.neutral;
 
   const accion = accionDisponible(valve, frozen);
   // El mando exige LAS DOS cosas: que la válvula lo permita y que el rol tenga el permiso (sin
@@ -61,9 +56,9 @@ function ValveItemBase({ valve, onToggle, frozen = false, busy = false }: Props)
     <View style={[styles.row, frozen && styles.rowFrozen]}>
       <View style={[styles.iconWrap, { backgroundColor: color + '18' }]}>
         <Ionicons
-          // Forma de interruptor SOLO si se puede pulsar (ver cabecera). Si no, un icono de
-          // lectura: informa del estado sin prometer que se puede cambiar desde aquí.
-          name={accionable ? (shown === 'open' ? 'toggle' : 'toggle-outline') : 'water-outline'}
+          // El interruptor exige mando y posición leída. El flujo lleva un icono de agua;
+          // las acciones autorizadas siguen siendo los botones explícitos de esta fila.
+          name={accionable && evidence.kind === 'physical' ? (shown === 'open' ? 'toggle' : 'toggle-outline') : 'water-outline'}
           size={22}
           color={color}
         />
@@ -79,7 +74,7 @@ function ValveItemBase({ valve, onToggle, frozen = false, busy = false }: Props)
           )}
           {valve.manualOverride && (
             <View style={styles.tagWarn}>
-              <Text style={styles.tagWarnText}>operada manualmente</Text>
+              <Text style={styles.tagWarnText}>posible operación manual</Text>
             </View>
           )}
         </View>
@@ -106,7 +101,7 @@ function ValveItemBase({ valve, onToggle, frozen = false, busy = false }: Props)
 
       <View style={styles.right}>
         <View style={[styles.badge, { backgroundColor: color + '18' }]}>
-          <Text style={[styles.badgeText, { color }]}>{valve.fault ? 'Falla' : STATE_LABEL[shown]}</Text>
+          <Text style={[styles.badgeText, { color }]}>{evidence.label}</Text>
         </View>
 
         {accionable && onToggle && actions.map((verb) => (

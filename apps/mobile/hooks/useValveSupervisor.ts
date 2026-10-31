@@ -4,6 +4,7 @@ import {
   detectManual,
   interpretCommand,
   vigilaOperacionManual,
+  presentacionDeValvula,
   type CommandVerdict,
   type ValveState,
   type ValveView,
@@ -113,8 +114,9 @@ export function useValveSupervisor(plantId: string, valves: ValveView[]) {
       try {
         const res = await sendValveCommand(plantId, verb, valve.id);
         const verdict = interpretCommand(res, verb, valve.name);
-        const message = yaEstaba
-          ? `La lectura mostrada ya indicaba ${verb === 'open' ? 'ABIERTA' : 'CERRADA'}.\n\n${verdict.message}`
+        const evidence = presentacionDeValvula(valve);
+        const message = yaEstaba && evidence.kind !== 'fault' && evidence.kind !== 'unknown'
+          ? `La lectura previa indicaba: ${evidence.label.toUpperCase()}.\n\n${verdict.message}`
           : verdict.message;
 
         // Una orden confirmada es la verdad más fuerte: invalida cualquier override manual.

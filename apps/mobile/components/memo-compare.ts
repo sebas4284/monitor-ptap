@@ -77,9 +77,9 @@ interface ValveItemProps {
 export function sameValveItem(a: ValveItemProps, b: ValveItemProps): boolean {
   if (a.frozen !== b.frozen || a.busy !== b.busy || a.compact !== b.compact) return false;
   if (a.onToggle !== b.onToggle) return false;
-  // NO se comparan `source`/`byState`/`byFlow`/`flowValue`/`disagreement`/`rawState`: el
-  // razonamiento estado-vs-caudal dejó de pintarse (184b350) y comparar lo que no se muestra
-  // solo hace creer al siguiente que sí se muestra. `manualOverride`, que SÍ se pinta, está abajo.
+  // `source` decide si se muestra posición o sólo flujo. Un cambio de origen tiene que repintar
+  // aunque `effectiveState` siga siendo open/closed. No se comparan los datos que no se pintan:
+  // `byState`/`byFlow`/`flowValue`/`disagreement`/`rawState`.
   // La regla de este archivo es la inversa y es la peligrosa: un campo PINTADO y no comparado se
   // queda congelado en pantalla.
   const x = a.valve;
@@ -88,6 +88,7 @@ export function sameValveItem(a: ValveItemProps, b: ValveItemProps): boolean {
     x.id === y.id &&
     x.name === y.name &&
     x.effectiveState === y.effectiveState &&
+    x.source === y.source &&
     x.manualOverride === y.manualOverride &&
     x.fault === y.fault &&
     // Proporcionales: el tipo decide si se pinta la apertura y la puerta `setpoint-pending`, y la

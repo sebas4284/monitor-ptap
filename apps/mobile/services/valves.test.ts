@@ -8,6 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { sameValveItem } from '../components/memo-compare';
 import {
   valvesFromSnapshot,
   isValveSignal,
@@ -19,6 +20,8 @@ import {
   vigilaOperacionManual,
   textoApertura,
   anchoBarraApertura,
+  presentacionDeValvula,
+  resumenDeValvulas,
 } from './valves';
 import type { PlantSnapshotDto, SignalDto, ValveCommandResult } from './api';
 
@@ -721,4 +724,51 @@ test('proporcional: texto y barra de la apertura', () => {
   assert.equal(anchoBarraApertura(-3), 0);
   assert.equal(anchoBarraApertura(null), 0);
   assert.equal(anchoBarraApertura(55.5), 55.5);
+});
+
+const displayValve = presentacionDeValvula;
+const summarizeValves = resumenDeValvulas;
+
+test('presentación: caudal cero o positivo no afirma una posición física', () => {
+  const closedByFlow = valvesFromSnapshot(snap({ valve1: sig(0), outletFlow1: sig(0) }))[0];
+  const openByFlow = valvesFromSnapshot(snap({ valve1: sig(0), outletFlow1: sig(4) }))[0];
+  assert.equal(displayValve(closedByFlow).label, 'Sin flujo');
+  assert.equal(displayValve(closedByFlow).physicalState, 'unknown');
+  assert.equal(displayValve(openByFlow).label, 'Con flujo');
+  assert.equal(displayValve(openByFlow).physicalState, 'unknown');
+  assert.equal(accionDisponible({ ...openByFlow, commands: ['open', 'close'] }, false, 'open').kind, 'command', 'la aclaración no bloquea un mando normal explícito');
+});
+
+test('presentación: finales/posición y falla conservan prioridad sobre el caudal', () => {
+  const measured = valvesFromSnapshot(snap({ valve1: sig(0), valve1State: sig(1025, { stateEncoding: { bits: { open: 1024, close: 2048, fault: 16384 } } }), outletFlow1: sig(0) }))[0];
+  assert.equal(displayValve(measured).label, 'Abierta');
+  assert.equal(displayValve(measured).physicalState, 'open');
+  assert.equal(displayValve({ ...measured, fault: true }).label, 'Falla');
+  assert.equal(displayValve({ ...measured, fault: true }).physicalState, 'unknown');
+  assert.equal(displayValve({ ...measured, state: 'unknown' }).label, 'Sin confirmar');
+});
+
+test('presentación: un override por caudal no se cuenta como final de carrera', () => {
+  const measured = valvesFromSnapshot(snap({ valve1: sig(0), valve1State: sig(16384) }))[0];
+  const inferred = { ...measured, manualOverride: true, effectiveState: 'open' as const };
+  assert.equal(displayValve(inferred).label, 'Con flujo');
+  assert.equal(displayValve(inferred).physicalState, 'unknown');
+});
+
+test('resumen: separa posiciones leídas, inferencias por caudal y fallas', () => {
+  const base = valvesFromSnapshot(snap({ valve1: sig(0), outletFlow1: sig(1) }))[0];
+  assert.deepEqual(summarizeValves([
+    { ...base, source: 'estado', state: 'open' },
+    { ...base, source: 'posicion', state: 'closed' },
+    { ...base, source: 'caudal', state: 'open' },
+    { ...base, source: 'ninguno', state: 'unknown' },
+    { ...base, source: 'estado', state: 'open', fault: true },
+  ]), { openCount: 1, closedCount: 1, unconfirmedCount: 2, faultCount: 1 });
+});
+
+test('memo: cambiar de caudal inferido a posición leída repinta aunque siga figurando abierta', () => {
+  const base = valvesFromSnapshot(snap({ valve1: sig(0), outletFlow1: sig(1) }))[0];
+  const inferred = { ...base, effectiveState: 'open' as const, manualOverride: false };
+  const measured = { ...inferred, source: 'estado' as const };
+  assert.equal(sameValveItem({ valve: inferred }, { valve: measured }), false);
 });
