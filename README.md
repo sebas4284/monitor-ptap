@@ -8,7 +8,18 @@ integración: dadas de alta sin señales hasta que el integrador las suba al PLC
 El backend lee los buffers crudos del PLC, los procesa por un pipeline de capas y los publica a
 la app móvil/web por REST y Socket.IO.
 
-> **Estado real (2026-08-05):** el puente OPC UA está **vivo contra el PLC real** y la telemetría
+> **Estado verificado (2026-10-31):** la API y la web de la versión `c68d78e` están
+> desplegadas y responden HTTP 200 por HTTPS. La telemetría OPC continúa conectada.
+> Las maniobras están deshabilitadas mientras no exista una sesión OPC autenticada
+> y cifrada; `OPCUA_ALLOW_INSECURE_WRITES` ya no permite saltarse esa condición.
+> El registro firmado conserva el histórico revisado, identifica expresamente las
+> maniobras antiguas sin firma y protege las firmas futuras mediante un checkpoint
+> externo a MySQL. La validación local final aprobó 901 pruebas, tipos y builds.
+> SMTP requiere completar las credenciales del buzón dedicado. El push Android con
+> la app cerrada queda pendiente de configurar Firebase y publicar una APK nueva;
+> los avisos internos no prueban que el push esté funcionando.
+
+> **Referencia histórica (2026-08-05; no describe la configuración actual):** el puente OPC UA está **vivo contra el PLC real** y la telemetría
 > viaja de punta a punta (PLC → backend → móvil) en tiempo real. La telemetría vive **solo en RAM**
 > (nunca se persiste). **Las 6 fases están ejecutadas** (245/245 tests, typecheck limpio en todo el
 > monorepo, `validate:mapping` OK).

@@ -19,6 +19,18 @@ desde cero en un servidor nuevo (§11). Absorbe el antiguo `DEPLOY_VPS.md`.
 > verifica que la llave corresponda y comprueba HTTPS después de recargar nginx, con
 > reintentos acotados mientras los workers terminan de adoptar el certificado nuevo.
 
+> **Aplicación actualizada y verificada el 2026-10-31:** versión de código `c68d78e`,
+> preparada desde un paquete Git verificado mientras la API anterior seguía activa.
+> API, MySQL y telemetría OPC comprobaron HTTP 200; la web publicada coincide con
+> el build. El registro v2 quedó activado con la aceptación expresa del histórico
+> sin firma: no modifica filas originales ni atribuye autenticidad retroactiva.
+> `OPCUA_WRITES_ENABLED=false` y `OPCUA_ALLOW_INSECURE_WRITES=false`: la lectura
+> continúa, las maniobras quedan bloqueadas y la migración de certificados OPC se
+> omitió por indicación del operador. Las instrucciones antiguas de reapertura de
+> escrituras que aparecen más abajo son históricas y el helper actual las rechaza.
+> Pendientes de integración: contraseña SMTP del buzón dedicado y Firebase/APK para
+> push Android. El push a GitHub requiere resolver el permiso de escritura del remoto.
+
 > ⚠️ **Este documento NO contiene secretos.** Contraseñas, tokens, `JWT_SECRET`, pepper y
 > credenciales viven SOLO en el `.env` de la VM y en la copia local `.env.production.local`
 > (gitignored). Aquí solo se referencia *dónde* están.
