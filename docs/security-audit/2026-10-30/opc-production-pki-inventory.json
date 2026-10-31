@@ -1,0 +1,18 @@
+{
+  "utc": "2026-10-31T13:02:10.619Z",
+  "sourceCommit": "ffaad3844e321825959498496282c06316fd3945",
+  "repositoryCleanAfterPreflight": true,
+  "clientKeyMatchesCertificate": true,
+  "clientCertificateSha256": "BD:B3:8A:1A:E4:A2:1F:26:32:92:59:BC:8A:5A:7C:ED:3C:6D:E2:48:7C:31:2A:D1:0B:B7:42:52:A3:5B:F2:AC",
+  "clientCertificateValidTo": "2036-07-21T21:32:47Z",
+  "trustedCertificateCount": 0,
+  "rejectedCertificateCount": 0,
+  "issuerCertificateCount": 0,
+  "independentServerTrustAvailable": false,
+  "realPlantAuthenticationAttempted": false,
+  "plantWrites": 0,
+  "productionConfigurationChanged": false,
+  "boundedAdditionalCertificateSearch": ["apps/api", "docs", "tools"],
+  "additionalServerCertificateFound": false,
+  "nextRequiredEvidence": "OT must independently confirm/export server application certificate and fingerprint, and approve existing gateway application certificate on the server. Discovery fingerprint alone is not trust evidence."
+}

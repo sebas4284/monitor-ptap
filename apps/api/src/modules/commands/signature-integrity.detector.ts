@@ -48,15 +48,17 @@ export class SignatureIntegrityDetector implements OnModuleInit, OnModuleDestroy
   async sweep(): Promise<number> {
     let publicados = 0;
     try {
-      const { firmadas, rotos, verificable } = await this.firmas.verificar();
+      const { firmadas, rotos, verificable, motivo, legado, desdeActivacion } = await this.firmas.verificar();
       if (!verificable) {
         // Sin secreto no hay nada que verificar, y no es una anomalía del histórico sino de la
         // configuración: se registra en el log del servidor, no en la bandeja del operario.
-        this.logger.warn('sin secreto de firma: no se puede comprobar la integridad del histórico');
+        this.logger.error(`INTEGRIDAD NO VERIFICADA: ${motivo ?? 'evidencia insuficiente'}; revisar secreto, checkpoint externo y acceso al registro`);
         return 0;
       }
       if (rotos.length === 0) {
-        this.logger.log(`libro de firmas íntegro: ${firmadas} maniobra(s)`);
+        this.logger.log(legado
+          ? `frontera revisada conservada; ${legado.sinFirma} maniobras legacy sin autenticidad demostrada; ${desdeActivacion?.firmadas ?? 0} nuevas firmas verificadas`
+          : `libro de firmas íntegro: ${firmadas} maniobra(s)`);
         return 0;
       }
 
@@ -105,6 +107,11 @@ function mensaje(dePlanta: EslabonRoto[], totalFirmadas: number): string {
   const descolocadas = dePlanta.filter((r) => r.motivo === 'eslabon_no_encaja').length;
 
   const partes: string[] = [];
+  const ausentes = dePlanta.filter((r) => r.motivo === 'firma_ausente').length;
+  const checkpoint = dePlanta.some((r) => r.motivo === 'checkpoint_no_coincide');
+  if (dePlanta.some((r) => r.motivo === 'limite_legacy_no_coincide')) partes.push('el contenido o la pertenencia del histórico difiere de la frontera revisada');
+  if (ausentes) partes.push(`${ausentes} maniobra(s) sin firma válida`);
+  if (checkpoint) partes.push('faltan maniobras o el último sello no coincide con el checkpoint externo');
   if (editadas > 0) {
     partes.push(`${editadas} ${plural(editadas, 'maniobra fue modificada', 'maniobras fueron modificadas')} después de firmarse`);
   }

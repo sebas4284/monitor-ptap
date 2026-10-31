@@ -57,7 +57,7 @@ export function useDeviceNotifications(): {
   const supported = isSupported();
   // Mismo permiso que exige el servidor para registrar el teléfono: el Civil no recibe avisos de
   // proceso, así que ni se intenta (sería un 403 cada vez que abre la app).
-  const { hasPermission } = useAuth();
+  const { token, hasPermission } = useAuth();
   const recibeAvisos = hasPermission('view_dashboard');
 
   // El permiso se vuelve a leer CADA VEZ que la app pasa a primer plano, con o sin permiso actual.
@@ -66,9 +66,9 @@ export function useDeviceNotifications(): {
   // fondo no se registraba. También cubre lo contrario: si lo quita allí, la app deja de sincronizar
   // desde primer plano.
   useEffect(() => {
-    void getPermission().then(setPermission);
+    void getPermission().then(setPermission).catch(() => undefined);
     const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') void getPermission().then(setPermission);
+      if (state === 'active') void getPermission().then(setPermission).catch(() => undefined);
     });
     return () => sub.remove();
   }, []);
@@ -86,22 +86,37 @@ export function useDeviceNotifications(): {
   // día la marca que lee la consulta de respaldo— y cuando FCM rota el token. Si el registro falla, la
   // marca se quita y la consulta de respaldo sigue publicando: el teléfono nunca queda mudo.
   useEffect(() => {
-    if (permission !== 'granted' || !recibeAvisos || Platform.OS !== 'android') return;
+    if (!token || permission !== 'granted' || !recibeAvisos || Platform.OS !== 'android') return;
     let vivo = true;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    let failures = 0;
+    const cancelRetry = () => { if (retry) clearTimeout(retry); retry = undefined; };
     const actualizar = (estado: EstadoPush): void => {
-      if (vivo) setPush(estado);
+      if (!vivo) return;
+      setPush(estado);
+      cancelRetry();
+      if ((estado === 'error' || estado === 'servidor-apagado') && AppState.currentState === 'active') {
+        const delay = estado === 'servidor-apagado' ? 300_000 : Math.min(30_000 * 2 ** failures++, 300_000);
+        retry = setTimeout(intentar, delay);
+      } else if (estado === 'activo') failures = 0;
     };
-    void registrarPush().then(actualizar);
+    const intentar = () => {
+      cancelRetry();
+      if (vivo && AppState.currentState === 'active') void registrarPush().then(actualizar);
+    };
+    intentar();
     const dejarDeEscuchar = escucharCambiosDeToken(actualizar);
     const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') void registrarPush().then(actualizar);
+      if (state === 'active') intentar();
+      else cancelRetry();
     });
     return () => {
       vivo = false;
+      cancelRetry();
       dejarDeEscuchar();
       sub.remove();
     };
-  }, [permission, recibeAvisos]);
+  }, [token, permission, recibeAvisos]);
 
   // Al volver a primer plano se sincroniza también: es el camino FIABLE. La tarea en segundo plano
   // es "lo mejor posible" y algunos fabricantes no la ejecutan nunca; esto garantiza que, al menos

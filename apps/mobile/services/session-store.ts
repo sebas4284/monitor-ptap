@@ -63,11 +63,25 @@ export const storage = {
  * Un token sin `exp` legible se da por válido, igual que hace `AuthContext` al restaurarlo: en ese
  * caso el cierre lo decide el 401 del backend.
  */
+let restorationGeneration = 0;
+let restorationEnabled = true;
+/** Revoke pending/background restores synchronously when a foreground session changes. */
+export function invalidateSessionRestoration(): void {
+  restorationGeneration++;
+  restorationEnabled = false;
+}
+export function resumeSessionRestoration(): void {
+  restorationGeneration++;
+  restorationEnabled = true;
+}
+
 export async function restaurarTokenDeSesion(): Promise<boolean> {
+  if (!restorationEnabled) return false;
   if (getAuthToken()) return true;
+  const expected = restorationGeneration;
 
   const guardado = await storage.getItem(TOKEN_KEY);
-  if (!guardado) return false;
+  if (!guardado || !restorationEnabled || expected !== restorationGeneration) return false;
 
   const exp = tokenExpiryMs(guardado);
   if (exp !== null && exp <= Date.now()) return false;

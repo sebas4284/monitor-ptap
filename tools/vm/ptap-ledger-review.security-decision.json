@@ -1,0 +1,33 @@
+{
+  "schema": "telcobras-decision/1",
+  "artifact_id": "ptap-ledger-review.cjs",
+  "source_and_version": "First-party workspace helper; exact Expo v58 docs reviewed before coding; helper does not use Expo",
+  "sha256_or_commit": "ff51f4c644457a4a1dbc83a01964ae1566730afe29266592970f4fa3339649c0",
+  "data_classification": "confidential",
+  "requested_operation": "Stage first-party verifier over trusted SSH and execute read-only MySQL snapshot and bounded backup parsing; write private host-local evidence only",
+  "authorized_scope": "User production ledger review delegated by parent; no DB writes, baseline acceptance, historic re-signing, env edits, checkpoint creation, or restarts",
+  "environment_and_destination": "Sanitized public record: trusted production Ubuntu host and service identity; exact reviewed destination retained in private operational original",
+  "tools_versions_and_signature_dates": [
+    "Node v26.12.1 local and production; existing dotenv18.0.9 and mysql2 3.24.6 only"
+  ],
+  "observed_evidence": [
+    "4 synthetic verifier/parser tests pass; helper HMAC exactly matches real application source for synthetic fixture",
+    "SQL dump content parsed only as restricted literal VALUES; never executed/imported; bounded gzip output",
+    "184 production rows, 28 signatures, 156 unsigned, no pending observed by prior read-only transaction",
+    "Final local helper captures all original command columns privately in the same read-only snapshot; previous host evidence used reviewed earlier helper plus separate read-only full-row capture"
+  ],
+  "limitations_and_unexamined_content": [
+    "No existing trusted checkpoint; prior deletion cannot be excluded",
+    "MySQL transactions read only; evidence files necessarily written privately",
+    "No claim that SQL parser proves dump malware absence; no dump commands or external code are executed"
+  ],
+  "rights_and_notices": "First-party operational helper; preserve originals and existing notices; no redistribution or third-party installation",
+  "decision": "allowed_scoped",
+  "conditions_for_next_action": [
+    "Verify helper SHA256 after transfer before execution",
+    "No activation while unsigned historic rows remain; human reviewed migration needed",
+    "Private records never printed or uploaded"
+  ],
+  "reviewer_and_utc_time": "Codex ledger review agent 2026-10-31T13:07:27.4380037Z",
+  "valid_only_for_identified_bytes_and_operation": true
+}

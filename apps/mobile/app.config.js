@@ -24,14 +24,38 @@
 //
 //  4. android.googleServicesFile — la configuración de Firebase (FCM) para los avisos al instante
 //     por push, desde la 1.4.0. Va DENTRO de la APK: sin ella el teléfono no puede tener token de
-//     FCM. Solo se declara si `google-services.json` existe junto a este archivo: no está en el repo
-//     (.gitignore; se copia a mano antes de compilar la APK), y declararlo sin el archivo rompería
-//     cualquier otra compilación —la web, un prebuild en otra máquina—. Una APK compilada sin él
-//     funciona igual, sin push: los avisos llegan por la consulta periódica de respaldo.
+//     FCM. GOOGLE_SERVICES_JSON puede señalar un archivo corporativo fuera del repositorio;
+//     también se admite el archivo local ignorado. PTAP_REQUIRE_FCM=1 hace fallar una compilación
+//     destinada a push si falta la configuración: una APK sin ella no recibe avisos FCM cerrada.
 const fs = require('fs');
 const path = require('path');
 
 const GOOGLE_SERVICES = path.join(__dirname, 'google-services.json');
+
+function firebaseAndroidConfig(config) {
+  const configured = process.env.GOOGLE_SERVICES_JSON;
+  const candidate = configured ? path.resolve(configured) : GOOGLE_SERVICES;
+  if (!fs.existsSync(candidate)) {
+    if (configured || process.env.PTAP_REQUIRE_FCM === '1') {
+      throw new Error('Falta google-services.json autorizado para compilar Android con push FCM.');
+    }
+    return {};
+  }
+  const bytes = fs.readFileSync(candidate);
+  if (bytes.length > 1024 * 1024) throw new Error('Configuración Android Firebase inválida.');
+  let settings;
+  try { settings = JSON.parse(bytes.toString('utf8')); }
+  catch { throw new Error('Configuración Android Firebase inválida.'); }
+  // The mobile app takes public Android configuration, NEVER a backend service account/private key.
+  if (settings.type === 'service_account' || settings.private_key || !settings.project_info?.project_id || !settings.project_info?.project_number) {
+    throw new Error('Se requiere configuración pública Android de Firebase; no una cuenta de servicio.');
+  }
+  const client = settings.client?.find(item => item.client_info?.android_client_info?.package_name === config.android?.package);
+  if (!client?.client_info?.mobilesdk_app_id || !client.api_key?.some(key => typeof key.current_key === 'string' && key.current_key)) {
+    throw new Error('La configuración Firebase no corresponde al paquete Android de esta app.');
+  }
+  return { googleServicesFile: candidate };
+}
 
 module.exports = ({ config }) => ({
   ...config,
@@ -41,7 +65,7 @@ module.exports = ({ config }) => ({
   },
   android: {
     ...config.android,
-    ...(fs.existsSync(GOOGLE_SERVICES) ? { googleServicesFile: './google-services.json' } : {}),
+    ...firebaseAndroidConfig(config),
     permissions: ['INTERNET', 'POST_NOTIFICATIONS', 'VIBRATE'],
     // La plantilla base de Expo agrega permisos "opcionales" al manifest y `permissions` solo
     // AGREGA, nunca los quita — hay que bloquearlos explícitamente (tools:node="remove").
@@ -53,7 +77,7 @@ module.exports = ({ config }) => ({
   },
   plugins: [
     ...(config.plugins ?? []),
-    'expo-notifications',
+    ['expo-notifications', { defaultChannel: 'aquora-avisos' }],
     'expo-background-task',
     [
       'expo-build-properties',
@@ -77,7 +101,7 @@ module.exports = ({ config }) => ({
           // (+13 MB); hasta entonces seria peso muerto para todos.
           buildArchs: ['arm64-v8a'],
           minSdkVersion: 24,
-          compileSdkVersion: 36,
+          compileSdkVersion: 37,
           targetSdkVersion: 36,
         },
       },

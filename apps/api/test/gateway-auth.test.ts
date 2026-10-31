@@ -24,11 +24,12 @@ import type { Socket } from 'socket.io';
 process.env.JWT_SECRET = process.env.JWT_SECRET ?? 'test-secret-gateway-auth';
 
 const SNAPSHOT = { plantId: 'stub' };
+const accounts = new Map<string, { id: string; role: Role; plant: string }>();
 
 function gateway(): ConnectivityGateway {
   return new ConnectivityGateway({} as unknown as PlantPipelineService, {
     get: (plantId: string) => ({ ...SNAPSHOT, plantId }),
-  } as unknown as PlantCache);
+  } as unknown as PlantCache, async (id) => accounts.get(id) ?? null);
 }
 
 interface FakeSocket {
@@ -57,6 +58,7 @@ function fakeSocket(token?: string): FakeSocket {
 }
 
 function tokenFor(role: Role, plant: string): string {
+  accounts.set('u1', { id: 'u1', role, plant });
   return new JwtService().sign({ sub: 'u1', email: 'a@b.com', name: 'A', role, plant });
 }
 
@@ -174,6 +176,8 @@ test('opc:subscribe: sin ámbito (handleConnection no corrió) falla CERRADO', a
 });
 
 test('opc:liveness: se emite a la room de ámbito de la planta y a la global, no en broadcast', () => {
+  // The room-only path is the explicit DB-free demo. Authenticated deliveries recheck each account.
+  process.env.SOCKET_AUTH_REQUIRED = 'false';
   const liveness$ = new Subject<LivenessChange>();
   const gw = new ConnectivityGateway(
     { snapshot$: new Subject(), liveness$ } as unknown as PlantPipelineService,
@@ -201,5 +205,6 @@ test('opc:liveness: se emite a la room de ámbito de la planta y a la global, no
     assert.deepEqual([...envios[0].rooms].sort(), ['scope:*', 'scope:cascajal']);
   } finally {
     gw.onModuleDestroy();
+    delete process.env.SOCKET_AUTH_REQUIRED;
   }
 });

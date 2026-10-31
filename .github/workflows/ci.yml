@@ -32,9 +32,12 @@ jobs:
         run: npm ci
 
       - name: Auditoría de dependencias del monorepo
-        # Expo SDK 58 aún depende de deepmerge 4.3.1, que es su última publicación y no tiene
-        # versión corregida disponible. Bloquea vulnerabilidades high/critical mientras siga así.
+        # DEP-01 usa una copia local corregida y atribuida; el test siguiente comprueba la
+        # resolución efectiva de Expo y las cargas de contaminación de prototipo.
         run: npm audit --audit-level=high
+
+      - name: Regresión de seguridad de dependencias locales
+        run: npm run test:security:deps
 
       - name: Instalar herramienta PLC
         run: npm ci --prefix tools/plc-discovery
@@ -55,4 +58,4 @@ jobs:
         working-directory: apps/api
         env:
           TSX_TSCONFIG_PATH: tsconfig.test.json
-        run: node --import tsx --test test/*.test.ts
+        run: node --import tsx --test --test-concurrency=2 test/*.test.ts

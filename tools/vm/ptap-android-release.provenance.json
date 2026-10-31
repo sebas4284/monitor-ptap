@@ -1,0 +1,57 @@
+{
+  "schema": "telcobras-provenance/1",
+  "project": "monitor-ptap Android build preparation",
+  "intended_use_and_distribution": "Internal VM toolchain only; no APK rebuilt/published, no tools redistributed",
+  "inventory_coverage_and_omissions": "Manual focused inventory of newly installed Gradle/SDK only. Maven prefetch incomplete; not exhaustive SBOM. Existing JDK/NDK/npm dependencies not newly acquired.",
+  "components": [
+    {
+      "name": "Gradle binary distribution",
+      "version_or_commit": "9.4.1",
+      "source_url_or_authorized_location": "https://services.gradle.org/distributions/gradle-9.4.1-bin.zip",
+      "sha256": "2ab2958f2a1e51120c326cad6f385153bb11ee93b3c216c5fccebfdfbb7ec6cb",
+      "rights_holder": "Gradle Inc. and contributors",
+      "license_expression": "Apache-2.0",
+      "license_text_and_permission_evidence": "Vendor LICENSE retained /home/xpertic_app/android-build/gradle-9.4.1/LICENSE; Apache2 header observed. Official HTTPS checksum matched before extraction/execution.",
+      "required_notices": [
+        "Preserve bundled LICENSE and NOTICE files"
+      ],
+      "transitive_dependencies": [
+        "Bundled Gradle distribution libraries retained; individual notices not exhaustively inventoried"
+      ],
+      "modifications_and_own_contributions": "Unmodified vendor binary distribution",
+      "obligations_for_this_use": [
+        "Internal execution only; retain vendor distribution notices; distribution scope not granted by this record"
+      ],
+      "security_assessment_reference": "tools/vm/ptap-android-release.decision.json",
+      "decision": "allowed_scoped"
+    },
+    {
+      "name": "Google Android SDK platform and build tools",
+      "version_or_commit": "platforms;android-37.0 revision2 and build-tools;37.0.0",
+      "source_url_or_authorized_location": "Official Google repositories through installed sdkmanager12.0 into /home/xpertic_app/android-build/sdk",
+      "sha256": null,
+      "rights_holder": "Google LLC and component licensors",
+      "license_expression": "LicenseRef-Android-SDK-Previously-Accepted",
+      "license_text_and_permission_evidence": "Existing accepted Android SDK license tokens reused; stdin n rejects new acceptance; sdkmanager exit0 and no new license prompt. Vendor license material retained in package.xml/licenses. No redistribution assessed.",
+      "required_notices": [
+        "Retain package.xml/license material and all SDK notices"
+      ],
+      "transitive_dependencies": [
+        "Platform37.0 and buildtools37.0.0 contents not exhaustively inventoried"
+      ],
+      "modifications_and_own_contributions": "Unmodified official SDK packages",
+      "obligations_for_this_use": [
+        "Existing licensed internal build context only; no automatic acceptance of new terms; no redistribution"
+      ],
+      "security_assessment_reference": "tools/vm/ptap-android-release.decision.json",
+      "decision": "allowed_scoped"
+    }
+  ],
+  "assets_models_data_and_fonts_coverage": "No app assets, model weights or corporate data acquired/transmitted; APK untouched",
+  "reviewer_jurisdiction_and_date": "Codex focused technical review; Colombia workspace context; 2026-10-31T13:30:49.8639853Z",
+  "unresolved_rights_or_contract_questions": [
+    "No comprehensive app redistribution license audit or transitive dependency SBOM",
+    "SDK payload archive hash not exposed by sdkmanager; exact metadata hashes in decision record",
+    "Further APK acquisition/build deferred until Firebase project verified, per user"
+  ]
+}

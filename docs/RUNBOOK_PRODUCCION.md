@@ -3,6 +3,22 @@
 Documento **único** de despliegue y operación: lo que está montado hoy (§1–§10) y cómo montarlo
 desde cero en un servidor nuevo (§11). Absorbe el antiguo `DEPLOY_VPS.md`.
 
+> **Acceso actualizado y verificado el 2026-10-30:** el dominio resuelve a
+> `181.204.165.66` y la VM acepta SSH por el puerto **7498**, sin VPN:
+> `ssh -p 7498 -i ~/.ssh/id_ed25519_centro_gestion xpertic_app@181.204.165.66`.
+> La IP pública `.125`, el puerto 22 y el perfil VPN descritos más abajo son históricos.
+> **TLS renovado e instalado el 2026-10-31:** `aquora.xpertic.co` sirve el certificado
+> válido hasta el **2027-01-29 11:59:47 UTC**. Web y `/api/health` comprobaron HTTP 200
+> desde Internet con verificación TLS activa. La renovación por DNS sigue siendo manual.
+> Por decisión del operador, se mantiene cerrado el puerto 80 de la VM y la renovación TLS
+> se valida mediante **DNS-01**, publicando el TXT en el DNS autoritativo de `xpertic.co`.
+> Abrir el puerto 80 del PC del operador no valida el dominio con esta topología.
+> Para instalar el certificado renovado sin reescribir nginx ni cambiar el firewall:
+> `sudo bash ~/deploy-scripts/ptap-install-renewed-tls.sh`.
+> Este instalador espera hasta 30 minutos la renovación, respalda el certificado anterior,
+> verifica que la llave corresponda y comprueba HTTPS después de recargar nginx, con
+> reintentos acotados mientras los workers terminan de adoptar el certificado nuevo.
+
 > ⚠️ **Este documento NO contiene secretos.** Contraseñas, tokens, `JWT_SECRET`, pepper y
 > credenciales viven SOLO en el `.env` de la VM y en la copia local `.env.production.local`
 > (gitignored). Aquí solo se referencia *dónde* están.

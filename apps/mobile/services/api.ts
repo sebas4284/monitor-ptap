@@ -13,20 +13,33 @@ export type { AuthUser };
  * En un dispositivo físico debe ser la IP LAN del backend, no localhost.
  */
 export const API_BASE_URL: string =
-  (Constants.expoConfig?.extra as { apiBaseUrl?: string } | undefined)?.apiBaseUrl ?? 'http://localhost:4000';
+  (Constants.expoConfig?.extra as { apiBaseUrl?: string } | undefined)?.apiBaseUrl ??
+  'http://localhost:4000';
 
 // ── Sesión: el JWT viaja en cada petición (el backend completo exige Authorization) ──
 
 let authToken: string | null = null;
+let authGeneration = 0;
 let onUnauthorized: (() => void) | null = null;
+
+/** Invalidate outgoing requests before an asynchronous login/logout transition completes. */
+export function invalidateAuthRequests(): void {
+  authGeneration++;
+}
 
 /** Lo llama AuthContext al restaurar/iniciar/cerrar sesión. null = sin sesión. */
 export function setAuthToken(token: string | null): void {
+  authGeneration++;
   authToken = token;
 }
 
 export function getAuthToken(): string | null {
   return authToken;
+}
+
+/** Fence asynchronous device registration against login/logout transitions. */
+export function getAuthGeneration(): number {
+  return authGeneration;
 }
 
 /**
@@ -73,19 +86,24 @@ async function request<T>(
   method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE',
   path: string,
   body?: unknown,
+  deviceSession?: { token: string; signal?: AbortSignal },
 ): Promise<T> {
+  const requestGeneration = authGeneration;
   const headers: Record<string, string> = {};
-  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+  const bearer = deviceSession?.token ?? authToken;
+  if (bearer) headers.Authorization = `Bearer ${bearer}`;
   if (body !== undefined) headers['Content-Type'] = 'application/json';
 
   const res = await fetch(`${API_BASE_URL}${path}`, {
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
+    ...(deviceSession?.signal ? { signal: deviceSession.signal } : {}),
   });
 
   if (res.status === 401) {
-    onUnauthorized?.(); // sesión vencida/inválida → que AuthContext la limpie
+    // A delayed response from an outgoing identity must not revoke the current session.
+    if (!deviceSession && requestGeneration === authGeneration) onUnauthorized?.();
     throw new Error('Tu sesión expiró. Vuelve a iniciar sesión.');
   }
   if (!res.ok) throw new Error(await errorMessage(res, path));
@@ -98,6 +116,11 @@ export async function getJson<T>(path: string): Promise<T> {
 
 export async function postJson<T>(path: string, body: unknown): Promise<T> {
   return request<T>('POST', path, body);
+}
+
+/** Device cleanup keeps its outgoing session even after another login; its 401 cannot log out the new user. */
+export async function postJsonWithToken<T>(path: string, body: unknown, token: string, signal?: AbortSignal): Promise<T> {
+  return request<T>('POST', path, body, { token, signal });
 }
 
 export async function patchJson<T>(path: string, body: unknown): Promise<T> {
@@ -145,6 +168,7 @@ export async function sendValveCommand(
   command: 'open' | 'close',
   target: string,
 ): Promise<ValveCommandResult> {
+  const requestGeneration = authGeneration;
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (authToken) headers.Authorization = `Bearer ${authToken}`;
   try {
@@ -154,13 +178,24 @@ export async function sendValveCommand(
       body: JSON.stringify({ command, target }),
     });
     if (res.status === 401) {
-      onUnauthorized?.();
-      return { http: 401, status: 'error', reason: 'SESSION_EXPIRED', previousValue: null, writtenValue: null, confirmedValue: null, writeEcho: null, writeVerified: null };
+      if (requestGeneration === authGeneration) onUnauthorized?.();
+      return {
+        http: 401,
+        status: 'error',
+        reason: 'SESSION_EXPIRED',
+        previousValue: null,
+        writtenValue: null,
+        confirmedValue: null,
+        writeEcho: null,
+        writeVerified: null,
+      };
     }
     const raw: unknown = await res.json().catch(() => ({}));
     const body = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
     // Nest envuelve los errores HTTP: el cuerpo útil puede venir en `message`.
-    const inner = (body.status ? body : ((body.message as Record<string, unknown>) ?? body)) as Record<string, unknown>;
+    const inner = (
+      body.status ? body : ((body.message as Record<string, unknown>) ?? body)
+    ) as Record<string, unknown>;
     return {
       http: res.status,
       status: (inner.status as ValveCommandResult['status']) ?? 'error',
@@ -174,7 +209,16 @@ export async function sendValveCommand(
     };
   } catch {
     // Fallo de red: no se sabe si la orden salió. Nunca reportar éxito.
-    return { http: 0, status: 'error', reason: 'NETWORK', previousValue: null, writtenValue: null, confirmedValue: null, writeEcho: null, writeVerified: null };
+    return {
+      http: 0,
+      status: 'error',
+      reason: 'NETWORK',
+      previousValue: null,
+      writtenValue: null,
+      confirmedValue: null,
+      writeEcho: null,
+      writeVerified: null,
+    };
   }
 }
 
@@ -238,7 +282,11 @@ export interface RouteCheckReport {
   /** IP pública del servidor — con ella un técnico identifica al proveedor (whois). */
   serverPublicIp: string | null;
   probes: RouteProbe[];
-  verdict: { code: string; where: 'servidor' | 'ruta-o-planta' | 'plc-servicio' | 'ninguno'; message: string };
+  verdict: {
+    code: string;
+    where: 'servidor' | 'ruta-o-planta' | 'plc-servicio' | 'ninguno';
+    message: string;
+  };
   bridge: { status: string; reconnectCount: number; lastNotificationAt: string | null };
 }
 

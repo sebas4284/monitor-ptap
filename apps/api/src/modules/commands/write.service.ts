@@ -340,12 +340,7 @@ export class WriteService {
         const { err } = rechazo;
         this.logger.error(`write de ${req.command}/${req.target} RECHAZADO: ${err instanceof Error ? err.message : err}`);
         const rejected: CommandResult = { ...base, status: 'failed', reason: FAIL.WRITE_REJECTED };
-        await this.repo.finalize(reservation.id, {
-          status: 'failed', reason: rejected.reason, previousValue: rejected.previousValue,
-          writtenValue: rejected.writtenValue, confirmedValue: rejected.confirmedValue,
-          interlockSequence: rejected.interlockSequence,
-        });
-        return this.audit(actor, req, rejected);
+        return this.audit(actor, req, rejected, undefined, { commandLogId: reservation.id, estadoVerificado: false });
       }
 
       // 7b-bis) PULSO: sostener y LIMPIAR SIEMPRE, en orden inverso al de escritura. Un comando de
@@ -375,12 +370,7 @@ export class WriteService {
       // distintas, y mezclarlas en un solo motivo borra el diagnóstico.
       if (!realimentacion) {
         result = { ...base, status: 'failed', reason: FAIL.HOLD_FEEDBACK_TIMEOUT };
-        await this.repo.finalize(reservation.id, {
-          status: 'failed', reason: result.reason, previousValue: result.previousValue,
-          writtenValue: result.writtenValue, confirmedValue: result.confirmedValue,
-          interlockSequence: result.interlockSequence,
-        });
-        return this.audit(actor, req, result, escritos);
+        return this.audit(actor, req, result, escritos, { commandLogId: reservation.id, estadoVerificado: false });
       }
 
       // 7c) Confirmación por el canal de ESTADO (que el equipo se movió).
@@ -412,15 +402,6 @@ export class WriteService {
       this.logger.error(`comando ${req.command}/${req.target} falló tras escribir: ${err instanceof Error ? err.message : err}`);
       result = { ...base, status: 'failed', reason: FAIL.READBACK_UNCONFIRMED };
     }
-
-    await this.repo.finalize(reservation.id, {
-      status: result.status as Exclude<CommandOutcome, never>,
-      reason: result.reason,
-      previousValue: result.previousValue,
-      writtenValue: result.writtenValue,
-      confirmedValue: result.confirmedValue,
-      interlockSequence: result.interlockSequence,
-    });
 
     return this.audit(actor, req, result, escritos, {
       commandLogId: reservation.id,
@@ -683,7 +664,12 @@ export class WriteService {
   ): Promise<CommandResult> {
     // La firma y el aviso van ANTES de la auditoría porque la firma cambia lo que se registra: el
     // detalle de auditoría lleva el sello, y sin él la auditoría no diría qué maniobra es cuál.
-    const firma = traza?.commandLogId ? await this.firmas.firmar(traza.commandLogId, actor.userName) : null;
+    // Finalize and seal share the ledger turn, not the physical IO duration. A
+    // concurrent command stays pending until it can be finalized and signed.
+    const firma = traza?.commandLogId ? await this.firmas.firmar(traza.commandLogId, actor.userName, () => this.repo.finalize(traza.commandLogId!, {
+      status: result.status, reason: result.reason, previousValue: result.previousValue,
+      writtenValue: result.writtenValue, confirmedValue: result.confirmedValue, interlockSequence: result.interlockSequence,
+    })) : null;
     await this.publicarManiobra(actor, result, firma, traza?.estadoVerificado ?? false);
     await this.auditLog.record({
       eventType: 'command.execute',

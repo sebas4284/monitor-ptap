@@ -1,8 +1,10 @@
 import { useMemo, useSyncExternalStore } from 'react';
+import { useAuth } from '../context/AuthContext';
 import { useQuery } from '@tanstack/react-query';
 import { fetchBasicStatus, type PlantBasicStatusDto } from '../services/api';
 import {
   getLastBasicStatus,
+  lastDataSession,
   lastDataVersion,
   rememberBasicStatus,
   subscribeLastData,
@@ -26,19 +28,28 @@ const REFRESH_MS = 15_000;
  * estado del sistema, pero conserva la última información de agua en vez de un vacío.
  */
 export function useBasicStatus(plantId: string) {
+  const { user, token, hasPermission } = useAuth();
+  const enabled =
+    !!token &&
+    !!user &&
+    hasPermission('view_basic_status') &&
+    (user.plant === plantId || hasPermission('view_all_plants'));
+  const session = lastDataSession();
   const storeVersion = useSyncExternalStore(subscribeLastData, lastDataVersion, lastDataVersion);
 
   const query = useQuery({
-    queryKey: ['basic-status', plantId],
+    queryKey: ['basic-status', user?.id, user?.role, user?.plant, session, plantId],
     queryFn: async () => {
       const status = await fetchBasicStatus(plantId);
-      rememberBasicStatus(status); // ignora respuestas sin veredicto de agua
+      rememberBasicStatus(status, session); // ignora respuestas sin veredicto de agua
       return status;
     },
     refetchInterval: REFRESH_MS,
+    enabled,
   });
 
   const data = useMemo<PlantBasicStatusDto | undefined>(() => {
+    if (!enabled) return undefined;
     const fresh = query.data;
     if (fresh && fresh.waterAvailable !== null) return fresh;
     // Planta en integración: sin veredicto de agua porque aún no está conectada. El respaldo le
@@ -55,7 +66,7 @@ export function useBasicStatus(plantId: string) {
     // storeVersion: getLastBasicStatus lee estado EXTERNO al render; la versión es la señal de
     // que ese estado cambió (hidratación async del storage). El linter no puede saberlo.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query.data, plantId, storeVersion]);
+  }, [query.data, plantId, storeVersion, enabled, session]);
 
   return { ...query, data };
 }

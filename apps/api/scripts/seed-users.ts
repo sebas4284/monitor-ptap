@@ -56,7 +56,7 @@ async function runCli(): Promise<void> {
       );
       console.log(`✓ ${u.email} (${u.role}) creado.`);
     }
-    console.log(`\nContraseña de todos: "${password}" (SEED_USERS_PASSWORD).`);
+    console.log('\nSiembra completada. Las credenciales no se muestran en los registros.');
   } finally {
     await pool.end();
   }

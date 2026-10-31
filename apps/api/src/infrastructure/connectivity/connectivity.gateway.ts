@@ -1,192 +1,171 @@
-import {
-  ConnectedSocket,
-  MessageBody,
-  OnGatewayConnection,
-  SubscribeMessage,
-  WebSocketGateway,
-  WebSocketServer,
-} from '@nestjs/websockets';
-import { Inject, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { ConnectedSocket, MessageBody, OnGatewayConnection, OnGatewayDisconnect, SubscribeMessage, WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
+import { Inject, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import type { Server, Socket } from 'socket.io';
 import { Subscription } from 'rxjs';
-import { hasPermission } from '@ptap/shared';
+import { hasPermission, ROLES, type Role } from '@ptap/shared';
 import { JwtService } from '../../modules/auth/jwt.service';
 import { readHttpHardeningConfig } from '../http-hardening.config';
 import { PlantCache } from './pipeline/plant-cache';
 import { PlantPipelineService } from './pipeline/plant-pipeline.service';
 
-/**
- * Origen CORS del WebSocket: la MISMA allowlist que el HTTP (CORS_ORIGINS). Fallback a '*' solo
- * si no está definida — el arranque de telemetría/demo (main.telemetry.ts) no fija CORS_ORIGINS y
- * necesita aceptar cualquier origen. El JWT del handshake (SRV-04) sigue siendo la defensa real;
- * esto es defensa en profundidad para que un origen no permitido ni siquiera intente el handshake.
- */
+export const SOCKET_IDENTITY = Symbol('SOCKET_IDENTITY');
+export interface SocketIdentity { id: string; role: Role; plant: string }
+export type SocketIdentityResolver = (id: string) => Promise<SocketIdentity | null>;
+interface Session {
+  user: SocketIdentity;
+  expiresAt: number;
+  timer: ReturnType<typeof setTimeout>;
+}
+interface SocketScope { plant: string | null }
+const SCOPE_ALL = 'scope:*';
+const scopeRoomOf = (plant: string | null) => plant === null ? SCOPE_ALL : `scope:${plant}`;
 const wsCorsOrigin = readHttpHardeningConfig().corsOrigins ?? '*';
 
-/**
- * Ámbito de plantas de un socket. `plant: null` = todas — solo lo obtiene `view_all_plants` (hoy
- * el Admin) y el arranque de demo sin login.
- */
-interface SocketScope {
-  plant: string | null;
-}
-
-/** Room de ámbito de quien ve TODAS las plantas. */
-const SCOPE_ALL = 'scope:*';
-
-/**
- * Room de ámbito, SEPARADA de la room de planta a la que se entra con `opc:subscribe`.
- *
- * Son dos cosas distintas a propósito: la de planta cambia al navegar (y se recicla en cada
- * `opc:subscribe`), mientras que la de ámbito dura toda la conexión. Sin esa separación no se
- * podría acotar `opc:liveness`, que hay que entregar aunque el cliente no esté mirando ninguna
- * planta concreta — es lo que pinta los badges del tablero.
- */
-function scopeRoomOf(plant: string | null): string {
-  return plant === null ? SCOPE_ALL : `scope:${plant}`;
-}
-
-/**
- * Gateway Socket.IO del pipeline de dominio (PASO 3.7). Empuja:
- *   - opc:snapshot  → a la room de la planta, SOLO cuando el snapshot cambia (diff en el pipeline).
- *   - opc:liveness  → broadcast, en cada cambio de estado de liveness (para los badges del tablero).
- *
- * Dependencias OBLIGATORIAS (sin @Optional): viven en este mismo módulo, así que si la
- * inyección falla es un bug de wiring y Nest debe morir en el arranque — no degradarse en
- * silencio a un "modo pasivo" que parece funcionar sin emitir nada (hallazgo P3-6 del audit).
- *
- * SEGURIDAD (SRV-04): el handshake se autentica con el mismo JWT del login (el móvil lo envía en
- * `handshake.auth.token`). Sin token válido se rechaza la conexión, así que la telemetría en vivo
- * ya no es legible por cualquier cliente con red al backend. Se puede desactivar con
- * `SOCKET_AUTH_REQUIRED=false` — solo lo hace `main.telemetry.ts` (demo sin login ni BD).
- * `JwtService` es DB-free: verificarlo aquí NO acopla MySQL a este módulo.
- *
- * ÁMBITO POR PLANTA: autenticar no basta. Antes se validaba el JWT y se DESCARTABA el payload, de
- * modo que cualquier cuenta autenticada podía pedir `opc:subscribe` de cualquier planta y recibir
- * su telemetría en vivo — datos de proceso completos, no solo avisos. Lo tapaba que el móvil solo
- * pide la suya. Ahora el ámbito sale del token y se aplica tanto a `opc:subscribe` como a
- * `opc:liveness`, con la misma regla del resto del sistema: `view_all_plants` ve todo, el resto
- * su planta.
- *
- * ⚠️ El ámbito sale del TOKEN, no de la base — este módulo es DB-free a propósito (ver arriba), y
- * acoplarle MySQL sería un cambio mayor. Consecuencia real: si un admin cambia la planta o el rol
- * de alguien, su socket YA ABIERTO conserva el ámbito viejo hasta que reconecte (como mucho 8 h,
- * la vida del JWT). El camino HTTP sí es inmediato, porque `JwtAuthGuard` relee la fila en cada
- * petición. No leer esto como una garantía más fuerte de lo que es.
- */
+/** Full application resolves current account state before each delivery, never token role claims.
+ * The DB-free demo explicitly provides no resolver and cannot run with production auth disabled. */
 @WebSocketGateway({ cors: { origin: wsCorsOrigin } })
-export class ConnectivityGateway implements OnGatewayConnection, OnModuleInit, OnModuleDestroy {
-  @WebSocketServer()
-  private server!: Server;
-
+export class ConnectivityGateway implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit, OnModuleDestroy {
+  @WebSocketServer() private server!: Server;
   private readonly logger = new Logger(ConnectivityGateway.name);
   private readonly subs: Subscription[] = [];
-  /** Perezoso: no se construye (ni lee JWT_SECRET) si la auth está desactivada (demo). */
+  private readonly sessions = new Map<Socket, Session>();
   private jwt: JwtService | null = null;
+  private sweep: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     @Inject(PlantPipelineService) private readonly pipeline: PlantPipelineService,
     @Inject(PlantCache) private readonly cache: PlantCache,
+    @Optional() @Inject(SOCKET_IDENTITY) private readonly resolveIdentity?: SocketIdentityResolver,
   ) {}
 
-  /**
-   * Autentica el handshake y FIJA el ámbito: sin JWT válido se corta la conexión antes de que
-   * pueda suscribirse; con él, el socket queda marcado con las plantas que le corresponden.
-   */
+  private get demo(): boolean {
+    return process.env.SOCKET_AUTH_REQUIRED === 'false' && process.env.NODE_ENV !== 'production';
+  }
+
   async handleConnection(client: Socket): Promise<void> {
-    if (process.env.SOCKET_AUTH_REQUIRED === 'false') {
-      // Demo sin login (main.telemetry.ts): no hay identidad, así que no hay ámbito que aplicar.
+    if (this.demo) {
       await this.applyScope(client, { plant: null });
       return;
     }
-
-    const token = (client.handshake.auth as { token?: string } | undefined)?.token;
     try {
-      if (!token) throw new Error('sin token en el handshake');
+      const token = client.handshake.auth?.token;
+      if (typeof token !== 'string' || !this.resolveIdentity) throw new Error('sin autenticación');
       const payload = (this.jwt ??= new JwtService()).verify(token);
-      const plant = hasPermission(payload.role, 'view_all_plants') ? null : payload.plant;
-      await this.applyScope(client, { plant });
+      const exp = (payload as { exp?: number }).exp;
+      if (!Number.isFinite(exp) || !exp || exp * 1000 <= Date.now()) throw new Error('sin vigencia');
+      const user = await this.resolveIdentity(payload.sub);
+      if (!this.allowed(user) || exp * 1000 <= Date.now()) throw new Error('cuenta sin acceso');
+      this.handleDisconnect(client);
+      const timer = setTimeout(() => this.reject(client), Math.min(exp * 1000 - Date.now(), 2_147_483_647));
+      timer.unref?.();
+      this.sessions.set(client, { user, expiresAt: exp * 1000, timer });
+      await this.applyScope(client, { plant: hasPermission(user.role, 'view_all_plants') ? null : user.plant });
     } catch {
-      this.logger.warn(`socket rechazado: handshake sin JWT válido (${client.id})`);
-      client.disconnect(true);
+      this.logger.warn(`socket rechazado (${client.id})`);
+      this.reject(client);
     }
+  }
+
+  private allowed(user: SocketIdentity | null): user is SocketIdentity {
+    return Boolean(user && ROLES.includes(user.role) && hasPermission(user.role, 'view_dashboard') &&
+      (hasPermission(user.role, 'view_all_plants') || user.plant));
   }
 
   private async applyScope(client: Socket, scope: SocketScope): Promise<void> {
-    (client.data as { scope?: SocketScope }).scope = scope;
+    client.data.scope = scope;
     await client.join(scopeRoomOf(scope.plant));
   }
 
+  handleDisconnect(client: Socket): void {
+    const session = this.sessions.get(client);
+    if (session) clearTimeout(session.timer);
+    this.sessions.delete(client);
+    delete client.data.scope;
+  }
+
+  private reject(client: Socket): void {
+    this.handleDisconnect(client);
+    client.disconnect(true);
+  }
+
+  private async authorized(client: Socket): Promise<boolean> {
+    if (this.demo) return Boolean(client.data.scope);
+    const session = this.sessions.get(client);
+    if (!session || session.expiresAt <= Date.now() || !this.resolveIdentity) {
+      this.reject(client);
+      return false;
+    }
+    try {
+      const user = await this.resolveIdentity(session.user.id);
+      // A concurrent disconnect/reconnect must not revive an older in-flight authorization.
+      if (this.sessions.get(client) !== session) return false;
+      if (!this.allowed(user) || user.role !== session.user.role || user.plant !== session.user.plant ||
+        session.expiresAt <= Date.now()) {
+        this.reject(client);
+        return false;
+      }
+      return true;
+    } catch {
+      this.reject(client);
+      return false;
+    }
+  }
+
+  /** Also checks idle connections; deliveries always perform their own current-state check. */
+  async revalidateConnections(): Promise<void> {
+    await Promise.all([...this.sessions.keys()].map((client) => this.authorized(client)));
+  }
+
+  private async deliver(event: string, plantId: string, value: unknown, snapshot: boolean): Promise<void> {
+    if (this.demo) {
+      this.server.to(snapshot ? plantId : [scopeRoomOf(plantId), SCOPE_ALL]).emit(event, value);
+      return;
+    }
+    await Promise.all([...this.sessions.keys()].map(async (client) => {
+      if (snapshot && !client.rooms.has(plantId)) return;
+      if (await this.authorized(client) && this.canSee(client, plantId)) client.emit(event, value);
+    }));
+  }
+
   onModuleInit(): void {
-    this.subs.push(
-      this.pipeline.snapshot$.subscribe((snapshot) => {
-        this.server.to(snapshot.plantId).emit('opc:snapshot', snapshot);
-      }),
-    );
-    this.subs.push(
-      this.pipeline.liveness$.subscribe((change) => {
-        // Badges del tablero, pero SOLO a quien puede ver esa planta. Antes era un broadcast
-        // global que repartía el estado de las doce a todo el mundo. Es seguro acotarlo: el
-        // listado de plantas ya viene filtrado, así que un no-admin nunca pinta badges ajenos.
-        this.server.to([scopeRoomOf(change.plantId), SCOPE_ALL]).emit('opc:liveness', change);
-      }),
-    );
+    this.subs.push(this.pipeline.snapshot$.subscribe((value) => { void this.deliver('opc:snapshot', value.plantId, value, true); }));
+    this.subs.push(this.pipeline.liveness$.subscribe((value) => { void this.deliver('opc:liveness', value.plantId, value, false); }));
+    this.sweep = setInterval(() => { void this.revalidateConnections(); }, 30_000);
+    this.sweep.unref?.();
   }
 
   onModuleDestroy(): void {
-    for (const s of this.subs) s.unsubscribe();
+    for (const sub of this.subs) sub.unsubscribe();
+    if (this.sweep) clearInterval(this.sweep);
+    for (const client of this.sessions.keys()) this.reject(client);
   }
 
   @SubscribeMessage('opc:subscribe')
-  async subscribeToPlant(
-    @MessageBody() payload: { plantId?: string },
-    @ConnectedSocket() client: Socket,
-  ): Promise<void> {
+  async subscribeToPlant(@MessageBody() payload: { plantId?: string }, @ConnectedSocket() client: Socket): Promise<void> {
     const plantId = payload?.plantId;
-    if (!plantId) return;
-
-    if (!this.puedeVer(client, plantId)) {
-      const scope = (client.data as { scope?: SocketScope }).scope;
-      this.logger.warn(
-        `socket ${client.id} pidió la planta "${plantId}", fuera de su ámbito (${scope?.plant ?? 'sin ámbito'})`,
-      );
-      // Rechazo EXPLÍCITO, no silencio. Mismo criterio que PlantScopeGuard: un mensaje claro evita
-      // que el operador pierda el tiempo creyendo que es una avería, ante una pantalla vacía.
-      client.emit('opc:denied', {
-        plantId,
-        reason: 'Tu cuenta solo tiene acceso a la planta asignada',
-      });
+    if (typeof plantId !== 'string' || !/^[a-z0-9_-]{1,64}$/.test(plantId)) return;
+    if (!await this.authorized(client)) return;
+    if (!this.canSee(client, plantId)) {
+      client.emit('opc:denied', { plantId, reason: 'Tu cuenta solo tiene acceso a la planta asignada' });
       return;
     }
-
-    // Sale de la room de la planta anterior, pero CONSERVA la de ámbito: si se saliera de ella,
-    // el socket dejaría de recibir `opc:liveness` y los badges del tablero se congelarían.
     for (const room of client.rooms) {
       if (room !== client.id && !room.startsWith('scope:')) await client.leave(room);
     }
     await client.join(plantId);
-
-    // Estado actual desde cache (nunca toca el PLC).
-    client.emit('opc:snapshot', this.cache.get(plantId));
+    // join may yield: recheck before releasing the cached detail.
+    if (await this.authorized(client) && this.canSee(client, plantId)) client.emit('opc:snapshot', this.cache.get(plantId));
   }
 
-  /**
-   * Autorización por planta. Falla CERRADO: un socket sin ámbito (fallo de wiring, o un
-   * `handleConnection` que no llegó a correr) no accede a nada, en vez de acceder a todo.
-   */
-  private puedeVer(client: Socket, plantId: string): boolean {
-    const scope = (client.data as { scope?: SocketScope }).scope;
-    if (!scope) return false;
-    return scope.plant === null || scope.plant === plantId;
+  private canSee(client: Socket, plantId: string): boolean {
+    const scope = client.data.scope as SocketScope | undefined;
+    return Boolean(scope && (scope.plant === null || scope.plant === plantId));
   }
 
-  /** Sale de la room de una planta: el cliente deja de recibir sus snapshots (al desmontar la
-   *  pantalla). Sin esto el servidor seguía empujando la planta a un socket que ya no la mira. */
   @SubscribeMessage('opc:unsubscribe')
-  async unsubscribeFromPlant(
-    @MessageBody() payload: { plantId?: string },
-    @ConnectedSocket() client: Socket,
-  ): Promise<void> {
-    if (payload?.plantId) await client.leave(payload.plantId);
+  async unsubscribeFromPlant(@MessageBody() payload: { plantId?: string }, @ConnectedSocket() client: Socket): Promise<void> {
+    if (typeof payload?.plantId === 'string' && !payload.plantId.startsWith('scope:') && payload.plantId !== client.id) {
+      await client.leave(payload.plantId);
+    }
   }
 }

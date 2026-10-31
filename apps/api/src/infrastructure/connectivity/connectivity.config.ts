@@ -44,11 +44,8 @@ export interface OpcUaConfig {
   staleThresholdMs: number;
   writesEnabled: boolean; // OPCUA_WRITES_ENABLED (Fase 5); aquí solo se lee, nunca habilita write en Fase 1
   /**
-   * ⚠️ EXCEPCIÓN DELIBERADA Y TEMPORAL a la regla 9 ("sin excepciones, ni para probar"): permite
-   * que `getWriteSecurity()` reporte `secure:true` aunque la sesión NO sea SignAndEncrypt+no-anónima.
-   * Existe SOLO porque el servidor real hoy únicamente acepta Anonymous+None (hallazgo P0) y se
-   * necesitó una prueba de campo controlada (válvula de Sirena, 2026-07-29). Default false — debe
-   * quedar en false salvo durante una prueba explícita, auditada y revertida al terminar.
+   * @deprecated Legacy configuration retained for diagnostics/migration only. This flag can no
+   * longer authorize writes: authenticated SignAndEncrypt is mandatory, including at adapter I/O.
    */
   allowInsecureWrites: boolean; // OPCUA_ALLOW_INSECURE_WRITES
 }

@@ -94,7 +94,7 @@ async function buildApp(secure: boolean): Promise<{ app: INestApplication; jwt: 
       { provide: AuditLogService, useValue: { record: async () => undefined } },
       // La maniobra se firma y deja un aviso en la bandeja. Aquí se doblan las dos: lo que este
       // test protege es el camino HTTP y el RBAC, no el libro de firmas.
-      { provide: CommandSignatureService, useValue: { firmar: async () => 'firma-de-prueba' } },
+      { provide: CommandSignatureService, useValue: { firmar: async (_id: number, _name: string | null, finalize?: () => Promise<void>) => { await finalize?.(); return 'firma-de-prueba'; } } },
       { provide: NotificationRepository, useValue: { create: async () => true } },
     ],
   })

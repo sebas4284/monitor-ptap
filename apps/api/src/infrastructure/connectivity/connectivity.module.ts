@@ -1,5 +1,4 @@
 import { Logger, Module } from '@nestjs/common';
-import { ConnectivityGateway } from './connectivity.gateway';
 import { CONNECTIVITY_ADAPTER, CONNECTIVITY_CONFIG } from './connectivity.tokens';
 import { loadConnectivityConfig, type ConnectivityConfig } from './connectivity.config';
 import { loadMapping, resolverRutaDelMapping } from './mapping/opc-mapping.loader';
@@ -57,7 +56,6 @@ import type { ConnectivityAdapter } from './ports/connectivity-adapter.port';
     PlantCache,
     TankAutonomyStore,
     PlantPipelineService,
-    ConnectivityGateway,
   ],
   exports: [CONNECTIVITY_ADAPTER, CONNECTIVITY_CONFIG, PlantCache, PlantPipelineService, TankAutonomyStore],
 })

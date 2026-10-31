@@ -712,17 +712,15 @@ export class OpcUaConnectivityAdapter implements ConnectivityAdapter {
   // ANTES de llamar aquí. Estos métodos solo hacen el I/O OPC UA sobre un elemento.
 
   getWriteSecurity(): WriteSecurity {
-    // ⚠️ `allowInsecureWrites` es una excepción DELIBERADA y TEMPORAL a la regla 9 ("sin excepciones,
-    // ni para probar"), habilitada solo por OPCUA_ALLOW_INSECURE_WRITES=true — ver su doc en
-    // connectivity.config.ts. Debe estar en false salvo durante una prueba de campo auditada.
-    const secure = Boolean(
-      (this.config.securityMode === 'SignAndEncrypt' && this.config.identity.type !== 'anonymous') ||
-        this.config.allowInsecureWrites,
-    );
+    // Administrative exceptions never establish cryptographic security.
+    const secure = this.config.securityMode === 'SignAndEncrypt' && this.config.identity.type !== 'anonymous';
     return { secure, securityMode: this.config.securityMode, identity: this.config.identity.type };
   }
 
   async writeBufferElement(target: BufferElementTarget, value: number | boolean): Promise<void> {
+    if (!this.config.writesEnabled || !this.getWriteSecurity().secure) {
+      throw new Error('WRITES_DISABLED_INSECURE_SESSION: se requiere escritura habilitada y sesión autenticada y cifrada');
+    }
     const resolved = this.findResolvedElement(target);
     await escribirElemento(this.session!, resolved.nodeId, target, value);
   }

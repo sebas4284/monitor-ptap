@@ -113,7 +113,7 @@ function repo(): CommandLogRepository {
   } as unknown as CommandLogRepository;
 }
 const auditoria = { record: async () => undefined } as unknown as AuditLogService;
-const firmas = { firmar: async () => 'firma-de-prueba' } as unknown as CommandSignatureService;
+const firmas = { firmar: async (_id: number, _name: string | null, finalize?: () => Promise<void>) => { await finalize?.(); return 'firma-de-prueba'; } } as unknown as CommandSignatureService;
 const avisos = { create: async () => true } as unknown as NotificationRepository;
 const OPERADOR: CommandActor = { userId: 'u1', userName: 'Operador', userEmail: 'op@ptap.co', role: 'operador', ip: '10.0.0.1' };
 
@@ -617,11 +617,13 @@ test('sim e2e: el sostenido REAL de 45 s cubre la MSG de 8 s con cualquier fase 
   assert.ok(con44.some((x) => x.endsWith(':open')) && con44.some((x) => x.endsWith(':mid')), `con 44 s depende de la fase: ${con44.join(', ')}`);
 });
 
-// ── Mapping REAL de Carbonero (el del integrador, 2026-10-05) ────────────────────────
+// ── Mapping REAL: mando absoluto sostenido y eco en INT_OUT (2026-10-29) ─────────────
 
-test('sim e2e: Carbonero REAL — sin realimentación declarada sale en ámbar (sent) aunque la válvula simulada sí se mueva', async (t) => {
+test('sim e2e: Carbonero REAL — confirma el eco del mando absoluto sostenido, sin afirmar realimentación física', async (t) => {
   relojFalso(t);
   const real = loadMapping(RUTA_MAPPING_PRODUCCION);
+  const write = real.signals.find((s) => s.plantId === 'carbonero' && s.domainKey === 'valve1')?.write;
+  assert.equal(write?.readBack.stateVerified, false, 'el eco del mando no prueba la posición física');
   const escenario = opcionesDesdeEscenario(leerEscenario(resolverRutaEscenario('produccion')));
   for (const feedback of ['none', 'auto'] as const) {
     const opts: SimulatorOptions = { ...escenario, valves: { ...escenario.valves, 'carbonero/valve1': { feedback } } };
@@ -629,13 +631,16 @@ test('sim e2e: Carbonero REAL — sin realimentación declarada sale en ámbar (
     try {
       await avanzar(t, 3000);
       const r = await esperar(t, orden(m, 'carbonero', 'valve1', 'open'), 70_000);
-      assert.equal(r.status, 'sent', `feedback ${feedback}: sin semántica de estado, ni verde ni rojo (${r.reason})`);
-      assert.equal(r.writtenValue, 1, 'bit0 = abrir (integrador 2026-10-05)');
+      assert.equal(r.status, 'confirmed', `feedback ${feedback}: el canal INT_OUT confirma su escritura (${r.reason})`);
+      assert.equal(r.writtenValue, 4096, 'valor absoluto de abrir salida (mapping 2026-10-29)');
+      assert.equal(r.confirmedValue, 4096, 'confirmación del mando, incluso sin feedback físico');
       assert.equal(r.writeVerified, true);
       const ws = escriturasEn(m.sim.getWriteHistory(), 'INT_OUT_CARBONERO');
-      assert.deepEqual(ws.map((w) => w.value), [1, 0]);
-      assert.deepEqual(conLosDosSentidos(ws, 1, 2), []);
-      await avanzar(t, 20_000);
+      assert.deepEqual(ws.map((w) => w.value), [4096]);
+      assert.deepEqual(conLosDosSentidos(ws, 4096, 8192), []);
+      assert.equal(m.sim.getSimulatedValve('carbonero', 'valve1')?.state, 'closed', 'el eco llega antes de que el PLC local vea el mando');
+      await avanzar(t, 60_000, 50);
+      assert.deepEqual(escriturasEn(m.sim.getWriteHistory(), 'INT_OUT_CARBONERO').map((w) => w.value), [4096], 'la señal sigue sostenida sin limpieza');
       assert.equal(
         m.sim.getSimulatedValve('carbonero', 'valve1')?.state,
         'open',
@@ -647,9 +652,9 @@ test('sim e2e: Carbonero REAL — sin realimentación declarada sale en ámbar (
   }
 });
 
-// ── Mapping REAL de La Vorágine: dos válvulas SOSTENIDAS en la misma palabra (integrador 2026-10-16) ──
+// ── La Vorágine REAL: cada orden ABSOLUTA reemplaza la palabra (2026-10-29) ─────────
 
-test('sim e2e: La Vorágine REAL — entrada y salida sostenidas en INT_OUT[0]: una escritura por orden, nada se suelta, nunca 1/1', async (t) => {
+test('sim e2e: La Vorágine REAL — cada mando absoluto sustituye INT_OUT[0], sin limpieza ni sentidos opuestos simultáneos', async (t) => {
   relojFalso(t);
   const real = loadMapping(RUTA_MAPPING_PRODUCCION);
   const escenario = opcionesDesdeEscenario(leerEscenario(resolverRutaEscenario('produccion')));
@@ -661,49 +666,45 @@ test('sim e2e: La Vorágine REAL — entrada y salida sostenidas en INT_OUT[0]: 
     assert.equal(m.sim.getSimulatedValve('voragine', 'valve1')?.state, 'closed');
     assert.equal(m.sim.getSimulatedValve('voragine', 'valve2')?.state, 'closed');
 
-    // Las DOS a la vez: dos operarios, o uno que confirma las dos seguidas.
-    const t0 = Date.now();
-    const [salida, entrada] = await esperar(
-      t,
-      Promise.all([orden(m, 'voragine', 'valve1', 'open'), orden(m, 'voragine', 'valve2', 'open')]),
-      10_000,
-    );
-    const ms = Date.now() - t0;
-    for (const r of [salida, entrada]) {
-      // Sin semántica de estado verificada: ámbar, con el eco del canal de mando.
-      assert.equal(r.status, 'sent', `${r.target}: ${r.status} ${r.reason}`);
-      assert.equal(r.writeVerified, true, `${r.target}: el eco ve SU escritura`);
+    const steps = [
+      { target: 'valve1', command: 'open', value: 4096, state: 'open' },
+      { target: 'valve2', command: 'open', value: 4, state: 'open' },
+      { target: 'valve1', command: 'close', value: 8192, state: 'closed' },
+      { target: 'valve2', command: 'close', value: 8, state: 'closed' },
+    ];
+    for (const [index, step] of steps.entries()) {
+      const write = real.signals.find((s) => s.plantId === 'voragine' && s.domainKey === step.target)?.write;
+      assert.equal(write?.readBack.stateVerified, false, 'solo se confirma el canal de mando');
+      const t0 = Date.now();
+      const r = await esperar(t, orden(m, 'voragine', step.target, step.command), 10_000);
+      assert.equal(r.status, 'confirmed', `${step.target}: eco del mando ${r.reason}`);
+      assert.equal(r.writeVerified, true);
+      assert.equal(r.writtenValue, step.value, 'modo absoluto: no conserva el par de la otra válvula');
+      assert.equal(r.confirmedValue, step.value);
+      assert.ok(Date.now() - t0 < 3000, 'el eco no espera al recorrido físico de 30 s');
+      await avanzar(t, 60_000, 50);
+      assert.equal(escriturasEn(m.sim.getWriteHistory(), PALABRA).length, index + 1, 'una escritura por orden y ninguna limpieza');
+      assert.equal(m.sim.getSimulatedValve('voragine', step.target)?.state, step.state);
     }
-    assert.ok(ms < 3000, `las dos órdenes vuelven en ${ms} ms simulados: sin sostenido de 45 s que esperar`);
-    // Una escritura por orden. Cuál entra primero lo decide el turno de la palabra; la segunda ya lee
-    // la primera, así que el final es el mismo: las dos señales de abrir puestas.
-    const abrir = escriturasEn(m.sim.getWriteHistory(), PALABRA).map((w) => Number(w.value));
-    assert.equal(abrir.length, 2, `una escritura por orden: ${JSON.stringify(abrir)}`);
-    assert.ok([4, 4096].includes(abrir[0]), `la primera pone solo su bit: ${abrir[0]}`);
-    assert.equal(abrir[1], 4 | 4096);
-
-    // Un minuto después la señal SIGUE puesta (nadie la limpió) y el PLC local, que solo mueve con el
-    // bit sostenido, llevó las dos válvulas al tope.
-    await avanzar(t, 60_000, 50);
-    assert.equal(escriturasEn(m.sim.getWriteHistory(), PALABRA).length, 2, 'ninguna escritura de limpieza');
-    assert.equal(m.sim.getSimulatedValve('voragine', 'valve1')?.state, 'open');
-    assert.equal(m.sim.getSimulatedValve('voragine', 'valve2')?.state, 'open');
-
-    // Y cerrar las dos, otra vez a la vez: cada par pasa de abrir a cerrar en UNA escritura.
-    await esperar(t, Promise.all([orden(m, 'voragine', 'valve2', 'close'), orden(m, 'voragine', 'valve1', 'close')]), 10_000);
-    await avanzar(t, 60_000, 50);
     const ws = escriturasEn(m.sim.getWriteHistory(), PALABRA);
-    assert.equal(ws.length, 4);
-    assert.equal(ws[ws.length - 1].value, 8 | 8192, 'las dos cerradas y con la señal de cerrar puesta');
+    assert.deepEqual(ws.map((w) => w.value), [4096, 4, 8192, 8], 'cada orden sustituye la palabra completa');
     assert.deepEqual(conLosDosSentidos(ws, 4096, 8192), [], 'salida: jamás abrir y cerrar a la vez');
     assert.deepEqual(conLosDosSentidos(ws, 4, 8), [], 'entrada: jamás abrir y cerrar a la vez');
     assert.deepEqual(bitsAjenosIntactos(ws, 4 | 8 | 4096 | 8192), [], 'ningún bit fuera de los dos pares');
-    for (const w of ws) {
-      const cambio = Number(w.value) ^ Number(w.previous);
-      assert.ok((cambio & ~(4 | 8)) === 0 || (cambio & ~(4096 | 8192)) === 0, `cada escritura mueve UNA válvula: ${String(w.previous)} → ${String(w.value)}`);
-    }
     assert.equal(m.sim.getSimulatedValve('voragine', 'valve1')?.state, 'closed');
     assert.equal(m.sim.getSimulatedValve('voragine', 'valve2')?.state, 'closed');
+    // Las órdenes simultáneas también son absolutas: se serializan las escrituras/eco,
+    // y la última sustituye la palabra. No se promete conservar el par de la otra válvula.
+    const concurrent = await esperar(t, Promise.all([
+      orden(m, 'voragine', 'valve1', 'open'), orden(m, 'voragine', 'valve2', 'open'),
+    ]), 10_000);
+    for (const result of concurrent) assert.equal(result.writeVerified, true, 'cada eco ve su propia escritura');
+    const simultaneous = escriturasEn(m.sim.getWriteHistory(), PALABRA).slice(-2);
+    assert.deepEqual(simultaneous.map((w) => Number(w.value)).sort((a, b) => a - b), [4, 4096]);
+    await avanzar(t, 60_000, 50);
+    assert.equal(escriturasEn(m.sim.getWriteHistory(), PALABRA).length, 6, 'las concurrentes tampoco generan limpieza');
+    const winningTarget = simultaneous[1].value === 4 ? 'valve2' : 'valve1';
+    assert.equal(m.sim.getSimulatedValve('voragine', winningTarget)?.state, 'open', 'el último mando queda sostenido');
     assert.deepEqual(m.sim.getViolations(), []);
   } finally {
     await m.parar();

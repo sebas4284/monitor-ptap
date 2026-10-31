@@ -1,0 +1,16 @@
+
+> monitor-ptap@1.0.0 typecheck
+> npm run typecheck --workspaces --if-present
+
+
+> @ptap/api@1.0.0 typecheck
+> tsc -p tsconfig.json --noEmit
+
+
+> @ptap/mobile@1.0.0 typecheck
+> tsc -p tsconfig.json --noEmit
+
+
+> @ptap/shared@1.0.0 typecheck
+> tsc -p tsconfig.json --noEmit
+

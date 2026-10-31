@@ -1,0 +1,11 @@
+warning: in the working copy of 'apps/api/scripts/opcua-writes-toggle.sh', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/api/src/infrastructure/connectivity/connectivity.gateway.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/api/src/modules/commands/command-signature.service.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/api/test/email-verification.test.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/mobile/context/AuthContext.tsx', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/mobile/hooks/useBasicStatus.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/mobile/hooks/useNotifications.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/mobile/hooks/useSnapshot.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/mobile/services/api.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/mobile/services/last-snapshot-store.ts', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'apps/mobile/services/session-store.ts', LF will be replaced by CRLF the next time Git touches it

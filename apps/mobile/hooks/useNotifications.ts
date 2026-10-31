@@ -8,9 +8,6 @@ import {
   type AppNotification,
 } from '../services/notifications';
 
-const LIST_KEY = ['notifications'];
-const COUNT_KEY = ['notifications', 'unseen'];
-
 /** Cada cuánto se refresca el contador de la campana. Los avisos son diarios: no urge más. */
 const COUNT_POLL_MS = 60_000;
 
@@ -21,16 +18,18 @@ const COUNT_POLL_MS = 60_000;
  * completo cada minuto para pintar un número sería tráfico regalado.
  */
 export function useUnseenNotifications(): number {
-  const { hasPermission } = useAuth();
+  const { user, token, hasPermission } = useAuth();
+  const listKey = ['notifications', user?.id, user?.role, user?.plant];
+  const countKey = [...listKey, 'unseen'];
   const { data } = useQuery({
-    queryKey: COUNT_KEY,
+    queryKey: countKey,
     queryFn: fetchUnseenCount,
     // El Civil no recibe avisos de proceso (el backend responde 403): ni se pregunta.
-    enabled: hasPermission('view_dashboard'),
+    enabled: !!token && hasPermission('view_dashboard'),
     refetchInterval: COUNT_POLL_MS,
     staleTime: 30_000,
   });
-  return data ?? 0;
+  return token && hasPermission('view_dashboard') ? (data ?? 0) : 0;
 }
 
 /**
@@ -48,11 +47,13 @@ export function useNotifications(): {
   markSeen: () => void;
 } {
   const queryClient = useQueryClient();
-  const { hasPermission } = useAuth();
-  const canSee = hasPermission('view_dashboard');
+  const { user, token, hasPermission } = useAuth();
+  const listKey = ['notifications', user?.id, user?.role, user?.plant];
+  const countKey = [...listKey, 'unseen'];
+  const canSee = !!token && hasPermission('view_dashboard');
 
   const query = useQuery({
-    queryKey: LIST_KEY,
+    queryKey: listKey,
     queryFn: fetchNotifications,
     enabled: canSee,
     staleTime: 15_000,
@@ -63,8 +64,8 @@ export function useNotifications(): {
     onSuccess: () => {
       // El contador de la campana debe apagarse de inmediato; el listado se re-pide para que las
       // filas pierdan el resalte de "nuevo".
-      void queryClient.invalidateQueries({ queryKey: COUNT_KEY });
-      void queryClient.invalidateQueries({ queryKey: LIST_KEY });
+      void queryClient.invalidateQueries({ queryKey: countKey });
+      void queryClient.invalidateQueries({ queryKey: listKey });
     },
   });
 
@@ -75,11 +76,13 @@ export function useNotifications(): {
   }, [canSee]);
 
   return {
-    notifications: query.data?.notifications ?? [],
-    unseen: query.data?.unseen ?? 0,
+    notifications: canSee ? (query.data?.notifications ?? []) : [],
+    unseen: canSee ? (query.data?.unseen ?? 0) : 0,
     isLoading: query.isLoading,
     isError: query.isError,
-    refetch: () => void query.refetch(),
+    refetch: () => {
+      if (canSee) void query.refetch();
+    },
     markSeen,
   };
 }

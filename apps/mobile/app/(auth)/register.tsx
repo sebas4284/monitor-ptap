@@ -101,7 +101,7 @@ export default function RegisterScreen() {
       });
       // El aviso vive en la raíz, así que sobrevive a la navegación: se puede volver al login de
       // inmediato en vez de retener al usuario tras un `window.alert` solo para que pulse OK.
-      toast.success('Cuenta creada', message);
+      toast.success('Solicitud recibida', message);
       router.replace('/(auth)/login');
     } catch (err) {
       toast.error('No se pudo crear la cuenta', err instanceof Error ? err.message : 'Intenta de nuevo.');

@@ -1,0 +1,140 @@
+{
+  "purpose": "Reproduce audited behavior; matched vulnerability checks confirm defects, not remediation.",
+  "utc": "2026-10-31T03:05:36.702Z",
+  "node": "v26.12.1",
+  "execution": "Reviewed source with imports/decorators removed and fake dependencies; no full application integration.",
+  "sourceSha256": {
+    "packages/shared/src/index.ts": "b75b4ef687e6eaa944b53b2f077a2a8cfc048318ee99176dc81929873e8d1de4",
+    "apps/api/src/infrastructure/connectivity/connectivity.gateway.ts": "a5c0edad8b59ef6ac1c73f60f0c1fc309ca1dab1eed6e9b046dff6aa5a7f67e5",
+    "apps/api/src/modules/auth/guards/jwt-auth.guard.ts": "f814cf4ebced7c33749c7603c3dec41213d1bce4c1587309947433b3ce58507d",
+    "apps/api/src/modules/commands/command-signature.ts": "4384bdca7539b46e702c9f157bb6950aab8efebd75c90fcf5b2e8282b8f0ed9b",
+    "apps/api/src/modules/commands/command-signature.service.ts": "1e3dc6fedf3ced76feb59d4ed58182318392b5387f8a56125d860cadc6b40434",
+    "apps/mobile/services/last-snapshot-store.ts": "f0f0b9b4d92b7aa7f7937c6a1907cfc59212014b37f9f509dc567a6535c9c3cc",
+    "apps/mobile/context/AuthContext.tsx": "0f316ee47a6ed09fe757dcfca0a00a6e5eeaef33b1b264995ab3a6e4337f0606",
+    "apps/api/src/modules/auth/auth.service.ts": "dafe154f269e1a74edeba7583a54fb37133b683ad5e27521eb32d4704761a5de",
+    "apps/api/src/modules/auth/auth.controller.ts": "213ea7015d833f7c2daeb5c19b87a57460a1e0f59cd6a5fb0645ea84ee3d46ce",
+    "apps/api/src/modules/email/email.service.ts": "ba98369e467ae61100ec36ebb7f59e57fc3241fe89423fae29f904ff8f07e69c",
+    "apps/api/src/infrastructure/connectivity/adapters/opcua/opcua-connectivity.adapter.ts": "58b1fc276f52d228570aa95e305a91855ee1a46651de9b0ff6e2d803a74378ca"
+  },
+  "results": [
+    {
+      "id": "SEC-01",
+      "type": "vulnerability_reproduction",
+      "description": "Civil receives a full snapshot via the actual gateway",
+      "matched": true,
+      "observation": {
+        "civilHasDashboardPermission": false,
+        "fullSnapshotReceived": true
+      }
+    },
+    {
+      "id": "CONTROL-01",
+      "type": "negative_control",
+      "description": "Operator cannot subscribe to another plant",
+      "matched": true,
+      "observation": {
+        "otherPlantDenied": true
+      }
+    },
+    {
+      "id": "SEC-02-A",
+      "type": "vulnerability_reproduction",
+      "description": "Inactive account: HTTP rejects while a new socket accepts its unexpired credential",
+      "matched": true,
+      "observation": {
+        "httpRejectedInactiveAccount": true,
+        "newSocketStillAcceptedAdminScope": true
+      }
+    },
+    {
+      "id": "SEC-02-B",
+      "type": "vulnerability_reproduction",
+      "description": "Already connected socket receives broadcasts after its credential expires",
+      "matched": true,
+      "observation": {
+        "establishedSocketReceivedAfterExpiry": true,
+        "expiredReconnectRejected": true
+      }
+    },
+    {
+      "id": "CONTROL-02",
+      "type": "negative_control",
+      "description": "Chain verifier detects removal of a middle entry",
+      "matched": true,
+      "observation": {
+        "middleDeletionDetected": true
+      }
+    },
+    {
+      "id": "SEC-03-A",
+      "type": "vulnerability_reproduction",
+      "description": "Removing the chain tail is undetected without an external checkpoint",
+      "matched": true,
+      "observation": {
+        "suffixDeletionReportedBrokenLinks": 0,
+        "totalDeletionReportedBrokenLinks": 0
+      }
+    },
+    {
+      "id": "SEC-03-B",
+      "type": "vulnerability_reproduction",
+      "description": "Service excludes unsigned rows and reports a stripped ledger as verifiable with no broken entries",
+      "matched": true,
+      "observation": {
+        "allRowsWithNullSignatureExcluded": true,
+        "result": {
+          "firmadas": 0,
+          "rotos": [],
+          "verificable": true
+        }
+      }
+    },
+    {
+      "id": "SEC-04",
+      "type": "vulnerability_reproduction",
+      "description": "Actual logout body leaves previous process data in device storage and memory",
+      "matched": true,
+      "observation": {
+        "credentialRemoved": true,
+        "previousSnapshotStillPersisted": true,
+        "previousSnapshotStillInMemory": true
+      }
+    },
+    {
+      "id": "SEC-05",
+      "type": "vulnerability_reproduction",
+      "description": "Public registration explicitly reveals that an email is already registered",
+      "matched": true,
+      "observation": {
+        "publicEndpoint": true,
+        "duplicateEmailConflictRevealsMembership": true
+      }
+    },
+    {
+      "id": "SEC-06",
+      "type": "vulnerability_reproduction",
+      "description": "SMTP misconfiguration falls back to logging the raw verification credential",
+      "matched": true,
+      "observation": {
+        "missingSmtpConfiguration": true,
+        "rawVerificationTokenInLog": true
+      }
+    },
+    {
+      "id": "OT-01",
+      "type": "conditional_configuration_reproduction",
+      "description": "Insecure-write override labels an anonymous unencrypted session as secure",
+      "matched": true,
+      "observation": {
+        "anonymousAndNoneWithOverride": "secure=true",
+        "liveProductionFlagsChecked": false,
+        "plcWrites": 0
+      }
+    }
+  ],
+  "summary": {
+    "checks": 11,
+    "matched": 11,
+    "failed": 0
+  }
+}

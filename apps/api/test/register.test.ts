@@ -224,15 +224,25 @@ test('register: enviar role:"admin" → 400 y NO se crea nada', async () => {
   }
 });
 
-test('register: email duplicado → 409', async () => {
+test('register: email duplicado responde igual al alta nueva sin emitir credenciales ni modificar la cuenta', async () => {
   const repo = fakeRepo([VALID.email]);
   const audit = fakeAudit();
-  const app = await buildApp(repo, audit.service);
+  const verification = fakeVerification();
+  const email = fakeEmail();
+  const app = await buildApp(repo, audit.service, verification.repo, email.service);
+  const newApp = await buildApp(fakeRepo(), fakeAudit().service);
   try {
-    await request(app.getHttpServer()).post('/api/auth/register').send(VALID).expect(409);
+    const duplicate = await request(app.getHttpServer()).post('/api/auth/register').send(VALID).expect(201);
+    const fresh = await request(newApp.getHttpServer()).post('/api/auth/register').send(VALID).expect(201);
+    assert.deepEqual(duplicate.body, fresh.body);
+    assert.equal(repo.created.length, 0);
+    assert.deepEqual(verification.issued, []);
+    assert.deepEqual(email.sent, []);
+    assert.doesNotMatch(duplicate.body.message, /ya est|fue creada/i);
     assert.ok(audit.calls.some((c) => c.eventType === 'auth.register_rejected'));
   } finally {
     await app.close();
+    await newApp.close();
   }
 });
 
@@ -249,5 +259,41 @@ test('register: el alta queda auditada como auth.register con rol civil', async 
     assert.equal((entry.detail as { status?: string }).status, 'pending_approval');
   } finally {
     await app.close();
+  }
+});
+
+test('register: responde sin esperar al proveedor de correo y audita su fallo sin secretos', async () => {
+  const repo = fakeRepo();
+  const audit = fakeAudit();
+  let rejectDelivery!: (error: Error) => void;
+  const delivery = new Promise<void>((_resolve, reject) => { rejectDelivery = reject; });
+  let markDeliveryStarted!: () => void;
+  const deliveryStarted = new Promise<void>((resolve) => { markDeliveryStarted = resolve; });
+  const service = new AuthService(
+    repo, new PasswordHashingService(), new JwtService(), audit.service,
+    fakeVerification().repo,
+    { sendVerificationEmail: async () => { markDeliveryStarted(); return delivery; } } as unknown as EmailService,
+  );
+  let timer!: ReturnType<typeof setTimeout>;
+  const registration = service.register(VALID, { ip: null });
+  try {
+    await deliveryStarted; // La comprobación de latencia excluye el coste variable de Argon2.
+    const result = await Promise.race([
+      registration,
+      new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), 500); }),
+    ]);
+    assert.notEqual(result, null, 'la respuesta pública no puede depender de la latencia SMTP');
+    assert.equal(result?.status, 'pending_approval');
+    const entry = audit.calls.find((call) => call.eventType === 'auth.register');
+    assert.equal(entry?.detail?.emailDelivery, 'queued');
+    rejectDelivery(new Error('SMTP raw-token https://example.com/verify?token=raw-token'));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const failed = audit.calls.find((call) => call.eventType === 'auth.verification_delivery');
+    assert.equal(failed?.detail?.outcome, 'failed');
+    assert.doesNotMatch(JSON.stringify(audit.calls), /raw-token|example.com\/verify/);
+  } finally {
+    clearTimeout(timer);
+    rejectDelivery(new Error('synthetic delivery failure'));
+    await registration;
   }
 });

@@ -75,7 +75,7 @@ export function selloCoincide(a: string, b: string): boolean {
 
 export interface EslabonRoto {
   id: number;
-  motivo: 'firma_no_coincide' | 'eslabon_no_encaja';
+  motivo: 'firma_no_coincide' | 'eslabon_no_encaja' | 'firma_ausente' | 'checkpoint_no_coincide' | 'limite_legacy_no_coincide';
   /**
    * Planta de la maniobra afectada.
    *

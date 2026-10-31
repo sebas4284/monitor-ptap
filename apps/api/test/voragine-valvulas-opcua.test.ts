@@ -81,7 +81,7 @@ before(async () => {
   server = new OPCUAServer({
     port: PUERTO,
     hostname: '127.0.0.1',
-    securityModes: [MessageSecurityMode.None],
+    securityModes: [MessageSecurityMode.None, MessageSecurityMode.SignAndEncrypt],
     // Basic256Sha256 solo para que el endpoint None ofrezca usuario y contraseña (cifrada con el
     // certificado del servidor): node-opcua no lo ofrece sin una política con la que cifrarla.
     securityPolicies: [SecurityPolicy.None, SecurityPolicy.Basic256Sha256],
@@ -285,7 +285,7 @@ test('herramienta: si el mapping y la herramienta no coinciden, no escribe ni en
   assert.match(lineas.join('\n'), /NO coinciden[\s\S]*salida \(valve1\): el mapping dice open=4 close=8192/);
 });
 
-test('adaptador del backend: escribe y lee el mismo elemento igual que la herramienta, contra el mismo servidor', async () => {
+test('adaptador del backend: escribe y lee el mismo elemento usando sesión autenticada y cifrada', async () => {
   // Las funciones que la herramienta importa son las que usa el adaptador (opcionesDeCliente,
   // identidadDeSesion, escribirElemento, leerElemento). Aquí se ejerce el adaptador completo —sesión,
   // resolución de NodeIds, suscripción— con un mapping de solo La Vorágine.
@@ -297,7 +297,9 @@ test('adaptador del backend: escribe y lee el mismo elemento igual que la herram
     signals: real.signals.filter((s) => s.plantId === 'voragine'),
     raw: { plants: [{ opcBuffers: { intOut: [{ node: { nsUri: 'AQUATECH4' } }] } }] },
   };
-  const adapter = new OpcUaConnectivityAdapter(loadConnectivityConfig().opcua, mapping);
+  const adapter = new OpcUaConnectivityAdapter({ ...loadConnectivityConfig().opcua,
+    securityMode: 'SignAndEncrypt', securityPolicy: 'Basic256Sha256', writesEnabled: true, allowInsecureWrites: false,
+  }, mapping);
   ponerPalabra(8 | 8192);
   const antes = peticiones.length;
   try {

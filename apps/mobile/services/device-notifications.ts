@@ -79,6 +79,8 @@ export async function requestPermission(): Promise<PermissionState> {
     if (result === 'granted') unlockWebAudio();
     return result as PermissionState;
   }
+  // Android 13 cannot show its permission prompt before a notification channel exists.
+  await ensureAndroidChannel();
   const { requestPermissionsAsync } = await nativeModule();
   const { status } = await requestPermissionsAsync();
   // `undetermined` se respeta, no se convierte en `denied`: en Android 13+ cerrar el diálogo sin
@@ -227,6 +229,7 @@ export async function presentNotification(
     // fijo Android REEMPLAZA la notificación anterior en vez de apilar otra igual. El resto (resumen,
     // actualización) conserva el identificador aleatorio de siempre.
     const tag = typeof data?.tag === 'string' ? data.tag : null;
+    await ensureAndroidChannel();
     const Notifications = await nativeModule();
     await Notifications.scheduleNotificationAsync({
       ...(tag?.startsWith('n-') ? { identifier: tag } : {}),

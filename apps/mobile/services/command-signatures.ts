@@ -15,18 +15,20 @@ export interface EslabonRoto {
    * `eslabon_no_encaja`: apunta a un sello que no le corresponde, típico de una fila borrada o
    * insertada en medio.
    */
-  motivo: 'firma_no_coincide' | 'eslabon_no_encaja';
+  motivo: 'firma_no_coincide' | 'eslabon_no_encaja' | 'firma_ausente' | 'checkpoint_no_coincide' | 'limite_legacy_no_coincide';
   plantId: string;
   at: string;
 }
 
 export interface VerificacionFirmas {
-  /** `false` si el servidor no tiene secreto de firma: entonces no se está firmando nada. */
+  /** False also when the checkpoint is missing/corrupt or verification cannot be completed. */
   verificable: boolean;
   firmadas: number;
   integra: boolean;
   rotos: EslabonRoto[];
   mensaje: string;
+  legado?: { total: number; sinFirma: number; conservado: boolean; autenticidad: 'no_demostrada' };
+  desdeActivacion?: { firmadas: number; verificable: boolean; integra: boolean };
 }
 
 export async function fetchVerificacionFirmas(): Promise<VerificacionFirmas> {

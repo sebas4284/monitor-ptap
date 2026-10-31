@@ -353,8 +353,8 @@ test('PLC: palabra de estado con convención LITERAL (stateEncoding de Cascajal,
   const plc = new SimulatedPlc(loadMapping(RUTA_PRODUCCION), opciones(), 0);
   const estado: SimElementRef = { plantId: 'cascajal', channel: 'intIn', sourceBuffer: 'INT_IN_CASCAJAL', index: 1 };
   assert.equal(plc.leer(estado, 0), 251, 'cerrada = 251 (verificado en campo 2026-08-13)');
-  // 128 = bit7 = abrir la salida 1 (integrador 2026-10-16). El 4096 de antes es ahora la salida 2.
-  plc.escribir({ plantId: 'cascajal', channel: 'intOut', sourceBuffer: 'INT_OUT_CASCAJAL', index: 0 }, 128, 10);
+  // Mapping vigente desde 1a98cfe (2026-10-29): salida = 4096/8192 en modo absoluto.
+  plc.escribir({ plantId: 'cascajal', channel: 'intOut', sourceBuffer: 'INT_OUT_CASCAJAL', index: 0 }, 4096, 10);
   assert.equal(plc.leer(estado, 2000), 0, 'abierta: el mapping no declara literal de abierta → neutro, la app cae al caudal');
 });
 
@@ -440,7 +440,7 @@ test('WriteService + simulador: un write spec con el buffer mal escrito sale WRI
       { resolve: () => ({ domainKey: 'valve1', write: conErrata }) } as unknown as CommandMappingResolver,
       { reserve: async () => ({ reserved: true, id: 1 }), finalize: async () => undefined } as unknown as CommandLogRepository,
       { record: async () => undefined } as unknown as AuditLogService,
-      { firmar: async () => 'f' } as unknown as CommandSignatureService,
+      { firmar: async (_id: number, _name: string | null, finalize?: () => Promise<void>) => { await finalize?.(); return 'f'; } } as unknown as CommandSignatureService,
       { create: async () => true } as unknown as NotificationRepository,
     );
     const r = await servicio.execute('sim-una', { command: 'open', target: 'valve1' }, { userId: 'u', userName: 'u', userEmail: 'u@x', role: 'operador', ip: null });

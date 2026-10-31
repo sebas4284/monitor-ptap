@@ -2,3 +2,6 @@
 # "bad interpreter: /usr/bin/env bash^M", y este repositorio se edita desde Windows con
 # core.autocrlf=true. Esta regla los mantiene en LF en cualquier checkout.
 tools/vm/** text eol=lf
+
+# Los transcriptos de auditoria son evidencia: conservar sus bytes y espacios.
+docs/security-audit/**/*.log -text -whitespace

@@ -11,6 +11,8 @@ import { DiagnosticsController } from './diagnostics.controller';
 import { OpcController } from './opc.controller';
 import { RouteCheckService } from './route-check.service';
 import { RouteProbeSampler } from './route-probe.sampler';
+import { ConnectivityGateway, SOCKET_IDENTITY } from './connectivity.gateway';
+import { UsersRepository } from '../../modules/users/users.repository';
 
 /**
  * Observabilidad Fase 4 del puente OPC UA: /api/opc/* con RBAC, audit log de conexión,
@@ -21,6 +23,9 @@ import { RouteProbeSampler } from './route-probe.sampler';
 @Module({
   imports: [ConnectivityModule, AuthModule, AuditModule, MetricsModule, LoggingModule],
   controllers: [OpcController, DiagnosticsController],
-  providers: [ConnectionEventsSubscriber, OpcMetricsSubscriber, StructuredEventsSubscriber, RouteCheckService, RouteProbeSampler],
+  providers: [ConnectionEventsSubscriber, OpcMetricsSubscriber, StructuredEventsSubscriber, RouteCheckService, RouteProbeSampler,
+    ConnectivityGateway,
+    { provide: SOCKET_IDENTITY, inject: [UsersRepository], useFactory: (users: UsersRepository) => (id: string) => users.findById(id) },
+  ],
 })
 export class OpcObservabilityModule {}

@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException, Inject, Injectable, UnauthorizedException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { AuthUser } from '@ptap/shared';
 import { AuditLogService } from '../../infrastructure/audit/audit-log.service';
@@ -33,6 +33,15 @@ export interface RegisterResult {
   message: string;
 }
 
+function registrationResponse(email: string): RegisterResult {
+  return {
+    status: 'pending_approval',
+    email,
+    message: 'Solicitud recibida. Si corresponde, recibirás un correo para verificar tu cuenta. ' +
+      'Las cuentas nuevas requieren aprobación de un administrador antes de iniciar sesión.',
+  };
+}
+
 /** Base pública para los enlaces del correo (la URL por la que se llega al backend). */
 function appPublicUrl(): string {
   return (process.env.APP_PUBLIC_URL ?? `http://localhost:${process.env.PORT ?? 4000}`).replace(/\/+$/, '');
@@ -56,6 +65,8 @@ export class AuthService {
   async login(email: string, password: string, ctx: LoginContext): Promise<LoginResult> {
     const record = await this.usersRepository.findByEmail(email);
     if (!record) {
+      // Mantener el coste de Argon2 también sin cuenta, sin guardar el resultado.
+      await this.passwordHashing.hashPassword(password);
       await this.logLoginFailed(email, ctx, 'usuario no encontrado');
       throw new UnauthorizedException('Credenciales inválidas');
     }
@@ -135,19 +146,9 @@ export class AuthService {
           statusCode: 409,
           detail: { reason: 'email ya registrado' },
         });
-        throw new ConflictException('Ese correo ya está registrado');
+        return registrationResponse(dto.email);
       }
       throw err;
-    }
-
-    // Emitir el token de verificación y "enviar" el correo. Un fallo del envío NO cae el registro
-    // (la cuenta ya existe; el usuario puede pedir reenvío) — solo se anota.
-    let emailSent = false;
-    try {
-      await this.sendVerification(id, dto.email);
-      emailSent = true;
-    } catch {
-      /* el reenvío queda disponible; se refleja en el audit */
     }
 
     await this.auditLog.record({
@@ -159,16 +160,37 @@ export class AuthService {
       method: 'POST',
       path: '/api/auth/register',
       statusCode: 201,
-      detail: { plant: dto.plant, status: 'pending_approval', emailSent },
+      detail: { plant: dto.plant, status: 'pending_approval', emailDelivery: 'queued' },
     });
 
-    return {
-      status: 'pending_approval',
-      email: dto.email,
-      message:
-        'Tu cuenta fue creada. Te enviamos un correo para verificar tu cuenta: ábrelo para ' +
-        'confirmar. Después, un administrador la aprobará antes de que puedas iniciar sesión.',
-    };
+    // Un solo intento en segundo plano: la latencia SMTP no identifica cuentas nuevas.
+    // No hay reintentos automáticos; un reinicio o fallo permite solicitar reenvío.
+    void this.deliverVerification(id, dto.email, ctx).catch(() => {
+      // Un fallo adicional de auditoría tampoco debe producir rechazos sin manejar.
+      // Nunca registrar el error del transporte: puede contener el cuerpo o el enlace.
+    });
+    return registrationResponse(dto.email);
+  }
+
+  private async deliverVerification(userId: string, email: string, ctx: LoginContext, resend = false): Promise<void> {
+    let outcome = 'sent';
+    try {
+      if (resend) await this.emailVerification.invalidateForUser(userId);
+      await this.sendVerification(userId, email);
+    } catch {
+      outcome = 'failed';
+    }
+    await this.auditLog.record({
+      eventType: 'auth.verification_delivery',
+      userId,
+      userEmail: email,
+      role: resend ? null : SELF_REGISTRATION_ROLE,
+      ip: ctx.ip,
+      method: 'POST',
+      path: resend ? '/api/auth/resend-verification' : '/api/auth/register',
+      statusCode: outcome === 'sent' ? 200 : 503,
+      detail: { outcome },
+    });
   }
 
   /** Emite un token nuevo y "envía" el enlace de verificación. */
@@ -207,8 +229,10 @@ export class AuthService {
   async resendVerification(email: string): Promise<void> {
     const record = await this.usersRepository.findByEmail(email);
     if (!record || record.emailVerified) return;
-    await this.emailVerification.invalidateForUser(record.id);
-    await this.sendVerification(record.id, record.email);
+    // Invalidación, emisión y envío fuera de la respuesta pública, con un único intento.
+    void this.deliverVerification(record.id, record.email, { ip: null }, true).catch(() => {
+      // El fallo del transporte se audita sin su texto; absorber también fallos de auditoría.
+    });
   }
 
   private async logLoginFailed(email: string, ctx: LoginContext, reason: string): Promise<void> {

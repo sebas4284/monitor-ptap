@@ -1,9 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import type { PruebaPushDto, RegistroPushDto } from '@ptap/shared';
-import { getAuthToken, postJson } from './api';
+import { getAuthGeneration, getAuthToken, postJson, postJsonWithToken } from './api';
 import { runningVersion } from './app-release';
-import { getPermission } from './device-notifications';
+import { ensureAndroidChannel, getPermission } from './device-notifications';
 import { esFaltaDeFirebase, estadoTrasRegistro, type EstadoPush } from './push-rules';
 import { tokenExpiryMs } from './session-store';
 
@@ -29,6 +29,34 @@ const PUSH_ACTIVO_KEY = 'ptap_push_activo';
 const PUSH_TOKEN_KEY = 'ptap_push_token';
 /** La baja al cerrar sesión no puede dejar a nadie esperando: es lo mejor posible, no un requisito. */
 const BAJA_TIMEOUT_MS = 4_000;
+const REGISTRO_TIMEOUT_MS = 15_000;
+interface SesionPush { token: string; generation: number }
+let stoppedGeneration: number | null = null;
+function sesionActual(): SesionPush | null {
+  const token = getAuthToken();
+  if (!token || stoppedGeneration === getAuthGeneration()) return null;
+  const expiry = tokenExpiryMs(token);
+  return expiry !== null && expiry <= Date.now() ? null : { token, generation: getAuthGeneration() };
+}
+function sigueActual(session: SesionPush): boolean {
+  return session.token === getAuthToken() && session.generation === getAuthGeneration() && session.generation !== stoppedGeneration;
+}
+
+// Preserve ordering across logout/login: old registration -> old owner's unregister -> new registration.
+// The outgoing JWT is captured; a delayed cleanup never borrows the new user's credentials.
+let networkTail: Promise<unknown> = Promise.resolve();
+function enOrden<T>(operation: () => Promise<T>): Promise<T> {
+  const result = networkTail.catch(() => undefined).then(operation);
+  networkTail = result.catch(() => undefined);
+  return result;
+}
+const tokensPorSesion = new Map<string, Set<string>>();
+async function enviar<T>(path: string, body: unknown, bearer: string, timeoutMs: number): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try { return await postJsonWithToken<T>(path, body, bearer, controller.signal); }
+  finally { clearTimeout(timer); }
+}
 
 /** ¿Recibe este teléfono los avisos por push? Lo consulta `notification-sync` antes de publicar. */
 export async function pushActivo(): Promise<boolean> {
@@ -64,31 +92,42 @@ async function olvidar(): Promise<void> {
  * pedir el token dispara además el oyente de cambios: sin esto, el mismo token se registraba dos o tres
  * veces a la vez.
  */
-const altasEnCurso = new Map<string, Promise<EstadoPush>>();
+const altasEnCurso = new Map<number, Map<string, Promise<EstadoPush>>>();
 
-function registrarToken(token: string): Promise<EstadoPush> {
-  const enCurso = altasEnCurso.get(token);
+function registrarToken(token: string, session: SesionPush): Promise<EstadoPush> {
+  const altas = altasEnCurso.get(session.generation) ?? new Map<string, Promise<EstadoPush>>();
+  altasEnCurso.set(session.generation, altas);
+  const enCurso = altas.get(token);
   if (enCurso) return enCurso;
-  const alta = (async (): Promise<EstadoPush> => {
+  const alta = enOrden(async (): Promise<EstadoPush> => {
+    if (!sigueActual(session)) return 'pendiente';
     try {
-      const respuesta = await postJson<RegistroPushDto>('/api/notifications/devices', {
+      if ((await getPermission()) !== 'granted' || !sigueActual(session)) return 'pendiente';
+      const known = tokensPorSesion.get(session.token) ?? new Set<string>();
+      known.add(token);
+      tokensPorSesion.set(session.token, known);
+      const respuesta = await enviar<RegistroPushDto>('/api/notifications/devices', {
         token,
         platform: 'android',
         appVersion: runningVersion(),
-      });
+      }, session.token, REGISTRO_TIMEOUT_MS);
+      if (!sigueActual(session)) return 'pendiente';
       const estado = estadoTrasRegistro(respuesta);
       await recordar(token, estado === 'activo');
       return estado;
     } catch {
-      await recordar(null, false);
+      if (sigueActual(session)) await recordar(null, false);
       return 'error';
     }
-  })().finally(() => altasEnCurso.delete(token));
-  altasEnCurso.set(token, alta);
+  }).finally(() => {
+    altas.delete(token);
+    if (!altas.size) altasEnCurso.delete(session.generation);
+  });
+  altas.set(token, alta);
   return alta;
 }
 
-let registroEnCurso: Promise<EstadoPush> | null = null;
+const registrosEnCurso = new Map<number, Promise<EstadoPush>>();
 
 /**
  * Registra este teléfono con el token de FCM actual. Se llama con el permiso concedido y la sesión
@@ -98,26 +137,40 @@ let registroEnCurso: Promise<EstadoPush> | null = null;
  * Nunca lanza.
  */
 export function registrarPush(): Promise<EstadoPush> {
-  if (registroEnCurso) return registroEnCurso;
-  registroEnCurso = registrar().finally(() => {
-    registroEnCurso = null;
+  const session = sesionActual();
+  if (!session) return Promise.resolve('pendiente');
+  const existing = registrosEnCurso.get(session.generation);
+  if (existing) return existing;
+  const result = registrar(session).finally(() => {
+    registrosEnCurso.delete(session.generation);
   });
-  return registroEnCurso;
+  registrosEnCurso.set(session.generation, result);
+  return result;
 }
 
-async function registrar(): Promise<EstadoPush> {
+async function registrar(session: SesionPush): Promise<EstadoPush> {
   if (Platform.OS !== 'android') return 'no-disponible';
   try {
-    if (!getAuthToken() || (await getPermission()) !== 'granted') {
-      await recordar(null, false);
+    await ensureAndroidChannel();
+    if (!sigueActual(session)) return 'pendiente';
+    if ((await getPermission()) !== 'granted') {
+      if (sigueActual(session)) await recordar(null, false);
       return 'pendiente';
     }
     const Notifications = await import('expo-notifications');
-    const { data } = await Notifications.getDevicePushTokenAsync();
+    if (!sigueActual(session)) return 'pendiente';
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const { data } = await Promise.race([
+      Notifications.getDevicePushTokenAsync(),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('FCM token timeout')), REGISTRO_TIMEOUT_MS);
+      }),
+    ]).finally(() => { if (timer) clearTimeout(timer); });
+    if (!sigueActual(session)) return 'pendiente';
     if (typeof data !== 'string' || !data) throw new Error('FCM no devolvió un token');
-    return await registrarToken(data);
+    return await registrarToken(data, session);
   } catch (err) {
-    await recordar(null, false);
+    if (sigueActual(session)) await recordar(null, false);
     // Una APK compilada sin `google-services.json` no puede tener token: no es un fallo pasajero.
     return esFaltaDeFirebase(err) ? 'no-disponible' : 'error';
   }
@@ -132,6 +185,8 @@ async function registrar(): Promise<EstadoPush> {
  */
 export function escucharCambiosDeToken(alCambiar?: (estado: EstadoPush) => void): () => void {
   if (Platform.OS !== 'android') return () => undefined;
+  const session = sesionActual();
+  if (!session) return () => undefined;
   let vivo = true;
   let quitar: (() => void) | null = null;
   void import('expo-notifications')
@@ -140,9 +195,9 @@ export function escucharCambiosDeToken(alCambiar?: (estado: EstadoPush) => void)
       // Ojo: dentro de este oyente NO se puede llamar a `getDevicePushTokenAsync` —lo vuelve a
       // disparar—; por eso se registra el token que trae el evento.
       const sub = Notifications.addPushTokenListener(({ data }) => {
-        if (typeof data !== 'string' || !data || !getAuthToken()) return;
-        void registrarToken(data).then((estado) => {
-          if (vivo) alCambiar?.(estado);
+        if (typeof data !== 'string' || !data || !sigueActual(session)) return;
+        void registrarToken(data, session).then((estado) => {
+          if (vivo && sigueActual(session)) alCambiar?.(estado);
         });
       });
       quitar = () => sub.remove();
@@ -170,30 +225,34 @@ export function escucharCambiosDeToken(alCambiar?: (estado: EstadoPush) => void)
  * en cada envío.
  */
 export async function desregistrarPush(): Promise<void> {
-  let token: string | null = null;
-  try {
-    token = await AsyncStorage.getItem(PUSH_TOKEN_KEY);
-  } catch {
-    /* sin almacenamiento no hay token que dar de baja */
-  }
-  await olvidar();
-  if (!token) return;
-
+  // Queue synchronously before reading storage so the following login cannot overtake cleanup.
+  // AuthContext retains the outgoing JWT during cleanup; that must not allow a new registration.
+  stoppedGeneration = getAuthGeneration();
   const sesion = getAuthToken();
-  if (!sesion) return;
-  const exp = tokenExpiryMs(sesion);
-  if (exp !== null && exp <= Date.now()) return;
-
+  const cleanup = enOrden(async () => {
+    const tokens = new Set(sesion ? tokensPorSesion.get(sesion) : []);
+    try {
+      const saved = await AsyncStorage.getItem(PUSH_TOKEN_KEY);
+      if (saved) tokens.add(saved);
+    } catch { /* in-flight registrations are tracked without relying on storage */ }
+    await olvidar();
+    if (!sesion) return;
+    tokensPorSesion.delete(sesion);
+    const exp = tokenExpiryMs(sesion);
+    if (exp !== null && exp <= Date.now()) return;
+    await Promise.all([...tokens].map(token =>
+      enviar('/api/notifications/devices/unregister', { token }, sesion, BAJA_TIMEOUT_MS).catch(() => undefined)));
+  }).catch(() => undefined);
   let limite: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
-      postJson('/api/notifications/devices/unregister', { token }),
+      cleanup,
       new Promise<void>((resolve) => {
         limite = setTimeout(resolve, BAJA_TIMEOUT_MS);
       }),
     ]);
   } catch {
-    /* sin red o sin servidor: el token queda registrado; si otra persona entra en este teléfono, pasa a ella */
+    /* best effort; a later login reassigns this device without borrowing its JWT for old cleanup */
   } finally {
     if (limite) clearTimeout(limite);
   }

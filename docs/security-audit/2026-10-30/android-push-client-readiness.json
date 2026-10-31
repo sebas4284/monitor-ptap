@@ -1,0 +1,29 @@
+{
+  "utc": "2026-10-31T13:26:13.568Z",
+  "mobileGoogleServicesSourcePresent": false,
+  "mobileGoogleServicesNativeCopyPresent": false,
+  "generatedFirebaseAppIdPresent": false,
+  "generatedFirebaseSenderIdPresent": false,
+  "productionFirebaseEnvironmentKeyPresent": false,
+  "registeredAndroidDeviceCount": 0,
+  "projectAlignmentVerified": false,
+  "existingReleaseApkPresent": true,
+  "existingReleaseApkBytes": 35587387,
+  "newNativeBuildPerformed": false,
+  "physicalDeviceDeliveryVerified": false,
+  "providerCallsOrUserPushesPerformed": false,
+  "productionFilesOrProcessesChangedByClientAgent": false,
+  "installedExpoNotificationsVersion": "58.1.6",
+  "requiredAndroidPackage": "com.ptap.monitor",
+  "requiredCompileSdk": 37,
+  "remainingProviderArtifacts": [
+    "Authorized public Android google-services.json for the existing Firebase project and com.ptap.monitor",
+    "Authorized private backend FCM service account for the same Firebase project"
+  ],
+  "notes": [
+    "Runtime backend readiness and zero device count independently confirmed by backend agent",
+    "SDK/JDK/Gradle privately prepared by build agent; not downloaded or installed by client agent",
+    "Source changes require rebuilding and installing Android APK; API/web deploy alone cannot update native Firebase configuration",
+    "Android force-stop requires reopening; no force-stopped delivery claim"
+  ]
+}

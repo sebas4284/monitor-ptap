@@ -159,3 +159,15 @@ test('login: correo inexistente → 401 idéntico al de contraseña mala', async
     await app.close();
   }
 });
+
+test('login: correo inexistente también realiza trabajo Argon2 antes del rechazo', async (t) => {
+  const hashing = new PasswordHashingService();
+  const hash = t.mock.method(hashing, 'hashPassword');
+  const service = new AuthService(
+    { findByEmail: async () => null } as unknown as UsersRepository,
+    hashing, new JwtService(), fakeAudit().service,
+    {} as EmailVerificationRepository, {} as EmailService,
+  );
+  await assert.rejects(service.login('unknown@example.com', PASSWORD, { ip: null }), /Credenciales inválidas/);
+  assert.equal(hash.mock.callCount(), 1, 'no debe omitir el coste de derivar la contraseña');
+});

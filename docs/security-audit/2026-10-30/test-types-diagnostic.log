@@ -1,0 +1,46 @@
+apps/api/scripts/read-opcua-node.ts(65,20): error TS2352: Conversion of type 'typeof MessageSecurityMode' to type 'Record<string, number>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  'number' and 'string' index signatures are incompatible.
+    Type 'string' is not comparable to type 'number'.
+apps/api/test/audit-middleware.test.ts(28,5): error TS2741: Property 'emailVerified' is missing in type '{ id: string; email: string; name: string; role: string; plant: string; passwordHash: string; pepperVersion: number; isActive: true; }' but required in type 'UserRecord'.
+apps/api/test/bridge-recovery.test.ts(53,21): error TS2554: Expected 1 arguments, but got 2.
+apps/api/test/bridge.test.ts(22,3): error TS2322: Type '{ endpoint: string; endpointMustExist: boolean; securityMode: string; securityPolicy: string; identity: OpcIdentity; autoAcceptUnknownCertificate?: boolean | undefined; ... 14 more ...; allowInsecureWrites: boolean; }' is not assignable to type 'OpcUaConfig'.
+  Types of property 'autoAcceptUnknownCertificate' are incompatible.
+    Type 'boolean | undefined' is not assignable to type 'boolean'.
+      Type 'undefined' is not assignable to type 'boolean'.
+apps/api/test/commands-e2e.test.ts(36,3): error TS2741: Property 'stateVerified' is missing in type '{ channel: string; sourceBuffer: string; index: number; confirmsWrittenValue: true; }' but required in type '{ channel: string; sourceBuffer: string | null; index: number; confirmsWrittenValue: boolean; expectedValue?: number | boolean | undefined; expectedByCommand?: Record<string, number | boolean> | undefined; stateVerified: boolean; }'.
+apps/api/test/commands-e2e.test.ts(64,5): error TS2741: Property 'emailVerified' is missing in type '{ id: string; email: string; name: string; role: string; plant: string; passwordHash: string; pepperVersion: number; isActive: true; }' but required in type 'UserRecord'.
+apps/api/test/diagnostics.test.ts(48,5): error TS2741: Property 'emailVerified' is missing in type '{ id: string; email: string; name: string; role: string; plant: string; passwordHash: string; pepperVersion: number; isActive: true; }' but required in type 'UserRecord'.
+apps/api/test/login.test.ts(38,9): error TS2741: Property 'emailVerified' is missing in type '{ id: string; email: string; name: string; role: string; plant: string; passwordHash: string; pepperVersion: number; isActive: boolean; }' but required in type 'UserRecord'.
+apps/api/test/rbac-e2e.test.ts(35,5): error TS2741: Property 'emailVerified' is missing in type '{ id: string; email: string; name: string; role: string; plant: string; passwordHash: string; pepperVersion: number; isActive: true; }' but required in type 'UserRecord'.
+apps/api/test/resolve-namespaces.test.ts(24,34): error TS2345: Argument of type '{ generatedFrom: { namespaces: string[]; }; plants: unknown[]; }' is not assignable to parameter of type 'MappingLike'.
+  Types of property 'plants' are incompatible.
+    Type 'unknown[]' is not assignable to type '{ opcBuffers?: Record<string, { node?: { nsUri?: unknown; } | undefined; }[]> | undefined; connection?: Record<string, unknown> | undefined; }[]'.
+      Type 'unknown' is not assignable to type '{ opcBuffers?: Record<string, { node?: { nsUri?: unknown; } | undefined; }[]> | undefined; connection?: Record<string, unknown> | undefined; }'.
+apps/api/test/resolve-namespaces.test.ts(28,47): error TS2345: Argument of type '{ generatedFrom: { namespaces: string[]; }; plants: unknown[]; }' is not assignable to parameter of type 'MappingLike'.
+  Types of property 'plants' are incompatible.
+    Type 'unknown[]' is not assignable to type '{ opcBuffers?: Record<string, { node?: { nsUri?: unknown; } | undefined; }[]> | undefined; connection?: Record<string, unknown> | undefined; }[]'.
+      Type 'unknown' is not assignable to type '{ opcBuffers?: Record<string, { node?: { nsUri?: unknown; } | undefined; }[]> | undefined; connection?: Record<string, unknown> | undefined; }'.
+apps/api/test/resolve-namespaces.test.ts(36,49): error TS2345: Argument of type '{ generatedFrom: { namespaces: string[]; }; plants: unknown[]; }' is not assignable to parameter of type 'MappingLike'.
+  Types of property 'plants' are incompatible.
+    Type 'unknown[]' is not assignable to type '{ opcBuffers?: Record<string, { node?: { nsUri?: unknown; } | undefined; }[]> | undefined; connection?: Record<string, unknown> | undefined; }[]'.
+      Type 'unknown' is not assignable to type '{ opcBuffers?: Record<string, { node?: { nsUri?: unknown; } | undefined; }[]> | undefined; connection?: Record<string, unknown> | undefined; }'.
+apps/api/test/resolve-namespaces.test.ts(44,42): error TS2345: Argument of type '{ generatedFrom: { namespaces: string[]; }; plants: unknown[]; }' is not assignable to parameter of type 'MappingLike'.
+  Types of property 'plants' are incompatible.
+    Type 'unknown[]' is not assignable to type '{ opcBuffers?: Record<string, { node?: { nsUri?: unknown; } | undefined; }[]> | undefined; connection?: Record<string, unknown> | undefined; }[]'.
+      Type 'unknown' is not assignable to type '{ opcBuffers?: Record<string, { node?: { nsUri?: unknown; } | undefined; }[]> | undefined; connection?: Record<string, unknown> | undefined; }'.
+apps/api/test/resolve-namespaces.test.ts(55,48): error TS2345: Argument of type '{ generatedFrom: { namespaces: string[]; }; plants: unknown[]; }' is not assignable to parameter of type 'MappingLike'.
+  Types of property 'plants' are incompatible.
+    Type 'unknown[]' is not assignable to type '{ opcBuffers?: Record<string, { node?: { nsUri?: unknown; } | undefined; }[]> | undefined; connection?: Record<string, unknown> | undefined; }[]'.
+      Type 'unknown' is not assignable to type '{ opcBuffers?: Record<string, { node?: { nsUri?: unknown; } | undefined; }[]> | undefined; connection?: Record<string, unknown> | undefined; }'.
+apps/api/test/rest-cache-latency.test.ts(186,13): error TS7022: 'res' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.
+apps/api/test/sim-plc.test.ts(347,57): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(value: unknown, message?: Error | AssertMessageFunction | undefined): asserts value', gave the following error.
+    Argument of type 'string | undefined' is not assignable to parameter of type 'Error | AssertMessageFunction | undefined'.
+      Type 'string' is not assignable to type 'Error | AssertMessageFunction | undefined'.
+  Overload 2 of 2, '(value: unknown, message: string, ...args: unknown[]): asserts value', gave the following error.
+    Argument of type 'string | undefined' is not assignable to parameter of type 'string'.
+      Type 'undefined' is not assignable to type 'string'.
+apps/api/test/valve-state-observer.test.ts(62,17): error TS2554: Expected 5 arguments, but got 3.
+apps/api/test/write-service.test.ts(158,7): error TS2741: Property 'userName' is missing in type '{ userId: string; userEmail: string; role: string; ip: string; }' but required in type 'CommandActor'.
+apps/api/test/write-service.test.ts(159,7): error TS2741: Property 'userName' is missing in type '{ userId: string; userEmail: string; role: string; ip: string; }' but required in type 'CommandActor'.
+apps/api/test/write-service.test.ts(306,5): error TS2741: Property 'stateVerified' is missing in type '{ channel: string; sourceBuffer: string; index: number; confirmsWrittenValue: false; expectedValue: number; }' but required in type '{ channel: string; sourceBuffer: string | null; index: number; confirmsWrittenValue: boolean; expectedValue?: number | boolean | undefined; expectedByCommand?: Record<string, number | boolean> | undefined; stateVerified: boolean; }'.

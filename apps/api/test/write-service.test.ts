@@ -141,7 +141,7 @@ function fakeRepo(): CommandLogRepository {
  * que el sello llega al aviso, no el cálculo del HMAC — eso tiene su propio test, sin base de datos.
  */
 function fakeFirmas(): CommandSignatureService {
-  return { firmar: async () => 'firma-de-prueba' } as unknown as CommandSignatureService;
+  return { firmar: async (_id: number, _name: string | null, finalize?: () => Promise<void>) => { await finalize?.(); return 'firma-de-prueba'; } } as unknown as CommandSignatureService;
 }
 
 /** Doble de la bandeja: cada maniobra deja un aviso, y publicarlo no debe poder romper la orden. */

@@ -65,8 +65,8 @@ export const CANALES_RETIRADOS: readonly string[] = ['ptap-alertas', 'ptap-criti
  *  - `activo`: registrado y el servidor empuja. La consulta periódica deja de publicar.
  *  - `servidor-apagado`: registrado, pero el servidor aún no tiene la clave de Firebase.
  *  - `no-disponible`: esta instalación no puede recibir push (web, iPhone, o una APK compilada sin
- *    Firebase). Los avisos llegan por la consulta periódica, como antes.
- *  - `error`: no se pudo registrar ahora (red, servidor). Se reintenta al volver a abrir la app.
+ *    Firebase o Expo Go). La consulta de respaldo depende de que Android permita ejecutarla.
+ *  - `error`: no se pudo registrar ahora (red, servidor). Se reintenta en primer plano.
  *  - `pendiente`: todavía no se intentó.
  */
 export type EstadoPush = 'activo' | 'servidor-apagado' | 'no-disponible' | 'error' | 'pendiente';
@@ -89,7 +89,7 @@ export function estadoTrasRegistro(respuesta: unknown): EstadoPush {
  */
 export function esFaltaDeFirebase(err: unknown): boolean {
   const texto = err instanceof Error ? err.message : String(err ?? '');
-  return /FirebaseApp|google-services|fcm-credentials/i.test(texto);
+  return /FirebaseApp|google-services|fcm-credentials|Expo Go/i.test(texto);
 }
 
 /** Qué se le dice a la persona tras pulsar «Enviar aviso de prueba». */

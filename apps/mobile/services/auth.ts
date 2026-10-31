@@ -75,7 +75,6 @@ export async function apiRegister(data: {
   if (website) payload.website = website; // solo viaja si un bot lo llenó (para que el backend lo cace)
   const res = await postAuth('/api/auth/register', payload);
 
-  if (res.status === 409) throw new Error('Ese correo ya está registrado');
   if (res.status === 429) throw new Error('Demasiados intentos. Espera un momento e intenta de nuevo.');
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { message?: string | string[] };

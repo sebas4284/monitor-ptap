@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useAuth } from '../context/AuthContext';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { fetchSnapshot, type PlantSnapshotDto } from '../services/api';
 import { joinPlantStream } from '../services/plant-stream';
 import {
   getLastSnapshot,
+  lastDataSession,
+  isLastDataSession,
   lastDataVersion,
   rememberSnapshot,
   subscribeLastData,
@@ -20,8 +23,16 @@ import {
  *    y nunca un dato viejo aparentando frescura.
  */
 export function useSnapshot(plantId: string, enabled = true) {
+  const { user, token, hasPermission } = useAuth();
+  enabled =
+    enabled &&
+    !!token &&
+    !!user &&
+    hasPermission('view_dashboard') &&
+    (user.plant === plantId || hasPermission('view_all_plants'));
+  const session = lastDataSession();
   const queryClient = useQueryClient();
-  const queryKey = ['snapshot', plantId];
+  const queryKey = ['snapshot', user?.id, user?.role, user?.plant, session, plantId];
   const lastSeq = useRef<number>(0);
   /** true si el push por Socket.IO no está disponible → hay que refrescar por REST para no quedarse
    *  con un dato viejo (sin mentir diciendo que la planta está congelada). */
@@ -33,14 +44,15 @@ export function useSnapshot(plantId: string, enabled = true) {
     queryKey,
     queryFn: async () => {
       const snapshot = await fetchSnapshot(plantId);
-      rememberSnapshot(snapshot); // ignora respuestas de espera sin señales
+      rememberSnapshot(snapshot, session); // ignora respuestas de espera sin señales
       return snapshot;
     },
     staleTime: Infinity, // el push mantiene el dato fresco; no re-fetch por tiempo
     // Normalmente sin poll (el push mantiene fresco y evita duplicar el socket). Se activa solo en
     // dos casos: si la carga REST falló (para que el banner "servidor caído" se despegue solo), o si
     // el socket está caído (sin push, el REST es la única forma de no mostrar un dato viejo).
-    refetchInterval: (query) => (query.state.status === 'error' ? 5000 : socketDown ? 10000 : false),
+    refetchInterval: (query) =>
+      query.state.status === 'error' ? 5000 : socketDown ? 10000 : false,
     // `enabled=false` para roles sin view_dashboard (Civil): NO se pide el snapshot detallado
     // (el backend responde 403) NI se abre la suscripción de socket (el gateway aún no valida
     // permisos por planta, así que suscribir al Civil filtraría datos que su rol no debe ver).
@@ -54,6 +66,7 @@ export function useSnapshot(plantId: string, enabled = true) {
     // dos pantallas a la vez), solo se abre UNA suscripción real. Ver `plant-stream.ts`.
     const unsubscribe = joinPlantStream(plantId, {
       onSnapshot: (snapshot: PlantSnapshotDto) => {
+        if (!isLastDataSession(session)) return;
         if (lastSeq.current > 0) {
           // Hueco (perdimos un snapshot intermedio) o REINICIO del backend (sequence volvió atrás,
           // p.ej. 500 → 1): en ambos casos re-sincronizar por REST. Antes, con Math.max, un reinicio
@@ -64,17 +77,25 @@ export function useSnapshot(plantId: string, enabled = true) {
         }
         lastSeq.current = snapshot.sequence; // sigue la secuencia real (respeta reinicios)
         queryClient.setQueryData(queryKey, snapshot);
-        rememberSnapshot(snapshot);
+        rememberSnapshot(snapshot, session);
       },
       onLiveness: (change) => {
-        if (change.plantId !== plantId) return;
+        if (!isLastDataSession(session) || change.plantId !== plantId) return;
         queryClient.setQueryData<PlantSnapshotDto>(queryKey, (prev) =>
           prev
-            ? { ...prev, liveness: { state: change.state, lastChangeAt: change.lastChangeAt, windowSec: change.windowSec } }
+            ? {
+                ...prev,
+                liveness: {
+                  state: change.state,
+                  lastChangeAt: change.lastChangeAt,
+                  windowSec: change.windowSec,
+                },
+              }
             : prev,
         );
       },
       onConnectionChange: (connected) => {
+        if (!isLastDataSession(session)) return;
         // Un socket caído significa "no hay PUSH", NO que la planta esté congelada: el REST sigue
         // siendo fuente de verdad. Marcar `frozen` aquí hacía que la app dijera "CONGELADO" con el
         // puente perfectamente Connected (bug observado en planta el 2026-07-30). En su lugar se
@@ -87,7 +108,7 @@ export function useSnapshot(plantId: string, enabled = true) {
     });
     return unsubscribe;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [plantId, enabled]);
+  }, [plantId, enabled, session]);
 
   // Fallback: sin señales frescas (error de red, o backend con cache vacía → `pending`),
   // entrega la última lectura conocida del dispositivo. El estado del puente fresco manda si
@@ -110,7 +131,7 @@ export function useSnapshot(plantId: string, enabled = true) {
     // storeVersion: getLastSnapshot lee estado EXTERNO al render; la versión es la señal de
     // que ese estado cambió (hidratación async del storage). El linter no puede saberlo.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query.data, plantId, storeVersion, enabled]);
+  }, [query.data, plantId, storeVersion, enabled, session]);
 
   return { ...query, data };
 }

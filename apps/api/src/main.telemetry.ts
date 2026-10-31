@@ -7,10 +7,12 @@ import { PlantCache } from './infrastructure/connectivity/pipeline/plant-cache';
 import { PlantPipelineService } from './infrastructure/connectivity/pipeline/plant-pipeline.service';
 import { LoggingModule } from './infrastructure/logging/logging.module';
 import { JsonLogger } from './infrastructure/logging/json-logger.service';
+import { ConnectivityGateway } from './infrastructure/connectivity/connectivity.gateway';
 
 // Demo sin login ni BD: el gateway Socket.IO NO exige JWT en el handshake (en el servidor completo
 // sí — SRV-04). Se fija al arranque del proceso, antes de bootstrap(); el gateway lo lee en cada
 // conexión. (El gateway solo se instancia dentro de bootstrap → esto corre antes, a tiempo.)
+if (process.env.NODE_ENV === 'production') throw new Error('El arranque de telemetría sin autenticación no está permitido en producción');
 process.env.SOCKET_AUTH_REQUIRED = 'false';
 
 /**
@@ -59,7 +61,7 @@ class TelemetryPlantsController {
  *
  * Ejecutar: npm run start:telemetry  (CONNECTIVITY_PROVIDER=opcua para PLC real)
  */
-@Module({ imports: [ConnectivityModule, LoggingModule], controllers: [TelemetryPlantsController] })
+@Module({ imports: [ConnectivityModule, LoggingModule], controllers: [TelemetryPlantsController], providers: [ConnectivityGateway] })
 class TelemetryModule {}
 
 async function bootstrap() {

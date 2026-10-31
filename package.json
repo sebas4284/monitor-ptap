@@ -17,10 +17,12 @@
     "build": "npm run build -w @ptap/shared && npm run build -w @ptap/api",
     "lint": "npm run lint --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present",
+    "test": "npm run test:security:deps && npm run test --workspaces --if-present",
+    "test:security:deps": "node --test tools/security/deepmerge.test.cjs",
     "web": "npm run web -w @ptap/mobile"
   },
   "devDependencies": {
+    "deepmerge": "file:vendor/deepmerge",
     "@eslint/js": "^9.39.5",
     "@typescript-eslint/parser": "^8.72.1",
     "eslint": "^9.39.5",
@@ -30,6 +32,7 @@
     "typescript": "~6.0.3"
   },
   "overrides": {
+    "deepmerge": "file:vendor/deepmerge",
     "zod": "^4.6.7"
   },
   "allowScripts": {
