@@ -631,7 +631,7 @@ test('sim e2e: Carbonero REAL — confirma el eco del mando absoluto sostenido, 
     try {
       await avanzar(t, 3000);
       const r = await esperar(t, orden(m, 'carbonero', 'valve1', 'open'), 70_000);
-      assert.equal(r.status, 'confirmed', `feedback ${feedback}: el canal INT_OUT confirma su escritura (${r.reason})`);
+      assert.equal(r.status, 'sent', `feedback ${feedback}: el eco INT_OUT no confirma movimiento (${r.reason})`);
       assert.equal(r.writtenValue, 4096, 'valor absoluto de abrir salida (mapping 2026-10-29)');
       assert.equal(r.confirmedValue, 4096, 'confirmación del mando, incluso sin feedback físico');
       assert.equal(r.writeVerified, true);
@@ -677,7 +677,7 @@ test('sim e2e: La Vorágine REAL — cada mando absoluto sustituye INT_OUT[0], s
       assert.equal(write?.readBack.stateVerified, false, 'solo se confirma el canal de mando');
       const t0 = Date.now();
       const r = await esperar(t, orden(m, 'voragine', step.target, step.command), 10_000);
-      assert.equal(r.status, 'confirmed', `${step.target}: eco del mando ${r.reason}`);
+      assert.equal(r.status, 'sent', `${step.target}: solo eco del mando ${r.reason}`);
       assert.equal(r.writeVerified, true);
       assert.equal(r.writtenValue, step.value, 'modo absoluto: no conserva el par de la otra válvula');
       assert.equal(r.confirmedValue, step.value);
@@ -722,7 +722,7 @@ test('sim e2e: buffers distintos — absoluta, máscara con pulse.until en otro 
     const r3 = await esperar(t, orden(m, 'sim-buffers', 'valve3', 'open'), 70_000);
     const h = m.sim.getWriteHistory();
 
-    // 1) Absoluta: la palabra entera es suya (1 abre, 0 suelta). Read-back emulado → confirmada.
+    // 1) Absoluta: este fixture sí tiene realimentación verificada por la entrada.
     assert.deepEqual(escriturasEn(h, 'INT_OUT_SIM_BUF').map((w) => w.value), [1, 0]);
     assert.equal(r1.status, 'confirmed');
 
@@ -740,7 +740,7 @@ test('sim e2e: buffers distintos — absoluta, máscara con pulse.until en otro 
       w3.map((w) => `${w.index}=${String(w.value)}`),
       ['1=false', '0=true', '0=false', '1=false'],
     );
-    assert.equal(r3.status, 'confirmed', 'el final de carrera de abierta (BIT_IN[0]) confirma');
+    assert.equal(r3.status, 'sent', 'el fixture declara ese final de carrera como no verificado');
 
     // Ninguna tocó el buffer de otra.
     assert.equal(h.length, 2 + 2 + 4, 'ni una escritura más que las suyas');

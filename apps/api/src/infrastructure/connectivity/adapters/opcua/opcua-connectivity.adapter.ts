@@ -143,6 +143,7 @@ export async function escribirElemento(
   nodeId: string,
   target: BufferElementTarget,
   value: number | boolean,
+  dataType: DataType = channelDataType(target.channel),
 ): Promise<void> {
   const statusCode = await session.write({
     nodeId: resolveNodeId(nodeId),
@@ -150,7 +151,7 @@ export async function escribirElemento(
     indexRange: new NumericRange(target.index), // escribe UN elemento del array (regla 6: nunca el array entero por gusto)
     value: {
       value: new Variant({
-        dataType: channelDataType(target.channel),
+        dataType,
         arrayType: VariantArrayType.Array,
         value: [value],
       }),
@@ -723,7 +724,10 @@ export class OpcUaConnectivityAdapter implements ConnectivityAdapter {
       throw new Error('WRITES_DISABLED_INSECURE_SESSION: se requiere escritura habilitada y sesión cifrada o autorización de red para el endpoint autenticado');
     }
     const resolved = this.findResolvedElement(target);
-    await escribirElemento(this.session!, resolved.nodeId, target, value);
+    // El INT_OUT real es Int16: escribir con su tipo declarado evita depender de
+    // que Optix convierta un Int32 antes de propagarlo al controlador.
+    const dataType = resolved.dataType === 'Int16' ? DataType.Int16 : channelDataType(target.channel);
+    await escribirElemento(this.session!, resolved.nodeId, target, value, dataType);
   }
 
   async readBufferElement(target: BufferElementTarget): Promise<BufferElementRead> {

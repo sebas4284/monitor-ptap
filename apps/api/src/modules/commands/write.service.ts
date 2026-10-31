@@ -384,7 +384,9 @@ export class WriteService {
       const confirmation = await this.confirmReadBack(plantId, write, writtenValue, req.command);
       base.confirmedValue = confirmation.value;
 
-      if (confirmation.confirmed) {
+      // El eco puede coincidir en el MISMO registro de mando: no acredita movimiento
+      // cuando el mapping declara explícitamente que no hay estado físico verificado.
+      if (confirmation.confirmed && write.readBack.stateVerified !== false) {
         result = { ...base, status: 'confirmed', reason: null };
       } else if (write.readBack.stateVerified === false && base.writeVerified === true) {
         // El canal de estado de este sitio NO tiene semántica verificada en campo: su valor

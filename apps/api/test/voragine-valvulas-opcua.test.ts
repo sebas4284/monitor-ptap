@@ -310,7 +310,7 @@ test('adaptador del backend: escribe y lee el mismo elemento usando sesión aute
     await adapter.writeBufferElement(el, 4 | 8192);
     const leido = await adapter.readBufferElement(el);
     assert.deepEqual(leido, { value: 4 | 8192, quality: 'Good', sourceTimestamp: leido.sourceTimestamp });
-    assert.deepEqual(peticiones.slice(antes), [{ dataType: 'Int32', indexRange: '0', valores: [4 | 8192], status: 'Good' }], 'misma petición que la herramienta');
+    assert.deepEqual(peticiones.slice(antes), [{ dataType: 'Int16', indexRange: '0', valores: [4 | 8192], status: 'Good' }], 'el backend respeta el Int16 declarado por el nodo real');
   } finally {
     await adapter.stop();
   }

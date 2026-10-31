@@ -1024,7 +1024,7 @@ test('sostenida: firma, auditoría y aviso de maniobra, igual que cualquier orde
   assert.match(String(avisos[0].eventId), /firma-de-prueba/);
 });
 
-test('sostenida: el mapping REAL de La Vorágine — las palabras exactas que salen por el cable', async () => {
+test('sostenida: el mapping REAL de La Vorágine escribe palabras exactas y el eco no confirma movimiento', async () => {
   // Desde 0: así quedó INT_OUT[0] con los pulsos (las dos válvulas 0/0). La primera orden de cada
   // válvula fija su señal, y a partir de ahí cada orden mueve SOLO su par.
   const real = loadMapping(join(__dirname, '..', 'config', 'opc_mapping.json')).signals.filter(
@@ -1044,7 +1044,9 @@ test('sostenida: el mapping REAL de La Vorágine — las palabras exactas que sa
   ];
   for (const [target, command, esperado] of pasos) {
     const r = await service.execute('voragine', { command, target }, OPERADOR_V);
-    assert.equal(r.status, 'confirmed', `${target} ${command}: ${r.reason}`);
+    assert.equal(r.status, 'sent', `${target} ${command}: el eco de mando no demuestra movimiento`);
+    assert.equal(r.reason, SENT.SENT_STATE_UNVERIFIED);
+    assert.equal(r.writeVerified, true);
     assert.equal(adapter.valor(PALABRA), esperado, `${target} ${command}`);
   }
   assert.deepEqual(adapter.escrituras.map((e) => e.value), pasos.map(([, , v]) => v), 'una escritura por orden, y ninguna de limpieza');
