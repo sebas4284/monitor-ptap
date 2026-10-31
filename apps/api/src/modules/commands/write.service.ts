@@ -244,7 +244,7 @@ export class WriteService {
       return this.audit(actor, req, await this.finalizeNoReserve(reject(REJECT.WRITES_DISABLED_INSECURE_SESSION)));
     }
 
-    // 4) RBAC dinámico: el permiso lo declara el mapping (jefe NO tiene control_valves).
+    // 4) RBAC dinámico: el permiso lo declara el mapping; civil no tiene control_valves.
     if (!actor.role || !hasPermission(actor.role as Role, write.permission as Permission)) {
       return this.audit(actor, req, await this.finalizeNoReserve(reject(REJECT.FORBIDDEN)));
     }

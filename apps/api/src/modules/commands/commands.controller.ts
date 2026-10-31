@@ -12,10 +12,10 @@ import { WriteService } from './write.service';
 /**
  * Canal de comandos (Fase 5). API de DOMINIO (plantId + command + target), nunca de NodeIds.
  * RBAC: el guard exige JWT válido; el PERMISO específico (control_valves, etc.) lo declara el
- * mapping y lo valida el WriteService de forma dinámica (un jefe puede reconocer alarmas pero
- * NO abrir válvulas). `PlantScopeGuard` acota el ÁMBITO: el `plantId` de la URL debe ser la
+ * mapping y lo valida el WriteService de forma dinámica (operador/jefe/admin pueden abrir
+ * válvulas; civil no). `PlantScopeGuard` acota el ÁMBITO: el `plantId` de la URL debe ser la
  * planta de la cuenta (salvo `view_all_plants`), de modo que un operador no pueda accionar
- * equipo de OTRA planta. Toda la seguridad dura (writes habilitados + sesión cifrada) e
+ * equipo de OTRA planta. La política de conexión (cifrado o aprobación explícita de red) e
  * interlocks viven en el WriteService. Se responde SIEMPRE con el resultado estructurado y su
  * código HTTP.
  */

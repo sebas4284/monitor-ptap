@@ -618,6 +618,7 @@ const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   jefe: [
     'view_basic_status',
     'view_dashboard',
+    'control_valves',
     'acknowledge_alarms',
     'adjust_setpoints',
     'view_event_logs',
@@ -684,7 +685,7 @@ export const ROLE_LABELS: Record<Role, string> = {
 export const ROLE_DESCRIPTIONS: Record<Role, string> = {
   civil: 'Vista básica',
   operador: 'Datos y control',
-  jefe: 'Datos, sin control',
+  jefe: 'Datos y control',
   admin: 'Control total',
 };
 
@@ -698,4 +699,5 @@ export const ROLE_COLORS: Record<Role, string> = {
 // El RBAC del backend (Fase 4) gatea por permiso granular usando ROLE_PERMISSIONS/
 // hasPermission (arriba) — la MISMA fuente que consume el móvil para features de UI.
 // Se retiró el antiguo sistema paralelo de tiers (RoleTier/ROLE_TIER/tierAtLeast) porque
-// no podía expresar la matriz oficial (p. ej. `jefe` = todo lo del operador salvo válvulas).
+// no podía expresar permisos granulares. Operadores y jefes pueden accionar válvulas
+// por autorización operativa del 2026-10-31; el ámbito por planta se valida en el backend.

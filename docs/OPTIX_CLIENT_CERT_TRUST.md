@@ -15,8 +15,12 @@ exactamente igual a `OPC_ENDPOINT`. Solo admite identidad `username`; el antiguo
 mantiene la excepción desactivada por defecto.
 
 Los permisos, el ámbito por planta, el mapeo de destinos/verbos, los interbloqueos,
-la idempotencia y el registro firmado permanecen vigentes. El probador de canales
-arbitrarios sigue requiriendo una sesión cifrada, incluso con la excepción activa.
+la idempotencia y el registro firmado permanecen vigentes.
+Los roles `operador` y `jefe` disponen de `control_valves` por la autorización del
+2026-10-31; `civil` no. Cada cuenta conserva su ámbito de planta, y el acceso a
+otras plantas requiere `view_all_plants`.
+El probador de canales arbitrarios sigue requiriendo una sesión cifrada, incluso
+con la excepción activa.
 Activar esta política no ejecuta por sí mismo órdenes de apertura o cierre. Las
 pruebas de software usan dobles locales y nunca accionan la instalación.
 

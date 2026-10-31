@@ -110,12 +110,12 @@ test('PermissionGuard: permiso insuficiente (civil pide system_config) → Forbi
   assert.throws(() => guard.canActivate(ctx), ForbiddenException);
 });
 
-// El caso clave: jefe tiene acknowledge_alarms pero NO control_valves (matriz oficial).
-test('PermissionGuard: jefe permite acknowledge_alarms pero rechaza control_valves', () => {
+// Autorización operativa: los jefes conservan sus permisos y también accionan válvulas.
+test('PermissionGuard: jefe permite acknowledge_alarms y control_valves', () => {
   const guard = new PermissionGuard(new Reflector());
   const request = { user: { id: 'u1', name: 'J', email: 'j@b.com', role: 'jefe', plant: 'montebello' } } as AuthenticatedRequest;
   assert.equal(guard.canActivate(fakeContext(request, { requiredPermission: 'acknowledge_alarms' })), true);
-  assert.throws(() => guard.canActivate(fakeContext(request, { requiredPermission: 'control_valves' })), ForbiddenException);
+  assert.equal(guard.canActivate(fakeContext(request, { requiredPermission: 'control_valves' })), true);
 });
 
 test('PermissionGuard: admin permite system_config', () => {

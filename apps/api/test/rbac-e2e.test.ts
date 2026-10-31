@@ -4,9 +4,8 @@
  * prueba con rutas por permiso — sin MYSQL_POOL ni AuthController real (login no se prueba
  * aquí, eso es de auth.service, no de los guards).
  *
- * El caso central es `jefe`: la matriz oficial le da todo lo del operador SALVO abrir/cerrar
- * válvulas. El modelo de permisos (ROLE_PERMISSIONS de @ptap/shared) lo expresa; el antiguo
- * tier lineal no podía. Aquí se prueba: jefe → 403 en control_valves, 200 en acknowledge_alarms.
+ * Operadores y jefes pueden accionar válvulas según la autorización del 2026-10-31;
+ * civil sigue sin ese permiso y las rutas administrativas mantienen su restricción.
  */
 import 'reflect-metadata';
 import { test } from 'node:test';
@@ -130,12 +129,12 @@ test('rbac-e2e: permiso insuficiente (civil pide system_config) → 403; admin �
   }
 });
 
-// El caso que motivó migrar de tiers a permisos: jefe = operador MENOS control_valves.
-test('rbac-e2e: jefe → 403 en control_valves pero 200 en acknowledge_alarms', async () => {
+// Autorización operativa del 2026-10-31: los jefes también pueden accionar válvulas.
+test('rbac-e2e: jefe → 200 en control_valves y acknowledge_alarms', async () => {
   const { app, jwt } = await buildApp();
   try {
     const jefe = `Bearer ${tokenFor(jwt, 'jefe')}`;
-    await request(app.getHttpServer()).get('/probe/valves').set('Authorization', jefe).expect(403);
+    await request(app.getHttpServer()).get('/probe/valves').set('Authorization', jefe).expect(200);
     await request(app.getHttpServer()).get('/probe/ack-alarms').set('Authorization', jefe).expect(200);
   } finally {
     await app.close();
