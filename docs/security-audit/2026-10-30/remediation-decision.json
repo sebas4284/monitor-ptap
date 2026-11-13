@@ -1,0 +1,34 @@
+{
+  "schema": "telcobras-decision/1",
+  "artifact_id": "monitor-ptap-local-security-remediation",
+  "source_and_version": "Local reviewed monorepo, base commit ffaad3844e321825959498496282c06316fd3945; installed dependencies from existing lockfile.",
+  "sha256_or_commit": "ffaad3844e321825959498496282c06316fd3945; base lock SHA256 05019aed47376a250e190bd247ef511cc2ed0f44f9c340542a78769e620766d6; modified source identified by final diff and verification outputs",
+  "data_classification": "internal",
+  "requested_operation": "User-authorized security fixes, local synthetic regression tests, typecheck/lint/build using existing reviewed tools; public official documentation lookup. Local vendoring of reviewed installed deepmerge 4.3.1 bytes with bounded security patch; offline npm resolution with scripts disabled.",
+  "authorized_scope": "Local source edits and tests; no production deployment, PLC operations, secret reads, corporate uploads or Cloudflare mutation without identified account access. Local copy/modification of these reviewed MIT bytes and offline lock/install --ignore-scripts --offline --no-audit --no-fund; no upstream download or lifecycle scripts.",
+  "environment_and_destination": "Shared Windows workspace; local synthetic tests with existing Node and npm tooling. External queries contain public library/plugin names only.",
+  "tools_versions_and_signature_dates": [
+    "Node v26.12.1",
+    "Expo SDK v58 documentation read",
+    "Superpowers TDD and parallel independent work"
+  ],
+  "observed_evidence": [
+    "Original source audit and synthetic reproductions identify first-party defects",
+    "Existing node_modules available; project test harnesses use synthetic repositories and local simulator servers",
+    "Cloudflare plugin search returned no matching plugin",
+    "deepmerge dist/cjs.js SHA256 2E5160F84A1141BD927264AFE4D15766F1E6CF07DAEF182B37FF53FEA121DE7D; index.d.ts SHA256 146BA4B99C5FEB82663E17A671BF9F53BB39C704CD76345D6C5A801C26372F44; license.txt SHA256 6CFC4687CB2F2D86F4A77E6B526290D3878E5E512F3FEC2F4CB36A9CB36F798B; inspected no runtime dependencies; MIT permission verified against official v4.3.1 license."
+  ],
+  "limitations_and_unexamined_content": [
+    "No verified isolation for unknown software or suspicious samples; none may be executed",
+    "No current production PLC or Cloudflare state verified",
+    "A local build does not prove production deployment"
+  ],
+  "rights_and_notices": "Internal first-party modifications; preserve third-party licenses and notices; no redistribution.",
+  "decision": "allowed_scoped",
+  "conditions_for_next_action": [
+    "Review new test execution paths before running; never load real PLC settings",
+    "Reassess before package acquisition, network-enabled production tests or deployment"
+  ],
+  "reviewer_and_utc_time": "Codex; 2026-10-31 UTC",
+  "valid_only_for_identified_bytes_and_operation": true
+}

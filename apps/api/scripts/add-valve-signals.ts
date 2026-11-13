@@ -25,8 +25,8 @@ const DRY = process.argv.includes('--dry');
 
 interface PlantDoc {
   plantId: string;
-  opcBuffers?: Record<string, Array<{ browseName?: string }>>;
-  signals?: Array<{ domainKey?: string }>;
+  opcBuffers?: Record<string, { browseName?: string }[]>;
+  signals?: { domainKey?: string }[];
 }
 
 function valveBlock(intOut: string, intIn: string, eol: string): string {
@@ -98,7 +98,7 @@ function main(): void {
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
 
   const added: string[] = [];
-  const skipped: Array<{ plantId: string; why: string }> = [];
+  const skipped: { plantId: string; why: string }[] = [];
 
   for (const plant of doc.plants) {
     const intOut = plant.opcBuffers?.intOut?.[0]?.browseName;

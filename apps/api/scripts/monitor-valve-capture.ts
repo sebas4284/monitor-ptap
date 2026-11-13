@@ -24,8 +24,9 @@ import {
   OPCUAClient, MessageSecurityMode, SecurityPolicy, AttributeIds,
   ClientSubscription, ClientMonitoredItem, TimestampsToReturn,
 } from 'node-opcua';
+import { resolverEndpoint } from './opc-endpoint';
 
-const ENDPOINT = process.argv[2] ?? process.env.OPC_ENDPOINT ?? 'opc.tcp://181.204.165.66:59200';
+const ENDPOINT = resolverEndpoint(process.argv[2]);
 const SECONDS = Number(process.env.MONITOR_SECONDS ?? 120);
 const PLANT = process.env.PLANT ?? 'sirena';
 
@@ -39,7 +40,7 @@ const bits = (n: number): string => {
   for (let b = 0; b < 16; b++) if (u & (1 << b)) s.push(b);
   return `{${s.join(',')}}`;
 };
-const nz = (arr: number[]): Array<[number, number]> =>
+const nz = (arr: number[]): [number, number][] =>
   arr.map((v, i) => [i, Number(v)] as [number, number]).filter(([, v]) => v !== 0);
 
 function bufferDeLaPlanta(p: Plant, prefijo: string): { browseName: string; guid: string } | null {
@@ -85,9 +86,9 @@ async function main(): Promise<void> {
   const t0 = Date.now();
   const ts = (): string => ((Date.now() - t0) / 1000).toFixed(2).padStart(6);
   /** Pulsos vistos en el canal de comando, en orden: es lo que se viene a buscar. */
-  const pulsos: Array<{ t: string; valor: number; nz: Array<[number, number]> }> = [];
+  const pulsos: { t: string; valor: number; nz: [number, number][] }[] = [];
   /** Estados vistos, con el instante: permite correlacionar pulso → cambio de estado. */
-  const estados: Array<{ t: string; valor: number }> = [];
+  const estados: { t: string; valor: number }[] = [];
 
   try {
     const nsArray = await session.readNamespaceArray();

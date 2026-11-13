@@ -1,5 +1,60 @@
 # Protocolo de válvulas — La Vorágine (`voragine`)
 
+> ## Actualización 2026-10-31 — retorno por bits independientes
+>
+> El esquema entregado identifica la confirmación en **`INT_IN_VORAGINE[1]`**:
+>
+> | Válvula | Abierta | Cerrada | Falla |
+> |---|---|---|---|
+> | Entrada | bit 0 (`1`) | bit 1 (`2`) | bit 4 (`16`) |
+> | Salida | bit 10 (`1024`) | bit 11 (`2048`) | bit 14 (`16384`) |
+>
+> Para este retorno, **bit 14 significa falla de salida, no validez**. La regla
+> heredada bit14/bit0 del registro original no aplica a esta palabra. Las dos
+> señales comparten el índice, pero cada válvula interpreta sus propias máscaras.
+> `stateEncoding.bits` contiene máscaras numéricas, no posiciones de bits.
+>
+> La falla tiene prioridad sobre los finales y bloquea apertura/cierre, también
+> los reenvíos explícitos. Una lectura mala o no disponible tampoco autoriza el
+> mando. No se borra ni rearma la falla escribiendo sobre el retorno: ese paso
+> corresponde al procedimiento autorizado de la planta.
+>
+> Contrato ratificado por operación el 2026-10-31: el PLC conserva una única orden
+> hasta recibir la siguiente. No sumar el mando de otra válvula ni generar un cero
+> de limpieza, un segundo pulso o un reintento automático.
+>
+> El mando conserva la especificación absoluta confirmada: una escritura en
+> `INT_OUT_VORAGINE[0]`, salida abrir `4096`/cerrar `8192`, entrada abrir `4`/cerrar
+> `8`, sin sumas ni pulsos añadidos. El eco del mando nunca prueba movimiento.
+> La confirmación se obtiene de los bits de retorno de la válvula correspondiente.
+> Una escritura aceptada cuyo movimiento aún no llegó se informa como pendiente,
+> sin confundir el tiempo de recorrido con un fallo ni repetir la escritura.
+
+> ## ✅ ACTUALIZACIÓN 2026-10-16 — codificación entregada por el integrador del PLC
+>
+> Las DOS válvulas mandan por la misma palabra, `INT_OUT_VORAGINE[0]`:
+>
+> | Válvula | `domainKey` | Abrir | Cerrar |
+> |---|---|---|---|
+> | **Entrada** | `valve2` (caudal `inletFlow1`) | bit2 = `4` | bit3 = `8` |
+> | **Salida** | `valve1` (caudal `outletFlow1`) | bit12 = `4096` | bit13 = `8192` |
+>
+> **La lectura del bit12 como «PULSO» de más abajo era ERRÓNEA: es abrir la salida.** Los valores de la
+> salida (4096/8192) son los que el cliente ya había verificado en campo el 2026-08-15.
+>
+> **Regla del integrador, textual:** «estas señales deben ser sostenidas, es decir que todo el tiempo
+> debe quedar la señal de apertura o la señal de cierre, nunca las dos, siempre una de las dos».
+>
+> En el mapping las dos llevan `sustained: true`: cada orden es UNA escritura read-modify-write,
+> `(actual & ~contrario) | verbo`, que pasa el par de un verbo al otro sin 0/0 ni 1/1 y sin tocar la
+> otra válvula, y **no se suelta nunca** (sin `pulse`, sin `until`, sin `rollbackValue`). Hasta el
+> 2026-10-16 la salida se sostenía hasta `INT_IN[1] = 1` y después se limpiaba, dejándola en 0/0. El
+> estado de cada válvula sale de su caudal (`stateVerified: false`); el resultado en la app es ámbar.
+> Herramienta de campo: `apps/api/scripts/test-valvulas-voragine.ts` (simulacro sin `--armar`).
+>
+> El resto de este documento es el registro ORIGINAL del 2026-07-22 y se conserva como tal; donde
+> contradiga este recuadro, manda el recuadro.
+
 > # ⛔ NO EJECUTAR — RIESGO FÍSICO
 > Este documento REGISTRA el protocolo de mando/estado de válvula del PLC real. **Enviar un pulso o
 > escritura puede abrir/cerrar una válvula física y dañar la planta.** Es material de referencia,
@@ -38,9 +93,9 @@ oficial. **Confianza: UNVERIFIED.**
 
 | Valor | Bits | Acción |
 |---|---|---|
-| `4` | bit2 | **ABRIR** |
-| `8` | bit3 | **CERRAR** |
-| `4096` | bit12 | **PULSO** (enciende el bit en la posición exacta que requiere el PLC) |
+| `4` | bit2 | **ABRIR** (la de ENTRADA — integrador, 2026-10-16) |
+| `8` | bit3 | **CERRAR** (la de ENTRADA — integrador, 2026-10-16) |
+| `4096` | bit12 | ~~**PULSO**~~ → **ABRIR la de SALIDA** (integrador, 2026-10-16; cerrar la salida = bit13 = `8192`) |
 
 - ⚠️ **ABRIR y CERRAR a la vez → ERROR.** Nunca ambos simultáneamente (interlock: son órdenes
   contradictorias).

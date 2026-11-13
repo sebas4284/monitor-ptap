@@ -1,0 +1,39 @@
+{
+  "schema": "telcobras-decision/1",
+  "artifact_id": "ptap-opc-production-readonly-preflight",
+  "source_and_version": "Production first-party monitor-ptap ffaad3844e321825959498496282c06316fd3945; installed node-opcua 2.187.16",
+  "sha256_or_commit": "production commit ffaad3844e321825959498496282c06316fd3945; first-party preflight SHA256 2C11EC7128E3E41727F405641848825A1EF0A2CA84023CEDC7637C0B9D897A81",
+  "data_classification": "confidential",
+  "requested_operation": "SSH bounded first-party runtime inventory; GetEndpoints; inspect existing certificate fingerprints and validity; at most one authenticated read-only secure session if independently pretrusted certificate permits",
+  "authorized_scope": "Parent delegated user-authorized production OPC security resolution. No PLC writes, methods, subscription changes, trust-store changes, .env edits, restarts, password retries or public uploads.",
+  "environment_and_destination": "Verified existing SSH host ptapapp, production repository; plant endpoint from production .env only. Outputs sanitized locally; no third-party recipients.",
+  "tools_versions_and_signature_dates": [
+    "OpenSSH existing trusted key/known host",
+    "Node v26.12.1 and node-opcua 2.187.16 already deployed, exact APIs inspected before use"
+  ],
+  "observed_evidence": [
+    "Root AGENTS.md and Telcobras security gate read",
+    "Expo v58.0.0 documentation read",
+    "Existing installed stack and production destination supplied by parent",
+    "First-party adapter and existing client PKI paths reviewed",
+    "Exact installed node-opcua 2.187.16 APIs inspected; preflight real local SignAndEncrypt/Aes256_Sha256_RsaPss integration test passed; mismatched pin blocked before authentication; original PKI unchanged",
+    "Initial stdin invocation performed no network action because require.main is unset under node stdin; corrected entrypoint detection before actual reviewed run",
+    "Production discovery result saved: seven endpoints, authenticated=false, plantWrites=0; current strongest endpoint SignAndEncrypt/Aes256_Sha256_RsaPss",
+    "Post-preflight PKI inventory: zero trusted/rejected/issuer certificates, existing client private key matches certificate; production repository remains clean at reviewed commit"
+  ],
+  "limitations_and_unexamined_content": [
+    "Advertised certificate is not independent trust evidence",
+    "GetEndpoints uses discovery without application authentication",
+    "No assertions about plant permissions, malware absence or general legal safety",
+    "No independent server trust available; secure production authentication intentionally not attempted. OT confirmation/export and mutual client trust required."
+  ],
+  "rights_and_notices": "First-party operational inspection; retain existing third-party notices; no redistribution",
+  "decision": "allowed_scoped",
+  "conditions_for_next_action": [
+    "Inspect exact installed API",
+    "Use no unknown-certificate autoaccept",
+    "Secure session only if existing verified trust establishes peer identity; otherwise stop dependent action"
+  ],
+  "reviewer_and_utc_time": "Codex opc_secure 2026-10-31T12:56:23.1129561Z",
+  "valid_only_for_identified_bytes_and_operation": true
+}

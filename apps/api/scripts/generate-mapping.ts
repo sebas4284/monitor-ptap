@@ -69,6 +69,9 @@ interface SignalDef {
   /** Rango operativo/normativo (alarmas futuras). Fuera de él la lectura SIGUE siendo usable. */
   opMin?: number;
   opMax?: number;
+  /** Caudal con el que se juzga una válvula (valve<N>Position). Mismo campo que el schema. */
+  flowDomainKey?: string;
+  _nota?: string;
   mappingStatus: 'mapped' | 'unmapped';
   confidence: 'confirmed' | 'inferred' | 'estimated';
   writable: boolean;
@@ -306,6 +309,14 @@ const SIGNALS_BY_SITE: Record<string, SignalDef[]> = {
     { buffer: 'realIn', index: 10, domainKey: 'inletPressure1', label: 'Presión de entrada', unit: 'psi', min: -15, max: 232, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
     { buffer: 'realIn', index: 11, domainKey: 'outletPressure1', label: 'Presión de salida', unit: 'psi', min: -15, max: 232, mappingStatus: 'mapped', confidence: 'inferred', writable: false },
   ],
+  // Integrador del PLC (Brayan Grueso, Telcobras, ficha 2026-11-09/10). Solo LECTURAS, como el resto de
+  // este mapa: valve2/valve2State (mando bitmask de la entrada) viven en el mapping, no aquí.
+  CABUYO: [
+    { buffer: 'realIn', index: 0, domainKey: 'inletFlow1', label: 'Caudal de entrada', unit: 'l/s', min: 0, max: 1000, mappingStatus: 'mapped', confidence: 'confirmed', writable: false },
+    { buffer: 'realIn', index: 7, domainKey: 'outletFlow1', label: 'Caudal de salida', unit: 'l/s', min: 0, max: 1000, mappingStatus: 'mapped', confidence: 'confirmed', writable: false },
+    { buffer: 'realIn', index: 12, domainKey: 'inletPressure1', label: 'Presión de entrada', unit: 'psi', min: -15, max: 232, mappingStatus: 'mapped', confidence: 'confirmed', writable: false },
+    { buffer: 'realIn', index: 16, domainKey: 'valve1Position', label: 'Válvula de salida', unit: '%', min: 0, max: 100, flowDomainKey: 'outletFlow1', mappingStatus: 'mapped', confidence: 'confirmed', writable: false },
+  ],
   CARBONERO: [
     { buffer: 'realIn', index: 0, domainKey: 'inletFlow1', label: 'Caudal de entrada', unit: 'l/s', min: 0, max: 1000, mappingStatus: 'mapped', confidence: 'confirmed', writable: false },
     { buffer: 'realIn', index: 2, domainKey: 'inletTurbidity', label: 'Turbiedad de entrada', unit: 'NTU', min: 0, max: 1000, opMin: 0, opMax: 5, mappingStatus: 'mapped', confidence: 'confirmed', writable: false },
@@ -325,17 +336,21 @@ const SIGNALS_BY_SITE: Record<string, SignalDef[]> = {
 const CHANNELS = ['realIn', 'realOut', 'intIn', 'intOut', 'bitIn', 'bitOut', 'msgRead', 'msgWrite'] as const;
 type Channel = (typeof CHANNELS)[number];
 
-const SITES = ['ALTO_MANGOS','CAMPOALEGRE','CARBONERO','CASCAJAL','KM18','MANGOS','MONTEBELLO','PICHINDE','QUIJOTE','SAN_ANTONO','SAN_ANTONIO','SIRENA','SOLEDAD','VORAGINE'];
-const ORDER = ['VORAGINE','SOLEDAD','MONTEBELLO','CASCAJAL','KM18','ALTO_MANGOS','CAMPOALEGRE','PICHINDE','CARBONERO','SIRENA','SAN_ANTONIO','QUIJOTE'];
+const SITES = ['ALTO_MANGOS','CABUYO','CAMPOALEGRE','CARBONERO','CASCAJAL','KM18','MANGOS','MONTEBELLO','PICHINDE','QUIJOTE','SAN_ANTONO','SAN_ANTONIO','SIRENA','SOLEDAD','VORAGINE'];
+// CABUYO al final (docs/plc/PLANTAS_NUEVAS_CABUYO_LUISA_LEONERA_GLORIA.md §7). Sus buffers salen del browse:
+// hasta recapturar fixtures/plc-discovery con sus tags, una regeneración la deja sin opcBuffers.
+const ORDER = ['VORAGINE','SOLEDAD','MONTEBELLO','CASCAJAL','KM18','ALTO_MANGOS','CAMPOALEGRE','PICHINDE','CARBONERO','SIRENA','SAN_ANTONIO','QUIJOTE','CABUYO'];
 const SLUG: Record<string, string> = {
   VORAGINE: 'voragine', SOLEDAD: 'soledad', MONTEBELLO: 'montebello', CASCAJAL: 'cascajal',
   KM18: 'km18', ALTO_MANGOS: 'alto-los-mangos', CAMPOALEGRE: 'campoalegre', PICHINDE: 'pichinde',
   CARBONERO: 'carbonero', SIRENA: 'sirena', SAN_ANTONIO: 'san-antonio', QUIJOTE: 'quijote',
+  CABUYO: 'cabuyo',
 };
 const DISPLAY: Record<string, string> = {
   VORAGINE: 'La Vorágine', SOLEDAD: 'Soledad', MONTEBELLO: 'Montebello', CASCAJAL: 'Cascajal',
   KM18: 'Km 18', ALTO_MANGOS: 'Alto de los Mangos', CAMPOALEGRE: 'Campoalegre', PICHINDE: 'Pichindé',
   CARBONERO: 'Carbonero', SIRENA: 'La Sirena', SAN_ANTONIO: 'San Antonio', QUIJOTE: 'El Quijote',
+  CABUYO: 'Cabuyo',
 };
 // Sitios cuya topología mínima fue verificada por browse (H3).
 const TOPOLOGY_VERIFIED = new Set(['SAN_ANTONIO', 'QUIJOTE']);
@@ -484,6 +499,7 @@ function main(): void {
       'Topología de san-antonio y quijote verificada por browse: son sitios mínimos reales (solo un buffer de tanque + MSG_READ). topologyVerified: true.',
       'displayName es provisional (displayNameProvisional: true) hasta confirmación escrita de la planta.',
       'generatedFrom.namespaces es referencia histórica de la captura, NO fuente de verdad para el runtime.',
+      'CABUYO (cabuyo) integrada el 2026-11-10 con la ficha del integrador del PLC (Brayan Grueso, Telcobras): REAL_IN_CABUYO Float[30], INT_IN_CABUYO Int16[10], INT_OUT_CABUYO Int16[10], MSG_READ_CABUYO (primaria), MSG_READ_INT_CABUYO, MSG_WRITE_INT_CABUYO. Sus tags no están en la captura del 2026-07-12: hasta recapturar el browse, este generador la deja sin buffers. DN/ER/TO pendientes (pedir GUID al integrador). La válvula de entrada (valve2, bitmask) no se genera aquí: vive en el mapping.',
     ],
     plants,
   };

@@ -1,7 +1,58 @@
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { useState } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, Linking, Platform, ActivityIndicator } from 'react-native';
+import Ionicons from './AppIcon';
 import Colors from '../constants/colors';
 import { useDeviceNotifications } from '../hooks/useDeviceNotifications';
+import { textoDePrueba, type EstadoPush } from '../services/push-rules';
+import { toast } from '../services/toast-store';
+
+/** Qué se le dice a la persona según en qué quedó el push de su teléfono. */
+function textoDeEstado(push: EstadoPush): { titulo: string; texto: string } {
+  if (Platform.OS === 'web') {
+    if (push === 'activo') return {
+      titulo: 'Avisos del navegador activos',
+      texto: 'Pueden llegar aunque cierres la pestaña. La entrega y el sonido dependen del navegador, sus permisos y el sistema. Usa la prueba para comprobarlos.',
+    };
+    return {
+      titulo: 'Avisos con la pestaña abierta',
+      texto: push === 'servidor-apagado'
+        ? 'El servidor todavía no envía avisos Web Push. Mientras tanto se revisan con esta pestaña abierta.'
+        : push === 'no-disponible'
+          ? 'Este navegador no admite Web Push aquí. Se revisan los avisos mientras esta pestaña permanezca abierta.'
+          : 'Todavía no se activó Web Push. Se reintentará al volver a la aplicación; mientras tanto se revisan los avisos con esta pestaña abierta.',
+    };
+  }
+  switch (push) {
+    case 'activo':
+      return {
+        titulo: 'Avisos al instante (push) activos',
+        texto:
+          'Te llegan en el momento, aunque la aplicación esté cerrada o el teléfono bloqueado. ' +
+          'Eliges cuáles aquí abajo.',
+      };
+    case 'servidor-apagado':
+      return {
+        titulo: 'Avisos activados',
+        texto:
+          'El servidor todavía no envía avisos al instante: por ahora se revisa cada 15 minutos y al ' +
+          'abrir la aplicación.',
+      };
+    case 'error':
+      return {
+        titulo: 'Avisos activados',
+        texto:
+          'No se pudieron activar los avisos al instante; se reintenta al volver a abrir la aplicación. ' +
+          'Mientras tanto se revisa cada 15 minutos.',
+      };
+    default:
+      return {
+        titulo: 'Avisos activados',
+        texto:
+          'Recibirás en el panel del dispositivo los avisos que elijas aquí abajo. Se revisa cada ' +
+          '15 minutos y al abrir la aplicación.',
+      };
+  }
+}
 
 /**
  * Activar los avisos en el panel del sistema.
@@ -10,10 +61,30 @@ import { useDeviceNotifications } from '../hooks/useDeviceNotifications';
  * navegadores como Android rechazan las peticiones sin gesto del usuario, y una denegación es
  * difícil de revertir (el diálogo ya no vuelve a aparecer).
  *
+ * Con el permiso concedido dice si el teléfono recibe los avisos al instante (push) y ofrece «Enviar
+ * aviso de prueba»: la única forma de comprobar banner, sonido y pantalla de bloqueo sin esperar a
+ * una alarma real.
+ *
  * Cuando la plataforma no puede, se explica por qué en vez de mostrar un botón que no hará nada.
  */
 export function NotificationPermissionCard() {
-  const { supported, reason, permission, ask } = useDeviceNotifications();
+  const { supported, reason, permission, ask, push, probar } = useDeviceNotifications();
+  const [probando, setProbando] = useState(false);
+
+  async function enviarPrueba(): Promise<void> {
+    setProbando(true);
+    try {
+      const result = await probar();
+      const t = Platform.OS !== 'web' ? textoDePrueba(result) : result.enviados > 0
+        ? { tipo: 'success' as const, titulo: 'Aviso de prueba enviado', mensaje: 'El proveedor aceptó el envío. Comprueba que aparece también después de cerrar esta pestaña.' }
+        : { tipo: 'error' as const, titulo: 'No se pudo enviar la prueba', mensaje: result.pushActivo ? 'Vuelve a abrir la aplicación para registrar este navegador.' : 'El servidor todavía no tiene Web Push activo.' };
+      toast[t.tipo](t.titulo, t.mensaje);
+    } catch (err) {
+      toast.error('No se pudo pedir el aviso de prueba', err instanceof Error ? err.message : undefined);
+    } finally {
+      setProbando(false);
+    }
+  }
 
   if (!supported) {
     return (
@@ -28,31 +99,76 @@ export function NotificationPermissionCard() {
   }
 
   if (permission === 'granted') {
+    const { titulo, texto } = textoDeEstado(push);
+    const puedeProbar = (Platform.OS === 'android' || Platform.OS === 'web') && push === 'activo';
     return (
       <View style={[styles.card, styles.cardOk]}>
-        <Ionicons name="notifications" size={20} color={Colors.success} />
+        <Ionicons name={push === 'activo' ? 'flash' : 'notifications'} size={20} color={Colors.success} />
         <View style={styles.body}>
-          <Text style={styles.title}>Avisos activados</Text>
-          <Text style={styles.text}>
-            Recibirás en el panel del dispositivo los avisos que elijas aquí abajo. Se revisa cada
-            15 minutos y al abrir la aplicación.
-          </Text>
+          <Text style={styles.title}>{titulo}</Text>
+          <Text style={styles.text}>{texto}</Text>
+          {Platform.OS === 'web' && push !== 'activo' && push !== 'no-disponible' && (
+            <TouchableOpacity style={styles.enlace} onPress={() => void ask()} accessibilityRole="button">
+              <Text style={styles.enlaceTexto}>Activar avisos con la pestaña cerrada</Text>
+            </TouchableOpacity>
+          )}
+          {puedeProbar && (
+            <TouchableOpacity
+              style={styles.enlace}
+              onPress={() => void enviarPrueba()}
+              disabled={probando}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: probando, busy: probando }}
+              accessibilityLabel="Enviar un aviso de prueba a este dispositivo"
+            >
+              {probando ? (
+                <ActivityIndicator size="small" color={Colors.primary} />
+              ) : (
+                <Text style={styles.enlaceTexto}>Enviar aviso de prueba</Text>
+              )}
+            </TouchableOpacity>
+          )}
         </View>
       </View>
     );
   }
 
   if (permission === 'denied') {
+    // En el teléfono se puede llevar a la persona DIRECTO a los ajustes de la app: antes solo se le
+    // explicaba dónde buscarlos, y quien había dicho «no» una vez no tenía un camino de vuelta a la
+    // vista. Al volver con el permiso concedido, `useDeviceNotifications` lo relee y esta tarjeta
+    // pasa sola a «Avisos activados». En web no hay equivalente (ningún navegador deja abrir sus
+    // ajustes desde una página), así que ahí se mantiene la explicación.
+    const nativo = Platform.OS !== 'web';
     return (
       <View style={[styles.card, styles.cardMuted]}>
         <Ionicons name="notifications-off-outline" size={20} color={Colors.warning} />
         <View style={styles.body}>
           <Text style={styles.title}>Avisos bloqueados</Text>
-          <Text style={styles.text}>
-            Los rechazaste antes y el sistema ya no vuelve a preguntar. Para activarlos hay que
-            permitirlos a mano en los ajustes del navegador o del teléfono, en los permisos de esta
-            aplicación.
-          </Text>
+          {nativo ? (
+            <>
+              <Text style={styles.text}>
+                Los rechazaste antes y el sistema ya no vuelve a preguntar. Para activarlos, abre
+                los ajustes de esta aplicación y permite las notificaciones.
+              </Text>
+              <TouchableOpacity
+                style={styles.enlace}
+                onPress={() => void Linking.openSettings().catch(() => undefined)}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Abrir los ajustes de la aplicación para permitir las notificaciones"
+              >
+                <Text style={styles.enlaceTexto}>Abrir ajustes</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <Text style={styles.text}>
+              Los rechazaste antes y el sistema ya no vuelve a preguntar. Para activarlos hay que
+              permitirlos a mano en los ajustes del navegador o del teléfono, en los permisos de esta
+              aplicación.
+            </Text>
+          )}
         </View>
       </View>
     );
@@ -95,4 +211,7 @@ const styles = StyleSheet.create({
   body: { flex: 1, gap: 3 },
   title: { fontSize: 14, fontWeight: '700', color: Colors.textPrimary },
   text: { fontSize: 12.5, color: Colors.textSecondary, lineHeight: 17 },
+  // Alto de objetivo táctil holgado: se usa con guantes en planta.
+  enlace: { alignSelf: 'flex-start', paddingVertical: 10, marginTop: 2 },
+  enlaceTexto: { fontSize: 14, fontWeight: '700', color: Colors.primary },
 });

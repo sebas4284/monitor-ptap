@@ -5,12 +5,10 @@ import { JsonLogger } from '../../infrastructure/logging/json-logger.service';
 /**
  * Envío de correo con transporte PLUGGABLE (regla del prompt maestro: config desde .env).
  *
- *   EMAIL_TRANSPORT=console (default) → NO envía nada real: escribe el enlace al log. Sirve para
- *     desarrollo/pruebas sin proveedor (el registro imprime el enlace de verificación y se abre a
- *     mano).
+ *   EMAIL_TRANSPORT=console (default en desarrollo) → NO envía correo ni registra credenciales.
  *   EMAIL_TRANSPORT=smtp → envío REAL vía nodemailer con SMTP_* (host/port/user/pass/secure).
- *     El transporter se crea de forma perezosa la primera vez. Si faltan credenciales, cae a
- *     `console` con un aviso (no rompe el registro).
+ *     El transporter se crea de forma perezosa la primera vez. Configuración incompleta falla
+ *     explícitamente; el registro conserva la cuenta pendiente y permite reintentar el envío.
  *
  * DB-free a propósito: no depende de MySQL.
  */
@@ -46,6 +44,10 @@ export class EmailService {
 
   /** Correo de verificación de cuenta. `link` es la URL absoluta que el usuario debe abrir. */
   async sendVerificationEmail(to: string, link: string): Promise<void> {
+    const transport = this.transport;
+    if (transport !== 'smtp' && (transport !== 'console' || process.env.NODE_ENV === 'production')) {
+      throw new Error('Se requiere un transporte de correo SMTP válido.');
+    }
     const subject = 'Verifica tu cuenta — Monitor PTAP';
     const text =
       `Hola,\n\nConfirma tu correo para completar el registro en Monitor PTAP abriendo este enlace:\n` +
@@ -55,24 +57,22 @@ export class EmailService {
       `<p><a href="${link}">Verificar mi cuenta</a></p>` +
       `<p style="color:#6b7280;font-size:12px">El enlace vence pronto. Si no creaste esta cuenta, ignora este mensaje.</p>`;
 
-    if (this.transport === 'smtp') {
+    if (transport === 'smtp') {
       const tx = this.smtpTransporter();
       if (tx) {
         await tx.sendMail({ from: this.from, to, subject, text, html });
         this.logger.log({ msg: 'email.verification enviado por SMTP', to, subject });
         return;
       }
-      this.logger.warn({ msg: 'EMAIL_TRANSPORT=smtp pero faltan SMTP_HOST/USER/PASS; usando console', to });
+      throw new Error('Configuración SMTP incompleta: se requieren SMTP_HOST/USER/PASS.');
     }
 
-    // Transporte console (y fallback): el enlace queda en el log para abrirlo a mano en dev.
+    // El modo de desarrollo deja constancia, pero nunca expone el enlace ni el cuerpo.
     this.logger.log({
       msg: 'email.verification (transporte console: NO enviado, solo registrado)',
       from: this.from,
       to,
       subject,
-      link,
-      body: text,
     });
   }
 }

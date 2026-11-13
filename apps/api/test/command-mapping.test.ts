@@ -1,14 +1,23 @@
 /**
  * Fase 5 — validación del mapping de comandos (criterio de aceptación):
- *  - una señal writable con confidence != confirmed es IMPOSIBLE por schema;
+ *  - una señal writable puede ser confirmed o inferred, pero NUNCA estimated;
  *  - una señal writable DEBE declarar su write spec;
  *  - el mapping de PRODUCCIÓN no tiene NINGUNA señal writable (sin L5X → seguro por defecto).
  */
+import 'reflect-metadata';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadJson, validateMapping } from '../scripts/validate-mapping';
-import { motivoSecuenciaInvalida } from '../src/infrastructure/connectivity/mapping/opc-mapping.loader';
+import {
+  bitsCompartidosEntreValvulas,
+  loadMapping,
+  motivoSecuenciaInvalida,
+  motivoSostenidaInvalida,
+} from '../src/infrastructure/connectivity/mapping/opc-mapping.loader';
+import { CommandMappingResolver } from '../src/modules/commands/command-mapping.resolver';
 
 const schema = loadJson(join(__dirname, '..', 'config', 'opc_mapping.schema.json')) as object;
 
@@ -41,13 +50,31 @@ const VALID_WRITE = {
   permission: 'control_valves',
 };
 
-test('mapping: señal writable con confidence:inferred es rechazada por el schema', () => {
+test('mapping: una señal writable SÍ puede ser inferred (cambio del 2026-08-31)', () => {
+  // Hasta el 2026-08-31 el schema exigía `confirmed` a toda señal escribible, y era correcto
+  // mientras el mapeo solo se editaba por git con revisión. Al abrir la edición desde la app dejó de
+  // serlo por el motivo contrario al que parece: forzar `confirmed` obligaría a que una codificación
+  // capturada en campo y tecleada en un móvil se declarara respaldada por documentación oficial, y
+  // después nadie podría distinguir cuál se verificó de verdad.
   const result = validateMapping(schema, mappingWithSignal({
-    buffer: 'intOut', index: 3, domainKey: 'valveEV01',
+    buffer: 'intOut', index: 3, domainKey: 'valveEV01', label: 'Válvula EV01',
     mappingStatus: 'mapped', confidence: 'inferred', writable: true, write: VALID_WRITE,
   }));
+  assert.equal(result.ok, true, `debería validar, hubo: ${result.errors.join(' | ')}`);
+});
+
+test('mapping: una señal writable NUNCA puede ser estimated', () => {
+  // Es el límite que sí se conserva: `estimated` significa derivado o calculado, y un valor
+  // calculado no es un canal de mando. Abrir `inferred` no abre esto.
+  const result = validateMapping(schema, mappingWithSignal({
+    buffer: 'intOut', index: 3, domainKey: 'valveEV01', label: 'Válvula EV01',
+    mappingStatus: 'mapped', confidence: 'estimated', writable: true, write: VALID_WRITE,
+  }));
   assert.equal(result.ok, false);
-  assert.ok(result.errors.some((e) => /confidence|confirmed/i.test(e)), `esperaba error de confidence, hubo: ${result.errors.join(' | ')}`);
+  assert.ok(
+    result.errors.some((e) => /confidence|then/i.test(e)),
+    `esperaba error de confidence, hubo: ${result.errors.join(' | ')}`,
+  );
 });
 
 test('mapping: señal writable SIN write spec es rechazada por el schema', () => {
@@ -77,7 +104,7 @@ test('mapping: write.target.sourceBuffer inexistente es rechazado (validación s
   assert.ok(result.errors.some((e) => /NO_EXISTE/.test(e)));
 });
 
-test('mapping de PRODUCCIÓN: la válvula 1 está en las 10 plantas CON canal de comando, y en ninguna más', () => {
+test('mapping de PRODUCCIÓN: la válvula 1 está en las plantas CON canal de comando (Cabuyo: solo la de entrada), y la segunda solo donde el integrador la entregó', () => {
   // Invariante (2026-07-30): la ruta de la válvula se replicó a todas las plantas por instrucción
   // del operador («mín. 1 válvula, se escribe por el canal 0, abrir = 4096 en todas»), tras
   // verificarla en campo en Sirena (docs/archivo/PRUEBA_VALVULA_SIRENA.md: pulso capturado por testigo
@@ -87,12 +114,15 @@ test('mapping de PRODUCCIÓN: la válvula 1 está en las 10 plantas CON canal de
   // válvula. `san-antonio` y `quijote` NO los tienen (son tanques retransmitidos en el buffer de
   // Soledad, sin canal propio) → inventarles una válvula escribiría en un buffer inexistente.
   // Si aparece una writable en una planta sin canal, o de otro tipo, este test debe fallar.
+  //
+  // Desde el 2026-10-16 La Vorágine, Cascajal y Campoalegre tienen una SEGUNDA válvula accionable: el
+  // integrador entregó su codificación. Son las únicas: cualquier otra exige lo mismo.
   const prod = loadJson(join(__dirname, '..', 'config', 'opc_mapping.json')) as {
-    plants: Array<{
+    plants: {
       plantId: string;
-      opcBuffers?: Record<string, Array<{ browseName?: string }>>;
-      signals?: Array<{ domainKey?: string; writable?: boolean }>;
-    }>;
+      opcBuffers?: Record<string, { browseName?: string }[]>;
+      signals?: { domainKey?: string; writable?: boolean }[];
+    }[];
   };
 
   const conCanal = prod.plants.filter((p) => p.opcBuffers?.intOut?.[0] && p.opcBuffers?.intIn?.[0]).map((p) => p.plantId);
@@ -100,39 +130,70 @@ test('mapping de PRODUCCIÓN: la válvula 1 está en las 10 plantas CON canal de
     (p.signals ?? []).filter((s) => s.writable === true).map((s) => `${p.plantId}/${s.domainKey}`),
   );
 
-  assert.deepEqual(writables, conCanal.map((id) => `${id}/valve1`), 'una valve1 por planta con canal de comando, y nada más');
-  assert.equal(conCanal.length, 10, 'hoy son 10 plantas con canal (san-antonio y quijote no tienen intOut/intIn)');
+  assert.deepEqual(
+    writables,
+    conCanal.flatMap((id) =>
+      SOLO_ENTRADA.includes(id)
+        ? [`${id}/valve2`]
+        : CON_DOS_VALVULAS.includes(id) ? [`${id}/valve1`, `${id}/valve2`] : [`${id}/valve1`],
+    ),
+    'una valve1 por planta con canal de comando (salvo donde la salida es proporcional sin mando), la valve2 donde el integrador la entregó, y nada más',
+  );
+  assert.equal(conCanal.length, 11, 'hoy son 11 plantas con canal (Cabuyo desde el 2026-11-10; san-antonio y quijote no tienen intOut/intIn)');
   for (const sinCanal of ['san-antonio', 'quijote']) {
     assert.ok(!writables.some((w) => w.startsWith(`${sinCanal}/`)), `${sinCanal} NO debe tener válvula: no tiene canal donde escribir`);
   }
 });
 
-test('mapping de PRODUCCIÓN: La Vorágine tiene DOS válvulas y solo la de salida se acciona', () => {
-  // El cliente confirmó el 2026-08-15 que La Vorágine tiene válvula de entrada Y de salida. De la
-  // de entrada no se conoce su frecuencia de bits, así que existe para mostrarse pero NO para
-  // mandarse.
+test('mapping de PRODUCCIÓN: La Vorágine tiene DOS válvulas y las DOS se accionan, por la MISMA palabra (integrador 2026-10-16)', () => {
+  // El cliente confirmó el 2026-08-15 que La Vorágine tiene válvula de entrada Y de salida. Hasta el
+  // 2026-10-16 la de entrada existía para mostrarse pero NO para mandarse: no se conocía su
+  // codificación. Ese día la entregó el integrador del PLC: entrada abrir = bit2 (4) y cerrar = bit3
+  // (8), en INT_OUT_VORAGINE[0], la misma palabra que la salida (bits 12/13).
   //
-  // Este test hace falta porque la regla de «una valve1 por planta» filtra por `writable === true`:
-  // una segunda válvula NO writable se colaría sin que ningún test se enterara, y con ella la
-  // tentación de irle poniendo un write spec «provisional».
+  // Este test se dio la vuelta, no se borró: lo que sigue protegiendo es que la de entrada solo tenga
+  // mando con RESPALDO (el `_riesgo` dice de dónde sale y cuándo) y que su índice siga siendo un ancla
+  // declarada como tal — el 1 no es por dónde se manda.
   const prod = loadJson(join(__dirname, '..', 'config', 'opc_mapping.json')) as {
-    plants: Array<{
+    plants: {
       plantId: string;
-      signals?: Array<{ domainKey?: string; label?: string; writable?: boolean; write?: unknown; flowDomainKey?: string; _nota?: string }>;
-    }>;
+      signals?: {
+        domainKey?: string;
+        label?: string;
+        index?: number;
+        confidence?: string;
+        writable?: boolean;
+        write?: ProdWrite & { target?: { sourceBuffer?: string; index?: number } };
+        flowDomainKey?: string;
+        _nota?: string;
+      }[];
+    }[];
   };
 
   const conValve2 = prod.plants.filter((p) => (p.signals ?? []).some((s) => s.domainKey === 'valve2')).map((p) => p.plantId);
-  assert.deepEqual(conValve2, ['voragine'], 'una segunda válvula exige confirmarla en campo, planta por planta');
+  assert.deepEqual(conValve2, [...CON_DOS_VALVULAS, ...SOLO_ENTRADA], 'una válvula de entrada exige su codificación, planta por planta');
 
   const voragine = prod.plants.find((p) => p.plantId === 'voragine');
   const entrada = (voragine?.signals ?? []).find((s) => s.domainKey === 'valve2');
   const salida = (voragine?.signals ?? []).find((s) => s.domainKey === 'valve1');
 
-  // LO QUE DE VERDAD PROTEGE: que nadie le ponga mando a la de entrada sin dato de campo.
-  assert.equal(entrada?.writable, false, 'la de entrada NO se acciona: no se conoce su frecuencia de bits');
-  assert.equal(entrada?.write, undefined, 'sin write spec: inventarlo sería accionar equipo a ciegas');
-  assert.ok(typeof entrada?._nota === 'string' && entrada._nota.length > 200, 'su índice es un ancla y eso debe estar escrito al lado');
+  assert.equal(entrada?.writable, true, 'la de entrada se acciona desde el 2026-10-16');
+  assert.equal(entrada?.confidence, 'confirmed', 'respaldada por la entrega del integrador');
+  assert.deepEqual(entrada?.write?.commands, { open: 4, close: 8 }, 'entrada: bit2 abre, bit3 cierra');
+  assert.deepEqual(salida?.write?.commands, { open: 4096, close: 8192 }, 'salida: bit12 abre, bit13 cierra');
+  for (const v of [entrada, salida]) {
+    assert.equal(v?.write?.target?.sourceBuffer, 'INT_OUT_VORAGINE');
+    assert.equal(v?.write?.target?.index, 0, `${v?.domainKey}: las dos mandan por INT_OUT_VORAGINE[0]`);
+  }
+  // EL ANCLA: la señal de la entrada cuelga del índice 1 (validate-mapping no admite dos señales en
+  // intOut[0]) pero manda por el 0. Eso tiene que estar escrito al lado, o el próximo que lea el
+  // mapping deducirá del índice algo que no es.
+  assert.equal(entrada?.index, 1);
+  assert.equal(entrada?._nota, undefined, 'la nota de «sin canal de comando» ya no es verdad: se sustituyó por el _riesgo');
+  assert.ok(
+    typeof entrada?.write?._riesgo === 'string' && /ANCLA, NO MANDO/.test(entrada.write._riesgo) && entrada.write._riesgo.includes('2026-10-16'),
+    'el _riesgo de la entrada explica el ancla y dice de dónde sale la codificación',
+  );
 
   // Cada una con SU caudal, y declarado. Sin declararlo, el orden por defecto del front prefiere la
   // salida: la de ENTRADA se juzgaría con el caudal de salida y diría "abierta" con la entrada
@@ -146,6 +207,23 @@ test('mapping de PRODUCCIÓN: La Vorágine tiene DOS válvulas y solo la de sali
   // Anónimas no: con dos válvulas, "Válvula 1" y "Válvula 2" no le dicen nada a quien las opera.
   assert.match(String(salida?.label), /salida/i);
   assert.match(String(entrada?.label), /entrada/i);
+
+  // Cascajal y Campoalegre (integrador 2026-10-16): dos salidas en la misma palabra. Mismo patrón que
+  // La Vorágine — la segunda cuelga de un ancla, cada una juzgada con SU caudal, y con nombre propio.
+  for (const plantId of ['cascajal', 'campoalegre']) {
+    const planta = prod.plants.find((p) => p.plantId === plantId);
+    const v1 = (planta?.signals ?? []).find((s) => s.domainKey === 'valve1');
+    const v2 = (planta?.signals ?? []).find((s) => s.domainKey === 'valve2');
+    assert.equal(v2?.index, 1, `${plantId}/valve2: ancla en intOut[1]`);
+    assert.ok(/ANCLA/.test(String(v2?.write?._riesgo)), `${plantId}/valve2: el _riesgo explica el ancla`);
+    for (const v of [v1, v2]) {
+      assert.equal(v?.write?.target?.index, 0, `${plantId}/${v?.domainKey}: manda por INT_OUT[0]`);
+      assert.ok(v?.flowDomainKey, `${plantId}/${v?.domainKey}: declara su caudal`);
+      assert.ok((planta?.signals ?? []).some((s) => s.domainKey === v?.flowDomainKey), `${plantId}: ${v?.flowDomainKey} existe`);
+      assert.doesNotMatch(String(v?.label), /^Válvula \d$/, `${plantId}/${v?.domainKey}: nombre propio, no anónimo`);
+    }
+    assert.notEqual(v1?.flowDomainKey, v2?.flowDomainKey, `${plantId}: cada válvula con SU caudal`);
+  }
 });
 
 // Hallazgo de campo 2026-07-30: replicar `valve1State` (intIn[0]) a ciegas publicaba un estado
@@ -154,12 +232,12 @@ test('mapping de PRODUCCIÓN: La Vorágine tiene DOS válvulas y solo la de sali
 // falso. Este test impide que vuelva a colarse un estado sin verificar.
 test('mapping de PRODUCCIÓN: solo las plantas con estado VERIFICADO exponen valve1State', () => {
   const prod = loadJson(join(__dirname, '..', 'config', 'opc_mapping.json')) as {
-    plants: Array<{ plantId: string; signals?: Array<{ domainKey?: string }> }>;
+    plants: { plantId: string; signals?: { domainKey?: string }[] }[];
   };
   const conEstado = prod.plants
     .filter((p) => (p.signals ?? []).some((s) => s.domainKey === 'valve1State'))
     .map((p) => p.plantId);
-  assert.deepEqual(conEstado, ['cascajal', 'sirena'], 'añadir otra planta exige confirmar su índice/patrón en campo primero');
+  assert.deepEqual(conEstado, ['voragine', 'cascajal', 'sirena'], 'añadir otra planta exige confirmar su índice/patrón en campo primero');
 
   // LA REGLA QUE DE VERDAD IMPORTA: exponer la palabra no es lo mismo que creerle. Cada una que
   // esté mapeada debe declarar POR QUÉ se le hace caso — o declarar que no se le hace.
@@ -185,109 +263,364 @@ test('mapping de PRODUCCIÓN: solo las plantas con estado VERIFICADO exponen val
   assert.equal(porPlanta.get('sirena')?.stateTrusted, false, 'la palabra de Sirena no está verificada: no puede decidir');
 });
 
+/**
+ * La entrega del integrador del PLC del 2026-10-16: qué bit abre y cuál cierra cada válvula, todas en
+ * el elemento 0 de su INT_OUT y todas con señal SOSTENIDA. Es la única fuente de `sustained` en el
+ * mapping de producción: una válvula fuera de esta tabla no puede sostener, y una de la tabla no
+ * puede tener otros bits. Los pares son contiguos (7/8, 12/13, 2/3, 0/1): confundirlos al teclear es
+ * cerrar cuando alguien pidió abrir, o mover la otra válvula de la palabra.
+ */
+/** Plantas con dos válvulas en la misma palabra (la segunda cuelga de un ancla en intOut[1]). */
+const CON_DOS_VALVULAS = ['voragine', 'soledad', 'montebello', 'cascajal', 'km18', 'alto-los-mangos', 'campoalegre', 'pichinde', 'carbonero', 'sirena'];
+
+const ENTREGA_INTEGRADOR_2026_10_16: Record<string, { open: number; close: number }> = Object.fromEntries(
+  CON_DOS_VALVULAS.flatMap((id) => [
+    [`${id}/valve1`, { open: 4096, close: 8192 }],
+    [`${id}/valve2`, { open: 4, close: 8 }],
+  ]),
+);
+
+/**
+ * Ficha del integrador del 2026-11-09/10 (Brayan Grueso, Telcobras): Cabuyo. Solo la válvula de ENTRADA
+ * tiene mando —bit2/bit3 de INT_OUT_CABUYO[0], sostenida, en `bitmask` porque esa palabra tiene OTROS
+ * bits en uso—; la de salida es proporcional y su consigna es la Fase 4 (sin `valve1`).
+ */
+const ENTREGA_CABUYO_2026_11_10: Record<string, { open: number; close: number }> = {
+  'cabuyo/valve2': { open: 4, close: 8 },
+};
+/** Plantas cuya única válvula accionable es la de entrada (salida proporcional sin mando hasta la Fase 4). */
+const SOLO_ENTRADA = ['cabuyo'];
+/** Plantas que comparten su palabra de mando con bits ajenos: escriben en `bitmask`, nunca en absoluto. */
+const EN_BITMASK = ['cabuyo'];
+/** Plantas con realimentación entregada en INT_IN[1] (las demás confirman por eco en intOut). */
+const CON_ESTADO_EN_INT_IN = ['voragine', 'cabuyo'];
+/** Todas las entregas del integrador: la única fuente de `sustained` en producción. */
+const ENTREGAS_INTEGRADOR: Record<string, { open: number; close: number }> = {
+  ...ENTREGA_INTEGRADOR_2026_10_16,
+  ...ENTREGA_CABUYO_2026_11_10,
+};
+
+
 interface ProdWrite {
-  target?: { index?: number };
+  target?: { sourceBuffer?: string; index?: number };
   commands?: Record<string, number>;
-  sequences?: Record<string, Array<{ index: number; value: number }>>;
+  sequences?: Record<string, { index: number; value: number }[]>;
   latched?: boolean;
+  sustained?: boolean;
   _riesgo?: string;
   mode?: string;
   pulse?: { holdMs?: number; until?: { channel?: string; sourceBuffer?: string; index?: number; equals?: number } };
-  readBack?: { channel?: string; confirmsWrittenValue?: boolean };
+  readBack?: { channel?: string; confirmsWrittenValue?: boolean; expectedValue?: number; stateVerified?: boolean };
+  rollbackValue?: number;
 }
 
-function valvulasDeProduccion(): Array<{ plantId: string; w: ProdWrite | undefined }> {
+function valvulasDeProduccion(): { plantId: string; domainKey: string; w: ProdWrite | undefined }[] {
   const prod = loadJson(join(__dirname, '..', 'config', 'opc_mapping.json')) as {
-    plants: Array<{ plantId: string; signals?: Array<{ writable?: boolean; write?: ProdWrite }> }>;
+    plants: { plantId: string; signals?: { domainKey?: string; writable?: boolean; write?: ProdWrite }[] }[];
   };
-  return prod.plants.flatMap((p) => (p.signals ?? []).filter((s) => s.writable).map((s) => ({ plantId: p.plantId, w: s.write })));
+  return prod.plants.flatMap((p) =>
+    (p.signals ?? []).filter((s) => s.writable).map((s) => ({ plantId: p.plantId, domainKey: String(s.domainKey), w: s.write })),
+  );
 }
 
-test('mapping de PRODUCCIÓN: cada válvula escribe en el canal 0 con pulso y máscara de bits', () => {
-  // Protege la forma verificada en campo: si alguien cambia el índice, el modo o quita el pulso,
-  // el comando podría pisar bits ajenos o quedar ENCLAVADO (ver docs/archivo/PRUEBA_VALVULA_SIRENA.md).
-  // La Sirena está fuera a propósito: ver el test siguiente.
+test('mapping de PRODUCCIÓN: cada válvula escribe en el canal 0, SOSTENIDA, en absolute (bitmask donde la palabra tiene bits ajenos)', () => {
   const valves = valvulasDeProduccion();
   assert.ok(valves.length > 0);
-  for (const { plantId, w } of valves) {
-    assert.equal(w?.target?.index, 0, `${plantId}: se escribe por el canal 0`);
-    if (plantId === 'sirena') continue;
-
-    assert.equal(w?.commands?.open, 4096, `${plantId}: abrir = 4096 (bit12)`);
-    assert.equal(w?.mode, 'bitmask', `${plantId}: modo bitmask (no pisar bits ajenos de la palabra)`);
-    assert.ok((w?.pulse?.holdMs ?? 0) > 0, `${plantId}: debe declarar pulso (si no, el bit queda enclavado al confirmar)`);
-    assert.equal(w?.readBack?.channel, 'intIn', `${plantId}: el read-back va por el canal de ESTADO`);
-    assert.equal(w?.readBack?.confirmsWrittenValue, false, `${plantId}: un pulso no se confirma releyendo lo escrito`);
-    assert.equal(w?.sequences, undefined, `${plantId}: sin ladder no se inventa una orden compuesta`);
+  for (const { plantId, domainKey, w } of valves) {
+    const quien = `${plantId}/${domainKey}`;
+    assert.equal(w?.target?.index, 0, `${quien}: se escribe por el canal 0`);
+    assert.equal(w?.mode, EN_BITMASK.includes(plantId) ? 'bitmask' : 'absolute', `${quien}: modo según la palabra`);
+    assert.equal(w?.sustained, true, `${quien}: señal SOSTENIDA`);
+    assert.equal(w?.pulse, undefined, `${quien}: sin pulso`);
+    assert.equal(w?.rollbackValue, undefined, `${quien}: sin rollbackValue`);
+    const conEstado = CON_ESTADO_EN_INT_IN.includes(plantId);
+    assert.equal(w?.readBack?.channel, conEstado ? 'intIn' : 'intOut', `${quien}: canal de estado o eco`);
+    assert.equal(w?.readBack?.confirmsWrittenValue, !conEstado, `${quien}: eco solo sin canal de estado`);
+    assert.equal(w?.readBack?.stateVerified, plantId === 'voragine', `${quien}: estado confirmado solo en Vorágine`);
+    if (domainKey === 'valve1') {
+      assert.deepEqual(w?.commands, { open: 4096, close: 8192 }, `${quien}: salida 4096/8192`);
+    } else {
+      assert.deepEqual(w?.commands, { open: 4, close: 8 }, `${quien}: entrada 4/8`);
+    }
   }
 });
 
-test('mapping de PRODUCCIÓN: CERRAR solo existe donde se verificó en campo', () => {
-  // El verbo `close` es el que de verdad puede hacer daño: abrir de más desperdicia agua, cerrar de
-  // más deja a un pueblo sin ella. Por eso no se replica "porque el patrón parece el mismo" — en
-  // Vorágine lo probó el cliente sobre la planta (2026-08-15) y en el resto no hay nada que lo
-  // respalde. Sin `close` en el mapping, la app responde UNKNOWN_COMMAND: no acciona a ciegas.
+test('mapping de PRODUCCIÓN: CERRAR solo existe donde hay respaldo (campo o integrador)', () => {
   const conCierre = valvulasDeProduccion()
     .filter((v) => v.w?.commands && 'close' in v.w.commands)
-    .map((v) => `${v.plantId}=${v.w?.commands?.close}`)
+    .map((v) => `${v.plantId}/${v.domainKey}=${v.w?.commands?.close}`)
     .sort();
-  assert.deepEqual(conCierre, ['sirena=2', 'voragine=8192']);
+  assert.deepEqual(
+    conCierre,
+    Object.entries(ENTREGAS_INTEGRADOR).map(([quien, c]) => `${quien}=${c.close}`).sort(),
+  );
+  for (const [quien, entrega] of Object.entries(ENTREGAS_INTEGRADOR)) {
+    const w = valvulasDeProduccion().find((v) => `${v.plantId}/${v.domainKey}` === quien)?.w;
+    assert.ok(typeof w?._riesgo === 'string' && /integrador/i.test(w._riesgo) && /sosten/i.test(w._riesgo));
+    assert.equal(w?.readBack?.stateVerified, quien.startsWith('voragine/'));
+    assert.equal(entrega.open & entrega.close, 0);
+  }
+  const salida = valvulasDeProduccion().find((v) => v.plantId === 'voragine' && v.domainKey === 'valve1')?.w;
+  const entrada = valvulasDeProduccion().find((v) => v.plantId === 'voragine' && v.domainKey === 'valve2')?.w;
+  assert.deepEqual(salida?.commands, { open: 4096, close: 8192 });
+  assert.deepEqual(entrada?.commands, { open: 4, close: 8 });
+  for (const [nombre, w] of [['salida', salida], ['entrada', entrada]] as const) {
+    assert.equal(w?.mode, 'absolute', `${nombre}: modo absolute`);
+    assert.equal(w?.sustained, true, `${nombre}: señal SOSTENIDA`);
+    assert.equal(w?.pulse, undefined, `${nombre}: sin pulso`);
+    assert.equal(w?.rollbackValue, undefined, `${nombre}: sin rollbackValue`);
+  }
+});
 
-  const voragine = valvulasDeProduccion().find((v) => v.plantId === 'voragine')?.w;
-  // 4096 = bit12 y 8192 = bit13: dos bits distintos de la MISMA palabra, cada uno como pulso. Que
-  // sean bits contiguos es lo que hace fácil confundirlos al teclear, y confundirlos aquí significa
-  // cerrar cuando alguien pidió abrir.
-  assert.deepEqual(voragine?.commands, { open: 4096, close: 8192 });
-  assert.equal(voragine?.mode, 'bitmask', 'dos comandos en la misma palabra: absoluto pisaría el otro');
-  assert.ok((voragine?.pulse?.holdMs ?? 0) > 0, 'sin pulso, abrir dejaría el bit puesto y cerrar no podría actuar');
-  assert.ok(typeof voragine?._riesgo === 'string', 'un comando de cierre debe llevar al lado qué lo respalda');
+test('mapping de PRODUCCIÓN: solo las válvulas de la entrega del integrador sostienen la señal, y ninguna usa ya pulse.until', () => {
+  const sostenidas = valvulasDeProduccion().filter((v) => v.w?.sustained === true).map((v) => `${v.plantId}/${v.domainKey}`);
+  assert.deepEqual(sostenidas.sort(), Object.keys(ENTREGAS_INTEGRADOR).sort());
+  const conUntil = valvulasDeProduccion().filter((v) => v.w?.pulse?.until).map((v) => v.plantId);
+  assert.deepEqual(conUntil, []);
+});
 
-  // La señal es SOSTENIDA hasta que el PLC confirma. Se compara el VALOR ENTERO: INT_IN[1] vale
-  // 1025 = bits{0,10} en reposo, así que una condición por bit0 se cumpliría en el primer instante y
-  // cortaría la señal antes de que la válvula llegara a moverse.
-  assert.deepEqual(voragine?.pulse?.until, {
-    channel: 'intIn', sourceBuffer: 'INT_IN_VORAGINE', index: 1, equals: 1,
+test('mapping de PRODUCCIÓN: Cabuyo — solo la válvula de ENTRADA, en bitmask (bits ajenos en la palabra), read-back SIN verificar y palabra de estado de confianza (integrador 2026-11-10)', () => {
+  const prod = loadJson(join(__dirname, '..', 'config', 'opc_mapping.json')) as {
+    plants: {
+      plantId: string;
+      signals?: { domainKey?: string; index?: number; buffer?: string; writable?: boolean; flowDomainKey?: string; stateTrusted?: boolean; write?: ProdWrite & { readBack?: { index?: number; mask?: number; faultMask?: number; expectedByCommand?: Record<string, number> } } }[];
+    }[];
+  };
+  const senales = prod.plants.find((p) => p.plantId === 'cabuyo')?.signals ?? [];
+  const por = (k: string) => senales.find((s) => s.domainKey === k);
+
+  // La salida es proporcional: se ve su apertura, pero su mando (consigna 0-100 %) es la Fase 4.
+  assert.equal(por('valve1'), undefined, 'sin valve1: la consigna de la salida es la Fase 4');
+  assert.equal(por('valve1Position')?.writable, false);
+  assert.equal(por('valve1Position')?.flowDomainKey, 'outletFlow1');
+
+  const entrada = por('valve2');
+  assert.equal(entrada?.flowDomainKey, 'inletFlow1', 'la entrada se juzga con SU caudal');
+  assert.equal(entrada?.index, 0, 'única señal en INT_OUT_CABUYO[0]: sin ancla');
+  const w = entrada?.write;
+  assert.deepEqual(w?.target, { channel: 'intOut', sourceBuffer: 'INT_OUT_CABUYO', index: 0 });
+  assert.deepEqual(w?.commands, ENTREGA_CABUYO_2026_11_10['cabuyo/valve2']);
+  // bitmask y NO absolute: en absoluto se pisarían los otros bits de la palabra que el PLC usa.
+  assert.equal(w?.mode, 'bitmask');
+  assert.equal(w?.sustained, true);
+  assert.equal(w?.readBack?.channel, 'intIn');
+  assert.equal(w?.readBack?.index, 1);
+  assert.deepEqual(w?.readBack?.expectedByCommand, { open: 1, close: 2 });
+  assert.equal(w?.readBack?.mask, 3);
+  assert.equal(w?.readBack?.faultMask, 16);
+  assert.equal(w?.readBack?.stateVerified, false, 'sin verificar en campo todavía');
+  assert.ok(/Brayan Grueso/.test(String(w?._riesgo)) && /bitmask/.test(String(w?._riesgo)), 'el _riesgo dice de dónde sale y por qué bitmask');
+  // El integrador confirmó la codificación verificada en campo (2026-11-10): la palabra decide en la
+  // app, como en La Vorágine. El read-back del mando sigue sin verificar hasta la prueba con Aquora.
+  assert.equal(por('valve2State')?.stateTrusted, true);
+
+  const r = new CommandMappingResolver().resolve('cabuyo', 'valve2');
+  assert.ok(r, 'el WriteService la puede resolver');
+  assert.equal(r.write.mode, 'bitmask');
+  assert.equal(motivoSostenidaInvalida(r.write), null, 'sostenida en bitmask válida');
+});
+
+// ── ORDEN SOSTENIDA: lo que el validador y el loader RECHAZAN (integrador de La Vorágine, 2026-10-16) ──
+//
+// «Estas señales deben ser sostenidas, es decir que todo el tiempo debe quedar la señal de apertura o
+// la señal de cierre, nunca las dos, siempre una de las dos». Lo que puede romper esa regla desde el
+// mapping es: un pulso (se limpia al terminar), un rollbackValue (se vuelve a él), el modo absoluto
+// (pisa la otra válvula), un solo verbo (no hay contrario) o verbos que comparten bits (1/1).
+
+const VALVULA_SOSTENIDA = {
+  buffer: 'intOut', index: 0, domainKey: 'valve1', label: 'Válvula de salida',
+  mappingStatus: 'mapped', confidence: 'confirmed', writable: true,
+  write: {
+    target: { channel: 'intOut', sourceBuffer: 'INT_OUT_TEST', index: 0 },
+    commands: { open: 4096, close: 8192 },
+    mode: 'bitmask',
+    sustained: true,
+    readBack: { channel: 'intOut', sourceBuffer: 'INT_OUT_TEST', index: 0, confirmsWrittenValue: false, stateVerified: false },
+    timeoutMs: 5000,
+    permission: 'control_valves',
+  },
+};
+
+/** La válvula sostenida con el write spec tocado. `undefined` en un campo lo quita. */
+function sostenidaCon(cambios: Record<string, unknown>): Record<string, unknown> {
+  const write: Record<string, unknown> = { ...VALVULA_SOSTENIDA.write, ...cambios };
+  for (const [k, v] of Object.entries(cambios)) if (v === undefined) delete write[k];
+  return { ...VALVULA_SOSTENIDA, write };
+}
+
+/** Escribe un mapping en un archivo temporal (fuera del repo) para pasarlo por el loader real. */
+function mappingTemporal(signals: Record<string, unknown>[]): string {
+  const doc = mappingWithSignal(signals[0]) as { plants: { signals: unknown[] }[] };
+  doc.plants[0].signals = signals;
+  const ruta = join(mkdtempSync(join(tmpdir(), 'mapping-sostenida-')), 'opc_mapping.json');
+  writeFileSync(ruta, JSON.stringify(doc), 'utf8');
+  return ruta;
+}
+
+test('sostenida: una válvula sostenida bien formada valida SIN rollbackValue y el loader la carga', () => {
+  const r = validateMapping(schema, mappingWithSignal(VALVULA_SOSTENIDA));
+  assert.deepEqual(r.errors, []);
+  const w = loadMapping(mappingTemporal([VALVULA_SOSTENIDA])).signals[0].write;
+  assert.equal(w?.sustained, true);
+  assert.equal(w?.pulse, null);
+  assert.equal('rollbackValue' in (w ?? {}), false, 'la clave ni aparece: nadie puede leer un undefined como «limpiar a 0»');
+});
+
+test('sostenida: sin `sustained`, rollbackValue sigue siendo OBLIGATORIO', () => {
+  // La excepción es solo para la orden sostenida; el resto de specs sigue necesitando a qué volver.
+  const r = validateMapping(schema, mappingWithSignal(sostenidaCon({ sustained: undefined })));
+  assert.equal(r.ok, false);
+  assert.ok(r.errors.some((e) => /rollbackValue/.test(e)), r.errors.join(' | '));
+});
+
+test('sostenida: el validador y el loader RECHAZAN sustained + pulse y sustained + rollbackValue, con mensaje claro', () => {
+  const casos: [string, Record<string, unknown>, RegExp][] = [
+    ['con pulse', { pulse: { holdMs: 45000 } }, /pulse/],
+    ['con pulse.until', { pulse: { holdMs: 45000, until: { channel: 'intIn', index: 1, equals: 1 } } }, /pulse/],
+    ['con rollbackValue', { rollbackValue: 0 }, /rollbackValue/],
+  ];
+  for (const [nombre, cambios, motivo] of casos) {
+    const senal = sostenidaCon(cambios);
+    const r = validateMapping(schema, mappingWithSignal(senal));
+    assert.equal(r.ok, false, `${nombre}: validate:mapping debe fallar`);
+    // Las dos capas: el schema (la regla del allOf) y la semántica, con el motivo legible.
+    assert.ok(r.errors.some((e) => e.startsWith('schema /plants/0/signals/0/write must NOT be valid')), `${nombre}: ${r.errors.join(' | ')}`);
+    assert.ok(r.errors.some((e) => /write\.sustained en "valve1"/.test(e) && motivo.test(e)), `${nombre}: ${r.errors.join(' | ')}`);
+    // El loader NO arranca: lanza, y el mensaje dice qué válvula y por qué.
+    assert.throws(() => loadMapping(mappingTemporal([senal])), (err: Error) => {
+      assert.match(err.message, /voragine\/valve1/);
+      assert.match(err.message, /SOSTENIDA/);
+      assert.match(err.message, motivo);
+      return true;
+    }, `${nombre}: el loader debe negarse a arrancar`);
+  }
+});
+
+test('sostenida: el validador y el loader RECHAZAN modo inválido, un solo verbo, verbos con bits compartidos, cero y booleanos', () => {
+  const casos: [string, Record<string, unknown>, RegExp][] = [
+    ['modo desconocido', { mode: 'invalido' as any }, /mode/],
+    ['sin modo (absoluto por omisión)', { mode: undefined }, /bitmask/],
+    ['un solo verbo', { commands: { open: 4096 } }, /dos verbos/],
+    ['verbos con bits compartidos', { commands: { open: 4096, close: 4096 | 8192 } }, /comparte bits/],
+    ['un verbo a cero', { commands: { open: 4096, close: 0 } }, /1 a 65535/],
+    ['un verbo booleano', { commands: { open: true, close: false } }, /1 a 65535/],
+    ['con sequences', { mode: 'bitmask', sequences: { open: [{ index: 0, value: 4096 }] } }, /sequences/],
+    ['con latched', { latched: true }, /latched/],
+  ];
+  for (const [nombre, cambios, motivo] of casos) {
+    const senal = sostenidaCon(cambios);
+    assert.equal(validateMapping(schema, mappingWithSignal(senal)).ok, false, `${nombre}: validate:mapping debe fallar`);
+    assert.throws(() => loadMapping(mappingTemporal([senal])), motivo, `${nombre}: el loader debe negarse a arrancar`);
+  }
+});
+
+test('sostenida: dos válvulas de la MISMA palabra no pueden compartir bits (validador y loader)', () => {
+  // El copia-y-pega que esta regla caza: la entrada con los bits de la salida. Con la señal puesta
+  // para siempre, «abrir entrada» abriría la SALIDA y nadie lo vería en una regla por válvula.
+  const salida = VALVULA_SOSTENIDA;
+  const entradaMal = { ...sostenidaCon({ commands: { open: 4096, close: 8 } }), index: 1, domainKey: 'valve2', label: 'Válvula de entrada' };
+  const r = validateMapping(schema, mappingTemporalDoc([salida, entradaMal]));
+  assert.equal(r.ok, false);
+  assert.ok(r.errors.some((e) => /comparten bits/.test(e) && /valve1/.test(e) && /valve2/.test(e)), r.errors.join(' | '));
+  assert.throws(() => loadMapping(mappingTemporal([salida, entradaMal])), /comparten bits/);
+
+  // Con bits disjuntos (la forma real: 4096/8192 y 4/8) pasan los dos.
+  const entradaBien = { ...sostenidaCon({ commands: { open: 4, close: 8 } }), index: 1, domainKey: 'valve2', label: 'Válvula de entrada' };
+  assert.deepEqual(validateMapping(schema, mappingTemporalDoc([salida, entradaBien])).errors, []);
+  assert.equal(loadMapping(mappingTemporal([salida, entradaBien])).signals.filter((s) => s.write?.sustained).length, 2);
+});
+
+/** El documento (no la ruta) con varias señales, para `validateMapping`. */
+function mappingTemporalDoc(signals: Record<string, unknown>[]): unknown {
+  const doc = mappingWithSignal(signals[0]) as { plants: { signals: unknown[] }[] };
+  doc.plants[0].signals = signals;
+  return doc;
+}
+
+test('sostenida: `motivoSostenidaInvalida` acepta la forma real y explica cada rechazo', () => {
+  const real = { commands: { open: 4096, close: 8192 }, mode: 'bitmask', pulse: null };
+  assert.equal(motivoSostenidaInvalida(real), null, 'pulse: null es «sin pulso» (así lo deja el loader)');
+  assert.equal(motivoSostenidaInvalida({ ...real, commands: { open: 4, close: 8 } }), null);
+  assert.match(String(motivoSostenidaInvalida({ ...real, pulse: { holdMs: 1 } })), /pulse/);
+  assert.match(String(motivoSostenidaInvalida({ ...real, rollbackValue: 0 })), /rollbackValue/);
+  assert.match(String(motivoSostenidaInvalida({ ...real, commands: { open: 70000, close: 8192 } })), /65535/);
+  assert.match(String(motivoSostenidaInvalida({ ...real, commands: { open: 1.5, close: 8192 } })), /entera/);
+});
+
+test('sostenida: `bitsCompartidosEntreValvulas` solo compara válvulas de la MISMA palabra', () => {
+  const w = (sourceBuffer: string, index: number, commands: Record<string, number>, sustained = true) => ({
+    target: { channel: 'intOut', sourceBuffer, index }, mode: 'bitmask', commands, sustained,
   });
-
-  // El tope NO es libre. nginx no es el problema (proxy_read_timeout 300s, verificado en la VM el
-  // 2026-08-15): lo es el cliente, cuyo `fetch` no fija timeout y hereda el de la plataforma (~60 s
-  // en iOS). Pasarse deja al operador viendo un error de red con la orden viva en el PLC, que es lo
-  // que invita a pulsar otra vez. 45 s + read-back cabe con margen.
-  const tope = voragine?.pulse?.holdMs ?? 0;
-  assert.ok(tope <= 45_000, `el tope del sostenido (${tope} ms) debe caber en el presupuesto de la cadena front→nginx→API`);
-  assert.ok(tope >= 10_000, 'un tope demasiado corto cortaría la maniobra a mitad, que es el problema que esto arregla');
+  // Mismos bits en palabras distintas: no hay conflicto (son otras bobinas).
+  assert.deepEqual(
+    bitsCompartidosEntreValvulas([
+      { plantId: 'p', domainKey: 'a', write: w('INT_OUT_A', 0, { open: 1, close: 2 }) },
+      { plantId: 'p', domainKey: 'b', write: w('INT_OUT_A', 1, { open: 1, close: 2 }) },
+      { plantId: 'q', domainKey: 'c', write: w('INT_OUT_A', 0, { open: 1, close: 2 }) },
+    ]),
+    [],
+  );
+  const c = bitsCompartidosEntreValvulas([
+    { plantId: 'p', domainKey: 'a', write: w('INT_OUT_A', 0, { open: 1, close: 2 }, false) },
+    { plantId: 'p', domainKey: 'b', write: w('INT_OUT_A', 0, { open: 2, close: 4 }, false) },
+  ]);
+  assert.equal(c.length, 1);
+  assert.deepEqual(c[0].valvulas, ['a', 'b']);
+  assert.equal(c[0].sostenida, false, 'sin sostenidas, el loader solo avisa; validate:mapping sí lo rechaza');
 });
 
-test('mapping de PRODUCCIÓN: ninguna otra planta sostiene la señal', () => {
-  // El sostenido nace de una válvula motorizada concreta. Replicarlo a ciegas dejaría bobinas
-  // energizadas hasta 45 s en sitios donde nadie ha comprobado que haga falta ni que sea seguro.
-  const conSostenido = valvulasDeProduccion().filter((v) => v.w?.pulse?.until).map((v) => v.plantId);
-  assert.deepEqual(conSostenido, ['voragine']);
+test('mapping REAL: La Vorágine carga y el resolver da las DOS válvulas con sus bits', () => {
+  // Lo que usará el WriteService en producción: CommandMappingResolver lee el mapping del repositorio.
+  const resolver = new CommandMappingResolver();
+  const salida = resolver.resolve('voragine', 'valve1');
+  const entrada = resolver.resolve('voragine', 'valve2');
+  assert.ok(salida && entrada, 'las dos válvulas son accionables');
+  assert.deepEqual(salida.write.commands, { open: 4096, close: 8192 });
+  assert.deepEqual(entrada.write.commands, { open: 4, close: 8 });
+  for (const r of [salida, entrada]) {
+    assert.equal(r.write.sustained, true);
+    assert.equal(r.write.mode, 'absolute');
+    assert.equal(r.write.pulse, null);
+    assert.equal(r.write.rollbackValue, undefined);
+    assert.deepEqual(r.write.target, { channel: 'intOut', sourceBuffer: 'INT_OUT_VORAGINE', index: 0 });
+    assert.equal(r.write.permission, 'control_valves');
+    assert.equal(motivoSostenidaInvalida(r.write), null);
+  }
+  // Y ninguna válvula fuera de la entrega del integrador tiene una sostenida que el resolver pueda dar;
+  // las de la entrega resuelven con sus bits.
+  const real = loadMapping(join(__dirname, '..', 'config', 'opc_mapping.json'));
+  assert.deepEqual(
+    real.signals
+      .filter((s) => s.write?.sustained)
+      .map((s) => `${s.plantId}/${s.domainKey}`)
+      .sort(),
+    Object.keys(ENTREGAS_INTEGRADOR).sort(),
+  );
+  for (const [quien, entrega] of Object.entries(ENTREGAS_INTEGRADOR)) {
+    const [plantId, domainKey] = quien.split('/');
+    const r = resolver.resolve(plantId, domainKey);
+    assert.ok(r, `${quien}: accionable`);
+    assert.deepEqual(r.write.commands, entrega, `${quien}: bits de la entrega`);
+    assert.equal(r.write.target.index, 0, `${quien}: manda por INT_OUT[0]`);
+    assert.equal(motivoSostenidaInvalida(r.write), null, `${quien}: sostenida válida`);
+  }
+  assert.deepEqual(bitsCompartidosEntreValvulas(real.signals), [], 'ninguna palabra con bits compartidos en producción');
 });
 
-test('mapping de PRODUCCIÓN: La Sirena — 1 abre, 2 cierra, 0 limpia (entrega oficial)', () => {
-  // VERIFICADO EN CAMPO Y CERRADO por el cliente el 2026-08-15. Un solo canal, `INT_OUT[0]`, con
-  // tres valores. Esta forma sustituye a dos intentos del mismo día que nunca llegaron a producción
-  // —el 4096/bit12 heredado de Vorágine y una orden compuesta c0/c1 con relé de inversión—, y por
-  // eso el test los nombra: si alguien vuelve a ver esas formas en el mapping, es una regresión, no
-  // una evolución.
-  const sirena = valvulasDeProduccion().find((v) => v.plantId === 'sirena')?.w;
-
-  assert.deepEqual(sirena?.commands, { open: 1, close: 2 });
+test('mapping de PRODUCCIÓN: La Sirena — 4096 abre, 8192 cierra, modo absolute', () => {
+  const sirena = valvulasDeProduccion().find((v) => v.plantId === 'sirena' && v.domainKey === 'valve1')?.w;
+  assert.deepEqual(sirena?.commands, { open: 4096, close: 8192 });
   assert.equal(sirena?.target?.index, 0);
-  assert.equal(sirena?.mode, 'absolute', '1, 2 y 0 son valores del canal, no bits de una máscara');
-  assert.equal(sirena?.sequences, undefined, 'la orden compuesta quedó descartada por la lectura de campo');
-  assert.equal(sirena?.latched, undefined, 'ya no es sostenida indefinida: se limpia con 0');
+  assert.equal(sirena?.mode, 'absolute');
+  assert.equal(sirena?.sustained, true);
+});
 
-  // Lo que el cliente fijó explícitamente: el 2 se sostiene 45 s antes de limpiar. Un pulso corto
-  // dejaría la maniobra a medias, que es exactamente lo que hacía el de 300 ms.
-  assert.equal(sirena?.pulse?.holdMs, 45_000);
-  assert.equal(sirena?.pulse?.until, undefined, 'la parada por caudal es una actualización futura, no está aquí');
-
-  // El 0 no es decorativo: es el valor con el que `clearPulse` limpia el canal en modo absoluto.
-  // Si alguien lo cambiara, la válvula se quedaría con el 1 o el 2 puesto para siempre.
-  assert.equal(sirena?.rollbackValue, 0, 'tras 1 o 2 SIEMPRE se vuelve a escribir 0');
-  assert.ok(typeof sirena?._riesgo === 'string' && sirena._riesgo.length > 200);
+test('mapping de PRODUCCIÓN: Carbonero — 4096 abre, 8192 cierra, modo absolute', () => {
+  const carbonero = valvulasDeProduccion().find((v) => v.plantId === 'carbonero' && v.domainKey === 'valve1')?.w;
+  assert.deepEqual(carbonero?.commands, { open: 4096, close: 8192 });
+  assert.equal(carbonero?.target?.index, 0);
+  assert.equal(carbonero?.mode, 'absolute');
+  assert.equal(carbonero?.sustained, true);
 });
 
 // Las reglas ELÉCTRICAS de una orden compuesta se comprueban al CARGAR, no al accionar: una
@@ -303,7 +636,7 @@ test('loader: las reglas eléctricas de una orden compuesta', () => {
   const ok = motivoSecuenciaInvalida('open', [{ index: 1, value: 0 }, { index: 0, value: 1 }], spec);
   assert.equal(ok, null, `la secuencia buena debe pasar, y dijo: ${ok}`);
 
-  const casos: Array<[string, Array<{ index: number; value: number }>, RegExp]> = [
+  const casos: [string, { index: number; value: number }[], RegExp][] = [
     ['energiza dos direcciones', [{ index: 1, value: 1 }, { index: 0, value: 1 }], /energizadas a la vez/],
     ['desenergiza al final', [{ index: 0, value: 1 }, { index: 1, value: 0 }], /desenergiza DESPU/],
     ['no toca el canal primario', [{ index: 1, value: 0 }], /canal primario/],
@@ -342,5 +675,54 @@ test('mapping de PRODUCCIÓN: la válvula de La Sirena declara cuál es SU cauda
       (planta?.signals ?? []).some((s) => s.domainKey === 'outletFlow1'),
       `${plantId}: la señal declarada en flowDomainKey debe estar mapeada en la misma planta`,
     );
+  }
+});
+
+test('mapping: confirmed Voragine feedback uses intIn[1] independent disjoint masks', () => {
+  const signals = loadMapping(join(__dirname, '..', 'config', 'opc_mapping.json')).signals.filter((s) => s.plantId === 'voragine');
+  for (const [key, bits, commands] of [
+    ['valve1', { open: 1024, close: 2048, fault: 16384 }, { open: 4096, close: 8192 }],
+    ['valve2', { open: 1, close: 2, fault: 16 }, { open: 4, close: 8 }],
+  ] as const) {
+    const state = signals.find((s) => s.domainKey === `${key}State`)!;
+    assert.equal(state.writable, false);
+    assert.equal(state.stateTrusted, true);
+    assert.equal(state.confidence, 'confirmed');
+    assert.equal(state.buffer, 'intIn');
+    assert.equal(state.sourceBuffer, 'INT_IN_VORAGINE');
+    assert.equal(state.index, 1);
+    assert.deepEqual(state.stateEncoding, { bits });
+    const write = signals.find((s) => s.domainKey === key)!.write!;
+    assert.deepEqual(write.commands, commands);
+    assert.equal(write.mode, 'absolute');
+    assert.equal(write.sustained, true);
+    assert.equal(write.pulse, null);
+    assert.equal(write.rollbackValue, undefined);
+    assert.equal(write.readBack.channel, 'intIn');
+    assert.equal(write.readBack.index, 1);
+    assert.equal(write.readBack.confirmsWrittenValue, false);
+    assert.equal(write.readBack.stateVerified, true);
+    assert.equal(write.readBack.mask, bits.open | bits.close);
+    assert.equal(write.readBack.faultMask, bits.fault);
+    assert.deepEqual(write.readBack.expectedByCommand, { open: bits.open, close: bits.close });
+  }
+});
+
+test('loader fails closed for invalid feedback masks and overlapping state bits', () => {
+  const source = loadJson(join(__dirname, '..', 'config', 'opc_mapping.json')) as {
+    plants: { signals: { domainKey: string; write?: { readBack: { mask?: number; faultMask?: number } };
+      stateEncoding?: { bits?: { open: number; close: number; fault: number } } }[] }[];
+  };
+  for (const kind of ['readBack', 'state'] as const) {
+    const mapping = structuredClone(source);
+    if (kind === 'readBack') {
+      mapping.plants[0].signals.find((s) => s.domainKey === 'valve1')!.write!.readBack.faultMask = 1024;
+    } else {
+      mapping.plants[0].signals.find((s) => s.domainKey === 'valve1State')!.stateEncoding!.bits!.fault = 1024;
+    }
+    const dir = mkdtempSync(join(tmpdir(), 'ptap-feedback-masks-'));
+    const path = join(dir, 'mapping.json');
+    writeFileSync(path, JSON.stringify(mapping));
+    assert.throws(() => loadMapping(path), /máscaras|solapadas/);
   }
 });

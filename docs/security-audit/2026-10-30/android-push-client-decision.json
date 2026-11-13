@@ -1,0 +1,37 @@
+{
+  "schema": "telcobras-decision/1",
+  "artifact_id": "ptap-android-push-client-remediation",
+  "source_and_version": "First-party monitor-ptap workspace; installed Expo58.0.20/expo-notifications58.1.6",
+  "sha256_or_commit": "Exact first-party source SHA256 values: android-push-client-verification.json",
+  "data_classification": "confidential",
+  "requested_operation": "Local source changes and synthetic tests; bounded trusted SSH read-only Android Firebase config/build artifact inventory, output sanitized booleans/counts only",
+  "authorized_scope": "User requested Android notifications while app background/closed, rebuild prerequisites and VM deployment via parent. No cloud account/key creation, arbitrary notification sends, token dumps, production edits/restarts by this agent.",
+  "environment_and_destination": "Local monitor-ptap workspace and existing verified ptapapp SSH. No third-party corporate uploads.",
+  "tools_versions_and_signature_dates": [
+    "Installed expo-notifications58.1.6 exact source inspected",
+    "Expo58 versioned official docs inspected",
+    "Existing SSH trusted host/key and deployed Node26.12.1"
+  ],
+  "observed_evidence": [
+    "Client uses native getDevicePushTokenAsync for FCM; background global handler present",
+    "google-services.json ignored by git",
+    "Expo documentation requires channel creation before permission/token and native build for remote push",
+    "15 focused notification tests passed; mobile typecheck and targeted ESLint passed; frozen source hashes recorded",
+    "Sanitized production config/native resource inventory confirms Android Firebase configuration absent; backend agent confirms no service-account config and zero devices"
+  ],
+  "limitations_and_unexamined_content": [
+    "No physical Android device available",
+    "Remote FCM credential and mobile Firebase configuration presence must be verified",
+    "Force-stopped apps cannot receive until reopened; background polling is not guaranteed",
+    "Firebase project artifacts unavailable; native APK rebuild and physical-device acceptance remain deferred, not represented as working push"
+  ],
+  "rights_and_notices": "First-party maintenance; preserve dependency notices; no credential redistribution",
+  "decision": "allowed_scoped",
+  "conditions_for_next_action": [
+    "Do not expose secrets in tool results",
+    "No arbitrary pushes to users",
+    "Freeze code after focused synthetic tests/typecheck; parent coordinates build and deployment"
+  ],
+  "reviewer_and_utc_time": "Codex opc_secure 2026-10-31T13:18:30.8562276Z",
+  "valid_only_for_identified_bytes_and_operation": true
+}

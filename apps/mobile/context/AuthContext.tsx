@@ -1,50 +1,36 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import * as SecureStore from 'expo-secure-store';
-import { Platform, AppState } from 'react-native';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { setLastDataSession } from '../services/last-snapshot-store';
+import { AppState, Platform } from 'react-native';
 import type { AuthUser, Permission } from '@ptap/shared';
 import { hasPermission as checkPermission } from '@ptap/shared';
-import { setAuthToken, setOnUnauthorized } from '../services/api';
+import { setAuthToken, setOnUnauthorized, invalidateAuthRequests } from '../services/api';
+import { desregistrarPush } from '../services/push-registration';
 import { resetSocket } from '../services/socket';
-
-const TOKEN_KEY = 'ptap_auth_token';
-const USER_KEY = 'ptap_auth_user';
-
-/**
- * Instante de expiración (ms epoch) del JWT, leyendo el `exp` del payload. NO verifica la firma
- * — eso es del backend en cada petición; aquí solo se lee el reloj de la sesión para que la app
- * cierre sola a la hora que el backend ya decidió (JWT_EXPIRES_IN, 8 h). null = sin exp legible;
- * en ese caso el cierre queda en manos del 401 del backend.
- */
-function tokenExpiryMs(token: string): number | null {
-  try {
-    const b64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
-    const payload = JSON.parse(atob(b64)) as { exp?: number };
-    return typeof payload.exp === 'number' ? payload.exp * 1000 : null;
-  } catch {
-    return null;
-  }
-}
-
-const storage = {
-  getItem: (key: string) =>
-    Platform.OS === 'web'
-      ? Promise.resolve(localStorage.getItem(key))
-      : SecureStore.getItemAsync(key),
-  setItem: (key: string, value: string) =>
-    Platform.OS === 'web'
-      ? Promise.resolve(localStorage.setItem(key, value))
-      : SecureStore.setItemAsync(key, value),
-  deleteItem: (key: string) =>
-    Platform.OS === 'web'
-      ? Promise.resolve(localStorage.removeItem(key))
-      : SecureStore.deleteItemAsync(key),
-};
+// Claves, almacenamiento y lectura del `exp` viven en `session-store` para que la tarea de segundo
+// plano —que corre sin React— pueda leer la misma sesión. Ver ese módulo.
+import {
+  TOKEN_KEY,
+  USER_KEY,
+  storage,
+  tokenExpiryMs,
+  invalidateSessionRestoration,
+  resumeSessionRestoration,
+} from '../services/session-store';
 
 interface AuthContextType {
   token: string | null;
   user: AuthUser | null;
   isLoading: boolean;
-  login: (token: string, user: AuthUser) => Promise<void>;
+  login: (token: string, user: AuthUser, remember?: boolean) => Promise<void>;
   logout: () => Promise<void>;
   hasPermission: (perm: Permission) => boolean;
 }
@@ -52,31 +38,81 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const queryClient = useQueryClient();
+  const transition = useRef(0);
+  const logoutTransition = useRef<number | null>(null);
+  const sessionWrites = useRef(Promise.resolve());
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+
+  const logout = useCallback(async () => {
+    if (logoutTransition.current === transition.current) return sessionWrites.current;
+    const expected = ++transition.current;
+    logoutTransition.current = expected;
+    invalidateSessionRestoration();
+    invalidateAuthRequests();
+    // Revoke other web tabs synchronously; the outgoing JWT remains in memory for device removal.
+    if (Platform.OS === 'web') localStorage.removeItem(TOKEN_KEY);
+    // Revoke visible data synchronously, before slow device/network cleanup.
+    const clearing = setLastDataSession(null);
+    void queryClient.cancelQueries();
+    queryClient.clear();
+    resetSocket();
+    setToken(null);
+    setUser(null);
+    setIsLoading(false);
+    // Push unregister still needs the outgoing JWT. Subsequent login waits for this operation.
+    const unregistering = desregistrarPush();
+    sessionWrites.current = sessionWrites.current
+      .catch(() => undefined)
+      .then(async () => {
+        try {
+          await unregistering;
+          await Promise.all([
+            storage.deleteItem(TOKEN_KEY),
+            storage.deleteItem(USER_KEY),
+            clearing,
+          ]);
+        } finally {
+          if (transition.current === expected) setAuthToken(null);
+        }
+      });
+    await sessionWrites.current;
+  }, [queryClient]);
 
   // Restaura la sesión persistida y deja el cliente REST listo con ese token. Una sesión
   // VENCIDA (el token pasó sus 8 h) se descarta aquí mismo: recargar la página no la revive
   // y el usuario cae en el login, no en una app que fallará con 401 en cada petición.
   useEffect(() => {
-    Promise.all([
-      storage.getItem(TOKEN_KEY),
-      storage.getItem(USER_KEY),
-    ])
-      .then(([storedToken, storedUser]) => {
+    const expected = transition.current;
+    let mounted = true;
+    Promise.all([storage.getItem(TOKEN_KEY), storage.getItem(USER_KEY)])
+      .then(async ([storedToken, storedUser]) => {
+        if (!mounted || expected !== transition.current) return;
         const exp = storedToken ? tokenExpiryMs(storedToken) : null;
-        if (storedToken && exp !== null && exp <= Date.now()) {
-          void storage.deleteItem(TOKEN_KEY);
-          void storage.deleteItem(USER_KEY);
-          return; // sin sesión: el guard de rutas manda al login
+        if (!storedToken || !storedUser || exp === null || exp <= Date.now()) {
+          await logout();
+          return;
         }
-        setToken(storedToken ?? null);
-        setAuthToken(storedToken ?? null); // el JWT restaurado viaja en las peticiones
-        setUser(storedUser ? (JSON.parse(storedUser) as AuthUser) : null);
+        const restored = JSON.parse(storedUser) as AuthUser;
+        await setLastDataSession(restored);
+        if (!mounted || expected !== transition.current) return;
+        resumeSessionRestoration();
+        setAuthToken(storedToken);
+        setToken(storedToken);
+        setUser(restored);
       })
-      .finally(() => setIsLoading(false));
-  }, []);
+      .catch(() => {
+        if (mounted && expected === transition.current) void logout();
+      })
+      .finally(() => {
+        if (mounted && expected === transition.current) setIsLoading(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [logout]);
 
   // Un 401 del backend (token vencido/revocado) limpia la sesión persistida.
   useEffect(() => {
@@ -84,7 +120,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       void logout();
     });
     return () => setOnUnauthorized(null);
-  }, []);
+  }, [logout]);
 
   // Cierre AUTOMÁTICO al vencer el token (8 h): sin esto, una app abierta pero quieta (sin
   // peticiones) seguiría mostrando la sesión como viva más allá de su expiración. Al dispararse,
@@ -100,7 +136,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     const timer = setTimeout(() => void logout(), remaining);
     return () => clearTimeout(timer);
-  }, [token]);
+  }, [token, logout]);
 
   // En nativo los timers de JS se estrangulan con la app en background: si el token vence estando
   // en segundo plano, el setTimeout de arriba puede no haber disparado. Al volver a primer plano se
@@ -114,33 +150,45 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (exp !== null && exp <= Date.now()) void logout();
     });
     return () => sub.remove();
-  }, [token]);
+  }, [token, logout]);
 
-  const login = useCallback(async (newToken: string, newUser: AuthUser) => {
-    await Promise.all([
-      storage.setItem(TOKEN_KEY, newToken),
-      storage.setItem(USER_KEY, JSON.stringify(newUser)),
-    ]);
-    setAuthToken(newToken);
-    // Cierra cualquier socket previo para que el próximo se abra con ESTE token (no el de una
-    // sesión anterior que hubiera quedado abierta).
-    resetSocket();
-    setToken(newToken);
-    setUser(newUser);
-  }, []);
-
-  const logout = useCallback(async () => {
-    await Promise.all([
-      storage.deleteItem(TOKEN_KEY),
-      storage.deleteItem(USER_KEY),
-    ]);
-    setAuthToken(null);
-    // Corta el stream de datos del usuario que sale: sin esto el WS seguiría vivo y recibiendo
-    // snapshots con el JWT ya sin sesión.
-    resetSocket();
-    setToken(null);
-    setUser(null);
-  }, []);
+  const login = useCallback(
+    async (newToken: string, newUser: AuthUser, remember = true) => {
+      const expected = ++transition.current;
+      invalidateSessionRestoration();
+      invalidateAuthRequests();
+      if (Platform.OS === 'web') localStorage.removeItem(TOKEN_KEY);
+      const revokingWebPush = Platform.OS === 'web'
+        ? import('../services/web-push-registration').then((web) => web.invalidarWebPushLocal())
+        : Promise.resolve();
+      const clearing = setLastDataSession(null);
+      void queryClient.cancelQueries();
+      queryClient.clear();
+      resetSocket();
+      setToken(null);
+      setUser(null);
+      sessionWrites.current = sessionWrites.current
+        .catch(() => undefined)
+        .then(async () => {
+          await Promise.all([clearing, revokingWebPush]);
+          if (expected !== transition.current) return;
+          await Promise.all([
+            remember ? storage.setItem(TOKEN_KEY, newToken) : storage.deleteItem(TOKEN_KEY),
+            remember ? storage.setItem(USER_KEY, JSON.stringify(newUser)) : storage.deleteItem(USER_KEY),
+          ]);
+          if (expected !== transition.current) return;
+          await setLastDataSession(newUser);
+          if (expected !== transition.current) return;
+          resumeSessionRestoration();
+          setAuthToken(newToken);
+          setToken(newToken);
+          setUser(newUser);
+          setIsLoading(false);
+        });
+      await sessionWrites.current;
+    },
+    [queryClient],
+  );
 
   const hasPermission = useCallback(
     (perm: Permission): boolean => (user ? checkPermission(user.role, perm) : false),

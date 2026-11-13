@@ -3,7 +3,7 @@
  * dependencia y el SimulatorBridgeAdapter real para el I/O de escritura/read-back:
  *  - sesión Anonymous/None (o writes deshabilitados) → TODO rechazado (WRITES_DISABLED_INSECURE_SESSION);
  *  - target no writable / comando desconocido → rechazado;
- *  - RBAC del mapping: jefe NO puede control_valves;
+ *  - RBAC del mapping: operadores/jefes pueden control_valves; civil no;
  *  - interlock: bridge != Connected o snapshot no fresco → rechazado;
  *  - write sin read-back confirmado → 'fallido', nunca 'exitoso' (+ rollback);
  *  - idempotencia: misma idempotencyKey no re-ejecuta;
@@ -12,9 +12,10 @@
 import 'reflect-metadata';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { join } from 'node:path';
 import type { AuditEntry, AuditLogService } from '../src/infrastructure/audit/audit-log.service';
 import type { ConnectivityConfig, OpcUaConfig } from '../src/infrastructure/connectivity/connectivity.config';
-import type { LoadedMapping, WriteSpec } from '../src/infrastructure/connectivity/mapping/opc-mapping.loader';
+import { loadMapping, type LoadedMapping, type WriteSpec } from '../src/infrastructure/connectivity/mapping/opc-mapping.loader';
 import type { PlantCache } from '../src/infrastructure/connectivity/pipeline/plant-cache';
 import type { LivenessState, PlantSnapshotDto } from '../src/infrastructure/connectivity/pipeline/plant-snapshot.dto';
 import type { BridgeStatus, ConnectivityAdapter } from '../src/infrastructure/connectivity/ports/connectivity-adapter.port';
@@ -24,7 +25,13 @@ import type { CommandMappingResolver } from '../src/modules/commands/command-map
 import { REJECT, FAIL, SENT, httpStatusForCommand, type CommandActor } from '../src/modules/commands/command.dto';
 import { WriteService } from '../src/modules/commands/write.service';
 import type { CommandSignatureService } from '../src/modules/commands/command-signature.service';
-import type { NotificationRepository } from '../src/modules/notifications/notification.repository';
+import { NotificationRepository } from '../src/modules/notifications/notification.repository';
+import type { DevicePushTokenRepository } from '../src/modules/notifications/device-push-token.repository';
+import type { NotificationPrefsRepository } from '../src/modules/notifications/notification-prefs.repository';
+import { PushDispatcher } from '../src/modules/notifications/push.dispatcher';
+import { NOTIFICATION_PREFS_DEFAULT } from '@ptap/shared';
+import type { TokenMessage } from 'firebase-admin/messaging';
+import type { Pool } from 'mysql2/promise';
 
 const WRITE: WriteSpec = {
   target: { channel: 'intOut', sourceBuffer: 'INT_OUT_TEST', index: 3 },
@@ -40,7 +47,7 @@ const WRITE: WriteSpec = {
 interface FakeAdapter extends ConnectivityAdapter {
   /** El ÍNDICE importa tanto como el valor: en una orden compuesta, escribir el sentido en la
    *  posición equivocada es indistinguible de no escribirlo si solo se mira el valor. */
-  writes: Array<{ index: number; value: number | boolean }>;
+  writes: { index: number; value: number | boolean }[];
 }
 
 function fakeAdapter(opts: { secure: boolean; bridge: BridgeStatus; confirms?: boolean; writeThrows?: boolean; preset?: number; echoFails?: boolean }): FakeAdapter {
@@ -52,7 +59,7 @@ function fakeAdapter(opts: { secure: boolean; bridge: BridgeStatus; confirms?: b
   const key = (t: { plantId: string; channel: string; sourceBuffer: string; index: number }) =>
     `${t.plantId}/${t.channel}/${t.sourceBuffer}[${t.index}]`;
   const adapter = {
-    writes: [] as Array<{ index: number; value: number | boolean }>,
+    writes: [] as { index: number; value: number | boolean }[],
     getWriteSecurity: () => ({
       secure: opts.secure,
       securityMode: opts.secure ? 'SignAndEncrypt' : 'None',
@@ -134,7 +141,7 @@ function fakeRepo(): CommandLogRepository {
  * que el sello llega al aviso, no el cálculo del HMAC — eso tiene su propio test, sin base de datos.
  */
 function fakeFirmas(): CommandSignatureService {
-  return { firmar: async () => 'firma-de-prueba' } as unknown as CommandSignatureService;
+  return { firmar: async (_id: number, _name: string | null, finalize?: () => Promise<void>) => { await finalize?.(); return 'firma-de-prueba'; } } as unknown as CommandSignatureService;
 }
 
 /** Doble de la bandeja: cada maniobra deja un aviso, y publicarlo no debe poder romper la orden. */
@@ -148,15 +155,26 @@ function fakeAudit(): { service: AuditLogService; calls: AuditEntry[] } {
   return { service, calls };
 }
 
-const OPERADOR: CommandActor = { userId: 'u1', userEmail: 'op@ptap.co', role: 'operador', ip: '10.0.0.1' };
-const JEFE: CommandActor = { userId: 'u2', userEmail: 'jefe@ptap.co', role: 'jefe', ip: '10.0.0.2' };
+const OPERADOR: CommandActor = { userId: 'u1', userName: 'Operador de prueba', userEmail: 'op@ptap.co', role: 'operador', ip: '10.0.0.1' };
+const JEFE: CommandActor = { userId: 'u2', userName: 'Jefe de prueba', userEmail: 'jefe@ptap.co', role: 'jefe', ip: '10.0.0.2' };
+const CIVIL: CommandActor = { userId: 'u3', userName: 'Civil de prueba', userEmail: 'civil@ptap.co', role: 'civil', ip: '10.0.0.3' };
 
-function build(opts: { secure: boolean; bridge: BridgeStatus; confirms?: boolean; writesEnabled?: boolean; write?: WriteSpec | null; snapshot?: PlantSnapshotDto | null; writeThrows?: boolean; preset?: number; echoFails?: boolean }) {
+function build(opts: { secure: boolean; bridge: BridgeStatus; confirms?: boolean; writesEnabled?: boolean; write?: WriteSpec | null; snapshot?: PlantSnapshotDto | null; writeThrows?: boolean; preset?: number; echoFails?: boolean; trustedNetwork?: boolean }) {
   const adapter = fakeAdapter({ secure: opts.secure, bridge: opts.bridge, confirms: opts.confirms, writeThrows: opts.writeThrows, preset: opts.preset, echoFails: opts.echoFails });
+  const config = fakeConfig(opts.writesEnabled ?? true);
+  if (opts.trustedNetwork) {
+    Object.assign(config.opcua, {
+      endpoint: 'opc.tcp://synthetic.invalid:59100', securityMode: 'None', securityPolicy: 'None',
+      identity: { type: 'username', userName: 'test', password: 'synthetic' },
+      trustedNetworkWrites: true, trustedNetworkEndpoint: 'opc.tcp://synthetic.invalid:59100',
+      trustedNetworkApproval: 'synthetic-operator-approval',
+    });
+    adapter.getWriteSecurity = () => ({ secure: false, securityMode: 'None', identity: 'username' });
+  }
   const audit = fakeAudit();
   const service = new WriteService(
     adapter,
-    fakeConfig(opts.writesEnabled ?? true),
+    config,
     fakeCache(opts.snapshot === undefined ? snap('live') : opts.snapshot),
     fakeResolver(opts.write === undefined ? WRITE : opts.write),
     fakeRepo(),
@@ -182,6 +200,25 @@ test('write-service: OPCUA_WRITES_ENABLED=false → rechazado, sin escribir', as
   assert.equal(adapter.writes.length, 0);
 });
 
+test('write-service: approved authenticated network permits mapped command, read-back and audit', async () => {
+  const { service, adapter, audit } = build({ secure: false, bridge: 'Connected', trustedNetwork: true });
+  const r = await service.execute('voragine', { command: 'openValve', target: 'valveEV01' }, OPERADOR);
+  assert.equal(r.status, 'confirmed');
+  assert.ok(adapter.writes.length > 0);
+  assert.ok(audit.calls.length > 0);
+  assert.equal(adapter.getWriteSecurity().secure, false);
+});
+
+test('write-service: approved network preserves RBAC, freshness and the master switch', async () => {
+  for (const variant of ['rbac', 'stale', 'disabled'] as const) {
+    const { service, adapter } = build({ secure: false, bridge: 'Connected', trustedNetwork: true,
+      writesEnabled: variant !== 'disabled', snapshot: snap(variant === 'stale' ? 'frozen' : 'live') });
+    const r = await service.execute('voragine', { command: 'openValve', target: 'valveEV01' }, variant === 'rbac' ? CIVIL : OPERADOR);
+    assert.equal(r.status, 'rejected', variant);
+    assert.equal(adapter.writes.length, 0, variant);
+  }
+});
+
 test('write-service: target sin señal writable → TARGET_NOT_WRITABLE', async () => {
   const { service } = build({ secure: true, bridge: 'Connected', write: null });
   const r = await service.execute('voragine', { command: 'openValve', target: 'noExiste' }, OPERADOR);
@@ -195,12 +232,20 @@ test('write-service: comando desconocido → UNKNOWN_COMMAND', async () => {
   assert.equal(r.reason, REJECT.UNKNOWN_COMMAND);
 });
 
-test('write-service: jefe NO puede control_valves → FORBIDDEN, sin escribir', async () => {
+test('write-service: civil no puede control_valves → FORBIDDEN, sin escribir', async () => {
   const { service, adapter } = build({ secure: true, bridge: 'Connected' });
-  const r = await service.execute('voragine', { command: 'openValve', target: 'valveEV01' }, JEFE);
+  const r = await service.execute('voragine', { command: 'openValve', target: 'valveEV01' }, CIVIL);
   assert.equal(r.status, 'rejected');
   assert.equal(r.reason, REJECT.FORBIDDEN);
   assert.equal(adapter.writes.length, 0);
+});
+
+test('write-service: jefe puede ejecutar una maniobra mapeada en la red aprobada', async () => {
+  const { service, adapter, audit } = build({ secure: false, bridge: 'Connected', trustedNetwork: true });
+  const r = await service.execute('voragine', { command: 'openValve', target: 'valveEV01' }, JEFE);
+  assert.equal(r.status, 'confirmed');
+  assert.ok(adapter.writes.length > 0);
+  assert.ok(audit.calls.length > 0);
 });
 
 test('write-service: interlock bridge != Connected → rechazado, sin escribir', async () => {
@@ -296,7 +341,7 @@ test('write-service: un PULSO se limpia incluso cuando el estado CONFIRMA', asyn
     mode: 'bitmask',
     pulse: { holdMs: 5 },
     commands: { openValve: 4096 },
-    readBack: { channel: 'intIn', sourceBuffer: 'INT_IN_TEST', index: 0, confirmsWrittenValue: false, expectedValue: 16385 },
+    readBack: { channel: 'intIn', sourceBuffer: 'INT_IN_TEST', index: 0, confirmsWrittenValue: false, expectedValue: 16385, stateVerified: true },
   };
   // preset: la palabra ya trae 16385 (bit14+bit0 de otro uso) y el estado responde 16385.
   const { service, adapter } = build({ secure: true, bridge: 'Connected', write: spec, preset: 16385 });
@@ -313,6 +358,70 @@ test('write-service: un PULSO no se escribe dos veces cuando el estado NO confir
   const { service, adapter } = build({ secure: true, bridge: 'Connected', write: spec, confirms: false });
   await service.execute('voragine', { command: 'openValve', target: 'valveEV01' }, OPERADOR);
   assert.equal(adapter.writes.length, 2, 'activación + cierre; el rollback NO debe añadir un 3er write espurio');
+});
+
+// ── EXCLUSIÓN ABRIR/CERRAR EN MÁSCARA (Carbonero, integrador 2026-10-05) ────────────────────
+//
+// Abrir = bit0 (1) y cerrar = bit1 (2) de la MISMA palabra, y los dos a 1 a la vez es el estado que
+// el PLC declara ERROR. `bitmask` hacía `actual | valor`: con el bit contrario todavía puesto (un
+// cierre de pulso que falló, una escritura ajena) escribía 3. `preset` es lo que ya trae la palabra.
+
+const WRITE_EXCLUSION: WriteSpec = {
+  ...WRITE,
+  target: { channel: 'intOut', sourceBuffer: 'INT_OUT_TEST', index: 0 },
+  mode: 'bitmask',
+  commands: { open: 1, close: 2 },
+  pulse: { holdMs: 5 },
+  readBack: { channel: 'intIn', sourceBuffer: 'INT_IN_TEST', index: 0, confirmsWrittenValue: false, stateVerified: false },
+};
+
+/** ¿Alguna escritura dejó los dos sentidos puestos a la vez? */
+function dosSentidos(writes: { value: number | boolean }[], abrir: number, cerrar: number): boolean {
+  return writes.some((w) => (Number(w.value) & abrir) !== 0 && (Number(w.value) & cerrar) !== 0);
+}
+
+test('write-service: en máscara, ABRIR apaga el bit de CERRAR en la misma escritura', async () => {
+  const { service, adapter } = build({ secure: true, bridge: 'Connected', write: WRITE_EXCLUSION, preset: 2 });
+  await service.execute('carbonero', { command: 'open', target: 'valve1' }, OPERADOR);
+
+  assert.equal(adapter.writes[0].value, 1, 'con el bit de cerrar puesto, abrir escribe 1 y no 3');
+  assert.equal(dosSentidos(adapter.writes, 1, 2), false, 'jamás los bits 0 y 1 a la vez');
+});
+
+test('write-service: en máscara, CERRAR apaga el bit de ABRIR en la misma escritura', async () => {
+  const { service, adapter } = build({ secure: true, bridge: 'Connected', write: WRITE_EXCLUSION, preset: 1 });
+  await service.execute('carbonero', { command: 'close', target: 'valve1' }, OPERADOR);
+
+  assert.equal(adapter.writes[0].value, 2, 'con el bit de abrir puesto, cerrar escribe 2 y no 3');
+  assert.equal(dosSentidos(adapter.writes, 1, 2), false, 'jamás los bits 0 y 1 a la vez');
+});
+
+test('write-service: la exclusión solo apaga los bits de la válvula; el resto de la palabra se conserva', async () => {
+  // 1024 = bit10 hace aquí de bit AJENO en la palabra de mando: tiene que sobrevivir a la orden y al
+  // cierre del pulso, que es para lo que existe `bitmask`.
+  const { service, adapter } = build({ secure: true, bridge: 'Connected', write: WRITE_EXCLUSION, preset: 1024 | 2 });
+  await service.execute('carbonero', { command: 'open', target: 'valve1' }, OPERADOR);
+
+  assert.deepEqual(adapter.writes.map((w) => w.value), [1024 | 1, 1024], 'activa 1025 y suelta a 1024');
+});
+
+test('write-service: la exclusión sale del mapping, no de bits fijos (La Vorágine, 4096/8192)', async () => {
+  const spec: WriteSpec = { ...WRITE_EXCLUSION, commands: { open: 4096, close: 8192 } };
+  const { service, adapter } = build({ secure: true, bridge: 'Connected', write: spec, preset: 8192 });
+  await service.execute('voragine', { command: 'open', target: 'valve1' }, OPERADOR);
+
+  assert.equal(adapter.writes[0].value, 4096, 'con el bit13 puesto, abrir escribe 4096 y no 12288');
+  assert.equal(dosSentidos(adapter.writes, 4096, 8192), false);
+});
+
+test('write-service: el mando REAL de Carbonero es sostenido en modo absolute', async () => {
+  const real = loadMapping(join(__dirname, '..', 'config', 'opc_mapping.json')).signals.find(
+    (s) => s.plantId === 'carbonero' && s.domainKey === 'valve1',
+  )?.write;
+  assert.ok(real, 'carbonero/valve1 debe tener write spec');
+  assert.equal(real.sustained, true);
+  assert.equal(real.mode, 'absolute');
+  assert.deepEqual(real.commands, { open: 4096, close: 8192 });
 });
 
 test('write-service: camino feliz → confirmado con trazabilidad', async () => {
@@ -484,7 +593,7 @@ function adapterConRealimentacion(opts: { lecturasHastaLlegar: number | null }):
   const key = (t: { plantId: string; channel: string; sourceBuffer: string; index: number }) =>
     `${t.plantId}/${t.channel}/${t.sourceBuffer}[${t.index}]`;
   const adapter = {
-    writes: [] as Array<{ index: number; value: number | boolean }>,
+    writes: [] as { index: number; value: number | boolean }[],
     getWriteSecurity: () => ({ secure: true, securityMode: 'SignAndEncrypt', identity: 'username' }),
     getBridgeStatus: () => 'Connected' as BridgeStatus,
     async writeBufferElement(t: { plantId: string; channel: string; sourceBuffer: string; index: number }, v: number | boolean) {
@@ -540,7 +649,7 @@ test('write-service: la señal se sostiene hasta que la realimentación vale 1, 
 // como "bit0 encendido" se cumpliría desde el primer instante y la señal se cortaría antes de que
 // la válvula se moviera. Por eso se compara el VALOR ENTERO.
 test('write-service: 1025 NO satisface la realimentación aunque tenga el bit0 puesto', async () => {
-  const { service, adapter } = buildSostenido(null); // nunca llega a 1
+  const { service } = buildSostenido(null); // nunca llega a 1
   const t0 = Date.now();
   const r = await service.execute('voragine', { command: 'open', target: 'valve1' }, OPERADOR);
 
@@ -612,6 +721,407 @@ test('write-service: audit log SIEMPRE, incluso en rechazos', async () => {
   assert.equal(audit.calls[0].role, 'operador');
 });
 
+// ── SEÑAL SOSTENIDA (La Vorágine, integrador del PLC 2026-10-16) ──────────────────────────────
+//
+// «Estas señales deben ser sostenidas, es decir que todo el tiempo debe quedar la señal de apertura
+// o la señal de cierre, nunca las dos, siempre una de las dos». Las DOS válvulas en INT_OUT[0]:
+// entrada bit2 (abrir) / bit3 (cerrar), salida bit12 / bit13. Lo que estos tests fijan:
+//  - una orden es UNA escritura, `(actual & ~contrario) | verbo`, y después no se escribe NADA más:
+//    ni limpieza, ni rollback — tampoco cuando el estado no confirma, el eco falla o el server rechaza;
+//  - el par pasa de un verbo al otro sin 0/0 ni 1/1, y la otra válvula de la palabra no se toca;
+//  - dos órdenes a la vez sobre la misma palabra no se pisan;
+//  - sin palabra legible no se escribe (el verbo solo borraría la otra válvula).
+
+/** Una palabra (o varias) de un PLC de mentira, con latencia opcional y modos de fallo. */
+interface AdaptadorPalabra extends ConnectivityAdapter {
+  /** Cada escritura que LLEGÓ, con lo que había antes en ese elemento. */
+  escrituras: { el: string; value: number | boolean; previo: number | boolean }[];
+  /** Escrituras intentadas, hayan llegado o no. */
+  intentos: number;
+  valor(el: string): number | boolean;
+}
+
+function adaptadorPalabra(opts: {
+  inicial?: Record<string, number>;
+  latenciaMs?: number;
+  escrituraFalla?: boolean;
+  /** La lectura previa de la palabra de mando vuelve sin valor (calidad Bad). */
+  lecturaPreviaNula?: boolean;
+  /** La relectura (eco) del elemento recién escrito lanza. */
+  ecoFalla?: boolean;
+  /** Lo que devuelve el canal de ESTADO (INT_IN). 7192 es lo que se leyó en La Vorágine. */
+  estado?: number;
+}): AdaptadorPalabra {
+  const store = new Map<string, number | boolean>(Object.entries(opts.inicial ?? {}));
+  const recienEscrito = new Set<string>();
+  let lecturasDeMando = 0;
+  const clave = (t: { sourceBuffer: string; index: number }) => `${t.sourceBuffer}[${t.index}]`;
+  const esperar = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+  const media = Math.floor((opts.latenciaMs ?? 0) / 2);
+  const adapter = {
+    escrituras: [] as AdaptadorPalabra['escrituras'],
+    intentos: 0,
+    valor: (el: string) => store.get(el) ?? 0,
+    getWriteSecurity: () => ({ secure: true, securityMode: 'SignAndEncrypt', identity: 'username' }),
+    getBridgeStatus: () => 'Connected' as BridgeStatus,
+    async writeBufferElement(t: { sourceBuffer: string; index: number }, v: number | boolean) {
+      adapter.intentos += 1;
+      if (media) await esperar(media);
+      if (opts.escrituraFalla) throw new Error('write OPC UA rechazado (BadUserAccessDenied)');
+      const el = clave(t);
+      // Surte efecto a mitad del viaje, como en el simulador: es lo que abre la ventana de la carrera.
+      adapter.escrituras.push({ el, value: v, previo: store.get(el) ?? 0 });
+      store.set(el, v);
+      recienEscrito.add(el);
+      if (media) await esperar(media);
+    },
+    async readBufferElement(t: { sourceBuffer: string; index: number }) {
+      if (media) await esperar(media);
+      const el = clave(t);
+      if (t.sourceBuffer.startsWith('INT_IN')) {
+        return { value: opts.estado ?? 7192, quality: 'Good' as const, sourceTimestamp: null };
+      }
+      if (opts.ecoFalla && recienEscrito.has(el)) throw new Error('lectura del eco falló');
+      recienEscrito.delete(el);
+      lecturasDeMando += 1;
+      if (opts.lecturaPreviaNula && lecturasDeMando === 1) return { value: null, quality: 'Bad' as const, sourceTimestamp: null };
+      const value = store.get(el) ?? 0;
+      if (media) await esperar(media);
+      return { value, quality: 'Good' as const, sourceTimestamp: null };
+    },
+  };
+  return adapter as unknown as AdaptadorPalabra;
+}
+
+const PALABRA = 'INT_OUT_VORAGINE[0]';
+const SALIDA: WriteSpec = {
+  target: { channel: 'intOut', sourceBuffer: 'INT_OUT_VORAGINE', index: 0 },
+  commands: { open: 4096, close: 8192 },
+  mode: 'bitmask',
+  sustained: true,
+  pulse: null,
+  readBack: { channel: 'intIn', sourceBuffer: 'INT_IN_VORAGINE', index: 0, confirmsWrittenValue: false, expectedValue: 16385, stateVerified: false },
+  timeoutMs: 20,
+  permission: 'control_valves',
+};
+const ENTRADA: WriteSpec = {
+  ...SALIDA,
+  commands: { open: 4, close: 8 },
+  readBack: { channel: 'intIn', sourceBuffer: 'INT_IN_VORAGINE', index: 0, confirmsWrittenValue: false, stateVerified: false },
+};
+const PAR: Record<string, { open: number; close: number }> = { valve1: { open: 4096, close: 8192 }, valve2: { open: 4, close: 8 } };
+const OPERADOR_V: CommandActor = { userId: 'u1', userName: 'Ana Ruiz', userEmail: 'op@ptap.co', role: 'operador', ip: '10.0.0.1' };
+
+/** El par de una válvula en una palabra: 'open' | 'close' | '0/0' | '1/1'. */
+function par(palabra: number | boolean, valvula: 'valve1' | 'valve2'): string {
+  const p = PAR[valvula];
+  const a = (Number(palabra) & p.open) !== 0;
+  const c = (Number(palabra) & p.close) !== 0;
+  return a && c ? '1/1' : a ? 'open' : c ? 'close' : '0/0';
+}
+
+function construirSostenida(adapter: AdaptadorPalabra, specs: Record<string, WriteSpec> = { valve1: SALIDA, valve2: ENTRADA }) {
+  const audit = fakeAudit();
+  const avisos: Record<string, unknown>[] = [];
+  const service = new WriteService(
+    adapter,
+    fakeConfig(true),
+    fakeCache(snap('live')),
+    { resolve: (_p: string, t: string) => (specs[t] ? { domainKey: t, write: specs[t] } : null) } as unknown as CommandMappingResolver,
+    fakeRepo(),
+    audit.service,
+    fakeFirmas(),
+    { create: async (n: Record<string, unknown>) => { avisos.push(n); return true; } } as unknown as NotificationRepository,
+  );
+  return { service, audit, avisos };
+}
+
+const pausa = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+test('sostenida: abrir sale en UNA escritura y se QUEDA puesta — ni limpieza ni rollback (ámbar)', async () => {
+  // Entrada cerrada (8) y salida cerrada (8192): abrir la salida escribe 8 | 4096 y nada más.
+  const adapter = adaptadorPalabra({ inicial: { [PALABRA]: 8 | 8192 } });
+  const { service } = construirSostenida(adapter);
+  const r = await service.execute('voragine', { command: 'open', target: 'valve1' }, OPERADOR_V);
+  await pausa(100); // si quedara un temporizador de limpieza colgando, aquí escribiría
+
+  assert.equal(r.status, 'sent', `${r.status} ${r.reason}`);
+  assert.equal(r.reason, SENT.SENT_STATE_UNVERIFIED);
+  assert.equal(r.writeVerified, true);
+  assert.deepEqual(adapter.escrituras.map((e) => e.value), [8 | 4096], 'una sola escritura: la orden entera');
+  assert.equal(adapter.valor(PALABRA), 8 | 4096, 'la señal se queda puesta');
+  assert.equal(par(adapter.valor(PALABRA), 'valve1'), 'open');
+  assert.equal(par(adapter.valor(PALABRA), 'valve2'), 'close', 'la entrada, intacta');
+});
+
+test('sostenida: con el estado CONFIRMANDO tampoco se suelta (confirmed, una escritura)', async () => {
+  const spec: WriteSpec = {
+    ...SALIDA,
+    readBack: { ...SALIDA.readBack, expectedValue: undefined, expectedByCommand: { open: 16385, close: 16384 }, stateVerified: true },
+  };
+  const adapter = adaptadorPalabra({ inicial: { [PALABRA]: 8192 }, estado: 16385 });
+  const r = await construirSostenida(adapter, { valve1: spec }).service.execute('voragine', { command: 'open', target: 'valve1' }, OPERADOR_V);
+  await pausa(50);
+  assert.equal(r.status, 'confirmed');
+  assert.equal(adapter.escrituras.length, 1);
+  assert.equal(adapter.valor(PALABRA), 4096);
+});
+
+test('sostenida: el estado NO confirma (timeout del read-back) → failed, y la señal SE QUEDA', async () => {
+  // Con un canal de estado verificado que no llega nunca: es el caso en el que el código de siempre
+  // haría rollback. Aquí soltarla dejaría la válvula sin señal; se queda, y lo resuelve una persona.
+  const spec: WriteSpec = { ...SALIDA, readBack: { ...SALIDA.readBack, stateVerified: true } };
+  const adapter = adaptadorPalabra({ inicial: { [PALABRA]: 4 | 8192 }, estado: 7192 });
+  const r = await construirSostenida(adapter, { valve1: spec }).service.execute('voragine', { command: 'open', target: 'valve1' }, OPERADOR_V);
+  await pausa(50);
+  assert.equal(r.status, 'failed');
+  assert.equal(r.reason, FAIL.READBACK_UNCONFIRMED);
+  assert.equal(adapter.intentos, 1, 'ni un intento de escritura más: sin rollback');
+  assert.equal(adapter.valor(PALABRA), 4 | 4096);
+});
+
+test('sostenida: sin eco (la relectura falla) → failed, y NO se deshace', async () => {
+  const adapter = adaptadorPalabra({ inicial: { [PALABRA]: 4096 | 4 }, ecoFalla: true });
+  const r = await construirSostenida(adapter).service.execute('voragine', { command: 'close', target: 'valve1' }, OPERADOR_V);
+  await pausa(50);
+  assert.equal(r.status, 'failed');
+  assert.equal(r.writeVerified, null);
+  assert.equal(adapter.intentos, 1);
+  assert.equal(adapter.valor(PALABRA), 8192 | 4);
+});
+
+test('sostenida: escritura RECHAZADA por el servidor → WRITE_REJECTED, sin reintento y sin «deshacer»', async () => {
+  const adapter = adaptadorPalabra({ inicial: { [PALABRA]: 8192 | 8 }, escrituraFalla: true });
+  const r = await construirSostenida(adapter).service.execute('voragine', { command: 'open', target: 'valve1' }, OPERADOR_V);
+  await pausa(50);
+  assert.equal(r.status, 'failed');
+  assert.equal(r.reason, FAIL.WRITE_REJECTED);
+  assert.equal(adapter.intentos, 1, 'un intento, el rechazado; nada después');
+  assert.equal(adapter.valor(PALABRA), 8192 | 8, 'la palabra sigue como estaba');
+});
+
+test('sostenida: sin palabra legible NO se escribe nada (el verbo a secas borraría la otra válvula)', async () => {
+  // `applyValue` cae a escribir el valor en absoluto si lo leído no es un número: 4096 a secas dejaría
+  // la ENTRADA en 0/0. En una orden sostenida eso no puede pasar: se aborta antes de escribir.
+  const adapter = adaptadorPalabra({ inicial: { [PALABRA]: 8192 | 4 }, lecturaPreviaNula: true });
+  const r = await construirSostenida(adapter).service.execute('voragine', { command: 'open', target: 'valve1' }, OPERADOR_V);
+  assert.equal(r.status, 'failed');
+  assert.equal(r.reason, FAIL.WRITE_REJECTED, 'no salió nada, y eso es lo que se dice');
+  assert.equal(adapter.intentos, 0);
+  assert.equal(adapter.valor(PALABRA), 8192 | 4);
+});
+
+test('sostenida: abrir↔cerrar en UNA escritura, sin 0/0 ni 1/1 y sin tocar la otra válvula — desde los 16 estados de partida', async () => {
+  // Los 16 estados posibles de los bits {2,3,12,13}, más un bit AJENO (1024) que tiene que sobrevivir.
+  // Incluye los de partida «prohibidos» (0/0 y 1/1): la orden tiene que sacar al par de ahí, no
+  // perpetuarlo.
+  const bits = [4, 8, 4096, 8192];
+  for (let combinacion = 0; combinacion < 16; combinacion++) {
+    const inicial = 1024 | bits.reduce((acc, b, i) => ((combinacion >> i) & 1 ? acc | b : acc), 0);
+    for (const valvula of ['valve1', 'valve2'] as const) {
+      for (const verbo of ['open', 'close'] as const) {
+        const adapter = adaptadorPalabra({ inicial: { [PALABRA]: inicial } });
+        const r = await construirSostenida(adapter).service.execute('voragine', { command: verbo, target: valvula }, OPERADOR_V);
+        const caso = `${valvula} ${verbo} desde ${inicial}`;
+        const otra = valvula === 'valve1' ? 'valve2' : 'valve1';
+        const p = PAR[valvula];
+        assert.notEqual(r.status, 'rejected', `${caso}: ${r.reason}`);
+        assert.equal(adapter.escrituras.length, 1, `${caso}: una sola escritura`);
+        const escrito = Number(adapter.escrituras[0].value);
+        const contrario = verbo === 'open' ? p.close : p.open;
+        assert.equal(escrito, (inicial & ~contrario) | p[verbo], `${caso}: (actual & ~contrario) | verbo`);
+        assert.equal(par(escrito, valvula), verbo, `${caso}: el par queda en el verbo pedido, ni 0/0 ni 1/1`);
+        assert.equal(par(escrito, otra), par(inicial, otra), `${caso}: la otra válvula no se toca`);
+        assert.equal(escrito & ~(p.open | p.close), inicial & ~(p.open | p.close), `${caso}: ningún bit fuera del par cambia`);
+      }
+    }
+  }
+});
+
+test('sostenida: ENTRADA y SALIDA a la vez sobre la misma palabra no se pisan', async () => {
+  // Dos operarios, o uno que confirma las dos seguidas. Con 40 ms por petición, sin el turno por palabra
+  // una leería antes de que la otra escribiera y borraría su par. Se cruzan órdenes en los dos sentidos.
+  const adapter = adaptadorPalabra({ inicial: { [PALABRA]: 8 | 8192 }, latenciaMs: 40 });
+  const { service } = construirSostenida(adapter);
+
+  const [a, b] = await Promise.all([
+    service.execute('voragine', { command: 'open', target: 'valve1' }, OPERADOR_V),
+    service.execute('voragine', { command: 'open', target: 'valve2' }, OPERADOR_V),
+  ]);
+  assert.equal(adapter.valor(PALABRA), 4096 | 4, 'las dos abiertas');
+  const [c, d] = await Promise.all([
+    service.execute('voragine', { command: 'close', target: 'valve2' }, OPERADOR_V),
+    service.execute('voragine', { command: 'close', target: 'valve1' }, OPERADOR_V),
+  ]);
+  assert.equal(adapter.valor(PALABRA), 8192 | 8, 'las dos cerradas');
+
+  for (const r of [a, b, c, d]) {
+    assert.equal(r.status, 'sent', `${r.target} ${r.command}: ${r.reason}`);
+    assert.equal(r.writeVerified, true, `${r.target} ${r.command}: el eco ve SU escritura, no la de la otra`);
+  }
+  assert.equal(adapter.escrituras.length, 4, 'una escritura por orden');
+  for (const e of adapter.escrituras) {
+    const cambio = Number(e.value) ^ Number(e.previo);
+    const deUna = (cambio & ~(4 | 8)) === 0 || (cambio & ~(4096 | 8192)) === 0;
+    assert.ok(deUna, `cada escritura toca el par de UNA válvula: ${String(e.previo)} → ${String(e.value)}`);
+    for (const v of ['valve1', 'valve2'] as const) {
+      assert.notEqual(par(e.value, v), '1/1', `${v}: jamás abrir y cerrar a la vez`);
+      assert.notEqual(par(e.value, v), '0/0', `${v}: jamás sin señal (partían las dos con señal)`);
+    }
+  }
+});
+
+test('sostenida: un spec sostenido contradictorio se rechaza en el WriteService SIN escribir', async () => {
+  // El loader no arranca con estos specs; esta guarda es la segunda línea, igual que la de las
+  // órdenes compuestas.
+  const casos: [string, WriteSpec, RegExp][] = [
+    ['con pulso', { ...SALIDA, pulse: { holdMs: 5 } }, /pulse/],
+    ['con rollbackValue', { ...SALIDA, rollbackValue: 0 }, /rollbackValue/],
+    ['modo desconocido', { ...SALIDA, mode: 'invalido' as any }, /mode/],
+    ['verbos que comparten bits', { ...SALIDA, commands: { open: 4096, close: 4096 | 8192 } }, /comparte bits/],
+  ];
+  for (const [nombre, spec, motivo] of casos) {
+    const adapter = adaptadorPalabra({ inicial: { [PALABRA]: 8192 } });
+    const r = await construirSostenida(adapter, { valve1: spec }).service.execute('voragine', { command: 'open', target: 'valve1' }, OPERADOR_V);
+    assert.equal(r.status, 'rejected', nombre);
+    assert.ok(r.reason?.startsWith(REJECT.INTERLOCK_FAILED), `${nombre}: ${r.reason}`);
+    assert.match(String(r.reason), motivo, nombre);
+    assert.equal(adapter.intentos, 0, `${nombre}: nada escrito`);
+  }
+});
+
+test('sostenida: la respuesta vuelve RÁPIDO — no hay sostenido de 45 s que esperar', async () => {
+  // El timeout de producción (5 s); con el estado sin verificar el read-back mira 600 ms y resuelve.
+  const adapter = adaptadorPalabra({ inicial: { [PALABRA]: 8192 } });
+  const t0 = Date.now();
+  const r = await construirSostenida(adapter, { valve1: { ...SALIDA, timeoutMs: 5000 } }).service.execute(
+    'voragine',
+    { command: 'open', target: 'valve1' },
+    OPERADOR_V,
+  );
+  const ms = Date.now() - t0;
+  assert.equal(r.status, 'sent');
+  assert.ok(ms < 1500, `debía volver en menos de 1,5 s y tardó ${ms} ms`);
+});
+
+test('sostenida: firma, auditoría y aviso de maniobra, igual que cualquier orden', async () => {
+  const adapter = adaptadorPalabra({ inicial: { [PALABRA]: 8192 | 8 } });
+  const { service, audit, avisos } = construirSostenida(adapter);
+  const r = await service.execute('voragine', { command: 'open', target: 'valve2' }, OPERADOR_V);
+
+  assert.equal(r.status, 'sent');
+  assert.equal(audit.calls.length, 1, 'auditada');
+  const d = audit.calls[0].detail as Record<string, unknown>;
+  assert.equal(audit.calls[0].eventType, 'command.execute');
+  assert.equal(audit.calls[0].statusCode, 202);
+  assert.equal(d.firma, 'firma-de-prueba', 'firmada');
+  assert.deepEqual(d.steps, [{ index: 0, value: 8192 | 4 }], 'lo que de verdad salió por el cable');
+  assert.equal(d.writeVerified, true);
+  assert.equal(avisos.length, 1, 'publicada en la bandeja');
+  assert.equal(avisos[0].kind, 'valve_command');
+  assert.equal(avisos[0].subject, 'valve2');
+  assert.equal(avisos[0].plantId, 'voragine');
+  assert.match(String(avisos[0].eventId), /firma-de-prueba/);
+});
+
+test('sostenida: el mapping REAL de La Vorágine escribe palabras exactas y la realimentación verificada ausente no confirma movimiento', async () => {
+  // Desde 0: así quedó INT_OUT[0] con los pulsos (las dos válvulas 0/0). La primera orden de cada
+  // válvula fija su señal, y a partir de ahí cada orden mueve SOLO su par.
+  const real = loadMapping(join(__dirname, '..', 'config', 'opc_mapping.json')).signals.filter(
+    (s) => s.plantId === 'voragine' && s.write?.sustained,
+  );
+  const specs = Object.fromEntries(real.map((s) => [s.domainKey, { ...s.write!, timeoutMs: 20 }]));
+  assert.deepEqual(Object.keys(specs).sort(), ['valve1', 'valve2']);
+
+  const adapter = adaptadorPalabra({ inicial: { [PALABRA]: 0 }, estado: 0 });
+  const { service } = construirSostenida(adapter, specs);
+  const pasos: [string, string, number][] = [
+    ['valve2', 'open', 4], // entrada abre
+    ['valve1', 'open', 4096], // salida abre: sobreescritura directa
+    ['valve1', 'close', 8192], // salida cierra: sobreescritura directa
+    ['valve2', 'close', 8], // entrada cierra: sobreescritura directa
+    ['valve2', 'open', 4], // y vuelve a abrir: sobreescritura directa
+  ];
+  for (const [target, command, esperado] of pasos) {
+    const r = await service.execute('voragine', { command, target }, OPERADOR_V);
+    assert.equal(r.status, 'sent', `${target} ${command}: el eco de mando no demuestra movimiento`);
+    assert.equal(r.reason, SENT.SENT_FEEDBACK_PENDING);
+    assert.equal(r.writeVerified, true);
+    assert.equal(adapter.valor(PALABRA), esperado, `${target} ${command}`);
+  }
+  assert.deepEqual(adapter.escrituras.map((e) => e.value), pasos.map(([, , v]) => v), 'una escritura por orden, y ninguna de limpieza');
+});
+
+// ── El push no frena una orden de válvula ──
+//
+// La maniobra deja su aviso en la bandeja y `WriteService` ESPERA a `create()` antes de contestar al
+// mando. Desde que existe el push, ese aviso además se empuja por FCM: si el envío corriera dentro de
+// `create()`, un Google lento retrasaría la respuesta de una orden de válvula. Aquí la bandeja y el
+// PushDispatcher son los REALES, y lo único falso es un FCM que tarda 5 s en contestar.
+
+test('sostenida + push LENTO: la orden responde igual de rápido, y el aviso sale por push después', async () => {
+  const inserts: unknown[][] = [];
+  const pool = {
+    query: async (_sql: string, params: unknown[]) => {
+      inserts.push(params);
+      return [{ insertId: inserts.length, affectedRows: 1 }, undefined];
+    },
+  } as unknown as Pool;
+  const avisos = new NotificationRepository(pool);
+
+  const envios: TokenMessage[] = [];
+  const fcmLento = {
+    project: 'p',
+    send: (m: TokenMessage) => {
+      envios.push(m);
+      return new Promise<void>((resolve) => setTimeout(resolve, 5_000).unref());
+    },
+  };
+  const push = new PushDispatcher(
+    {
+      destinatarios: async (plantId: string) => plantId === 'voragine' ? [{ userId: 'u-jefe', tokens: ['tok-jefe'] }] : [],
+      puedeRecibir: async (token: string, userId: string, plantIds: readonly string[]) =>
+        token === 'tok-jefe' && userId === 'u-jefe' && plantIds.length === 1 && plantIds[0] === 'voragine',
+    } as unknown as DevicePushTokenRepository,
+    { get: async () => NOTIFICATION_PREFS_DEFAULT } as unknown as NotificationPrefsRepository,
+    avisos,
+    { sender: fcmLento, windowMs: 0 },
+  );
+  await push.onModuleInit();
+  try {
+    const adapter = adaptadorPalabra({ inicial: { [PALABRA]: 8192 } });
+    const service = new WriteService(
+      adapter,
+      fakeConfig(true),
+      fakeCache(snap('live')),
+      { resolve: (_p: string, t: string) => (t === 'valve1' ? { domainKey: t, write: { ...SALIDA, timeoutMs: 5000 } } : null) } as unknown as CommandMappingResolver,
+      fakeRepo(),
+      fakeAudit().service,
+      fakeFirmas(),
+      avisos,
+    );
+
+    const t0 = Date.now();
+    const r = await service.execute('voragine', { command: 'open', target: 'valve1' }, OPERADOR_V);
+    const ms = Date.now() - t0;
+
+    assert.equal(r.status, 'sent', `${r.status} ${r.reason}`);
+    assert.equal(inserts.length, 1, 'la maniobra quedó en la bandeja');
+    // Mismo umbral que la orden sin push (arriba): si la respuesta esperara al envío, tardaría ≥ 5 s.
+    assert.ok(ms < 1500, `debía volver en menos de 1,5 s y tardó ${ms} ms`);
+
+    // Y el push no se perdió por desacoplarlo: sale, con la etiqueta del aviso recién guardado.
+    const fin = Date.now() + 1000;
+    while (envios.length === 0 && Date.now() < fin) await pausa(5);
+    assert.equal(envios.length, 1, 'el aviso de la maniobra se empuja igual');
+    assert.equal(envios[0].token, 'tok-jefe');
+    assert.equal(envios[0].android?.notification?.tag, 'n-1');
+    assert.equal(envios[0].data?.kind, 'valve_command');
+  } finally {
+    push.onModuleDestroy();
+  }
+});
+
 // ── Cobertura del SimulatorBridgeAdapter real (regla 5: probar contra el simulador) ──
 
 function simConfig(secure: boolean): OpcUaConfig {
@@ -646,4 +1156,148 @@ test('simulator: write + read-back hacen echo; setWriteConfirms(false) fuerza mi
   assert.equal((await sim.readBufferElement(target)).value, 1);
   sim.setWriteConfirms(false);
   assert.notEqual((await sim.readBufferElement(target)).value, 1);
+});
+
+function confirmedVoragineSpecs(): Record<string, WriteSpec> {
+  return Object.fromEntries(loadMapping(join(__dirname, '..', 'config', 'opc_mapping.json')).signals
+    .filter((s) => s.plantId === 'voragine' && s.write)
+    .map((s) => [s.domainKey, { ...s.write!, timeoutMs: 20 }]));
+}
+function feedbackAdapter(word: number | boolean | null, quality = 'Good') {
+  const adapter = adaptadorPalabra({ inicial: { [PALABRA]: 4096 } });
+  const originalRead = adapter.readBufferElement.bind(adapter);
+  const feedbackReads: string[] = [];
+  adapter.readBufferElement = async (target) => {
+    if (target.channel === 'intIn') {
+      feedbackReads.push(`${target.sourceBuffer}[${target.index}]`);
+      return { value: word, quality: quality as 'Good', sourceTimestamp: '2026-10-30T00:00:00.000Z' };
+    }
+    return originalRead(target);
+  };
+  return { adapter, feedbackReads };
+}
+test('confirmed feedback: 0x4001 blocks both outlet directions before reservation/output IO and audits rejection', async () => {
+  for (const command of ['open', 'close']) {
+    const { adapter, feedbackReads } = feedbackAdapter(0x4001);
+    const audit = fakeAudit();
+    let reservations = 0;
+    const repo = fakeRepo();
+    repo.reserve = async () => { reservations++; throw new Error('must never reserve'); };
+    const specs = confirmedVoragineSpecs();
+    const service = new WriteService(adapter, fakeConfig(true), fakeCache(snap('live')),
+      fakeResolver(specs.valve1), repo, audit.service, fakeFirmas(), fakeAvisos());
+    const result = await service.execute('voragine', { command, target: 'valve1' }, OPERADOR_V);
+    assert.equal(result.status, 'rejected');
+    assert.equal(result.reason, 'INTERLOCK_FAILED: VALVE_FAULT');
+    assert.equal(result.writeVerified, null);
+    assert.equal(result.writtenValue, null);
+    assert.equal(reservations, 0);
+    assert.equal(adapter.intentos, 0);
+    assert.equal(adapter.valor(PALABRA), 4096);
+    assert.deepEqual(feedbackReads, ['INT_IN_VORAGINE[1]']);
+    assert.equal(audit.calls.length, 1);
+    assert.equal(audit.calls[0].detail?.reason, 'INTERLOCK_FAILED: VALVE_FAULT');
+  }
+});
+test('confirmed feedback: inlet ignores outlet fault bit14 and confirms its own open bit0', async () => {
+  const { adapter } = feedbackAdapter(0x4001);
+  const result = await construirSostenida(adapter, confirmedVoragineSpecs()).service.execute(
+    'voragine', { command: 'open', target: 'valve2' }, OPERADOR_V);
+  assert.equal(result.status, 'confirmed');
+  assert.equal(result.confirmedValue, 0x4001);
+  assert.deepEqual(adapter.escrituras.map((w) => w.value), [4]);
+});
+test('confirmed feedback: outlet confirms masked open1025 with a stable source timestamp, and closed2049', async () => {
+  for (const [word, command, value] of [[1025, 'open', 4096], [2049, 'close', 8192]] as const) {
+    const { adapter, feedbackReads } = feedbackAdapter(word);
+    const result = await construirSostenida(adapter, confirmedVoragineSpecs()).service.execute(
+      'voragine', { command, target: 'valve1' }, OPERADOR_V);
+    assert.equal(result.status, 'confirmed');
+    assert.equal(result.confirmedValue, word);
+    assert.deepEqual(adapter.escrituras.map((w) => w.value), [value]);
+    assert.deepEqual(feedbackReads, ['INT_IN_VORAGINE[1]', 'INT_IN_VORAGINE[1]']);
+  }
+});
+test('confirmed feedback: bad/uncertain quality, invalid word and read failure deny all writes', async () => {
+  const cases: [number | boolean | null, string][] = [
+    [1024, 'Bad'], [1024, 'Uncertain'], [1024.5, 'Good'], [null, 'Good'],
+    [true, 'Good'], [65536, 'Good'], [-32769, 'Good'], [NaN, 'Good'],
+  ];
+  for (const [word, quality] of cases) {
+    const { adapter } = feedbackAdapter(word, quality);
+    const result = await construirSostenida(adapter, confirmedVoragineSpecs()).service.execute(
+      'voragine', { command: 'open', target: 'valve1' }, OPERADOR_V);
+    assert.equal(result.reason, 'INTERLOCK_FAILED: VALVE_FEEDBACK_UNAVAILABLE');
+    assert.equal(result.status, 'rejected');
+    assert.equal(adapter.intentos, 0);
+  }
+  const { adapter } = feedbackAdapter(0);
+  adapter.readBufferElement = async () => { throw new Error('feedback unavailable'); };
+  const result = await construirSostenida(adapter, confirmedVoragineSpecs()).service.execute(
+    'voragine', { command: 'close', target: 'valve1' }, OPERADOR_V);
+  assert.equal(result.reason, 'INTERLOCK_FAILED: VALVE_FEEDBACK_UNAVAILABLE');
+  assert.equal(adapter.intentos, 0);
+});
+test('confirmed feedback: post-write fault beats matching open feedback and leaves sustained output set', async () => {
+  const { adapter } = feedbackAdapter(0);
+  const originalRead = adapter.readBufferElement.bind(adapter);
+  adapter.readBufferElement = async (target) => target.channel === 'intIn' && adapter.intentos > 0
+    ? { value: 0x4401, quality: 'Good', sourceTimestamp: null }
+    : originalRead(target);
+  const result = await construirSostenida(adapter, confirmedVoragineSpecs()).service.execute(
+    'voragine', { command: 'open', target: 'valve1' }, OPERADOR_V);
+  assert.equal(result.status, 'failed');
+  assert.equal(result.reason, FAIL.VALVE_FAULT);
+  assert.equal(result.confirmedValue, 0x4401);
+  assert.equal(adapter.valor(PALABRA), 4096);
+  assert.deepEqual(adapter.escrituras.map((w) => w.value), [4096]);
+});
+test('confirmed feedback: simultaneous own endpoints reject both directions before reservation or physical write', async () => {
+  for (const command of ['open', 'close']) {
+    const { adapter, feedbackReads } = feedbackAdapter(3073); // outlet open+closed, unrelated inlet open
+    const audit = fakeAudit();
+    let reservations = 0;
+    const repo = fakeRepo();
+    repo.reserve = async () => { reservations++; throw new Error('must never reserve'); };
+    const service = new WriteService(adapter, fakeConfig(true), fakeCache(snap('live')),
+      fakeResolver(confirmedVoragineSpecs().valve1), repo, audit.service, fakeFirmas(), fakeAvisos());
+    const result = await service.execute('voragine', { command, target: 'valve1' }, OPERADOR_V);
+    assert.equal(result.status, 'rejected');
+    assert.equal(result.reason, 'INTERLOCK_FAILED: VALVE_FEEDBACK_CONFLICT');
+    assert.equal(result.writtenValue, null);
+    assert.equal(result.writeVerified, null);
+    assert.equal(reservations, 0);
+    assert.equal(adapter.intentos, 0);
+    assert.equal(adapter.valor(PALABRA), 4096, 'existing sustained output remains untouched');
+    assert.deepEqual(feedbackReads, ['INT_IN_VORAGINE[1]']);
+    assert.equal(audit.calls.length, 1);
+    assert.equal(audit.calls[0].detail?.reason, 'INTERLOCK_FAILED: VALVE_FEEDBACK_CONFLICT');
+  }
+});
+
+test('confirmed feedback: verified sustained output acknowledges pending physical position within 600ms observation', async () => {
+  const { adapter } = feedbackAdapter(2); // inlet closed; outlet between endpoints
+  const specs = confirmedVoragineSpecs();
+  specs.valve1.timeoutMs = 5000;
+  const started = Date.now();
+  const result = await construirSostenida(adapter, specs).service.execute(
+    'voragine', { command: 'open', target: 'valve1' }, OPERADOR_V);
+  assert.equal(result.status, 'sent');
+  assert.equal(result.reason, SENT.SENT_FEEDBACK_PENDING);
+  assert.equal(httpStatusForCommand(result), 202);
+  assert.equal(result.writeVerified, true);
+  assert.equal(result.confirmedValue, 2);
+  assert.ok(Date.now() - started < 2000, 'does not wait the 5s physical feedback timeout');
+  assert.equal(adapter.valor(PALABRA), 4096);
+  assert.deepEqual(adapter.escrituras.map((w) => w.value), [4096]);
+});
+
+test('confirmed feedback: sustained command without verified echo cannot acknowledge pending physical feedback', async () => {
+  const adapter = adaptadorPalabra({ estado: 0, ecoFalla: true });
+  const result = await construirSostenida(adapter, confirmedVoragineSpecs()).service.execute(
+    'voragine', { command: 'open', target: 'valve1' }, OPERADOR_V);
+  assert.equal(result.status, 'failed');
+  assert.equal(result.reason, FAIL.READBACK_UNCONFIRMED);
+  assert.equal(result.writeVerified, null);
+  assert.deepEqual(adapter.escrituras.map((w) => w.value), [4096]);
 });

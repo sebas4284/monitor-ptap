@@ -1,7 +1,7 @@
 import Constants from 'expo-constants';
-import type { AuthUser, PlantSnapshotDto, PlantBasicStatusDto, PlantListItem } from '@ptap/shared';
+import type { AuthUser, PlantSnapshotDto, PlantBasicStatusDto, PlantListItem, ValveCommandResult, RouteHistorySummary } from '@ptap/shared';
 
-export type { AuthUser };
+export type { AuthUser, ValveCommandResult, RouteHistorySummary };
 
 /**
  * Cliente REST REAL del backend Monitor PTAP. CERO mocks: los datos salen del pipeline
@@ -13,20 +13,33 @@ export type { AuthUser };
  * En un dispositivo físico debe ser la IP LAN del backend, no localhost.
  */
 export const API_BASE_URL: string =
-  (Constants.expoConfig?.extra as { apiBaseUrl?: string } | undefined)?.apiBaseUrl ?? 'http://localhost:4000';
+  (Constants.expoConfig?.extra as { apiBaseUrl?: string } | undefined)?.apiBaseUrl ??
+  'http://localhost:4000';
 
 // ── Sesión: el JWT viaja en cada petición (el backend completo exige Authorization) ──
 
 let authToken: string | null = null;
+let authGeneration = 0;
 let onUnauthorized: (() => void) | null = null;
+
+/** Invalidate outgoing requests before an asynchronous login/logout transition completes. */
+export function invalidateAuthRequests(): void {
+  authGeneration++;
+}
 
 /** Lo llama AuthContext al restaurar/iniciar/cerrar sesión. null = sin sesión. */
 export function setAuthToken(token: string | null): void {
+  authGeneration++;
   authToken = token;
 }
 
 export function getAuthToken(): string | null {
   return authToken;
+}
+
+/** Fence asynchronous device registration against login/logout transitions. */
+export function getAuthGeneration(): number {
+  return authGeneration;
 }
 
 /**
@@ -69,19 +82,28 @@ async function errorMessage(res: Response, path: string): Promise<string> {
   return `${path} → ${res.status}`;
 }
 
-async function request<T>(method: 'GET' | 'POST' | 'PATCH' | 'PUT', path: string, body?: unknown): Promise<T> {
+async function request<T>(
+  method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE',
+  path: string,
+  body?: unknown,
+  deviceSession?: { token: string; signal?: AbortSignal },
+): Promise<T> {
+  const requestGeneration = authGeneration;
   const headers: Record<string, string> = {};
-  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+  const bearer = deviceSession?.token ?? authToken;
+  if (bearer) headers.Authorization = `Bearer ${bearer}`;
   if (body !== undefined) headers['Content-Type'] = 'application/json';
 
   const res = await fetch(`${API_BASE_URL}${path}`, {
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
+    ...(deviceSession?.signal ? { signal: deviceSession.signal } : {}),
   });
 
   if (res.status === 401) {
-    onUnauthorized?.(); // sesión vencida/inválida → que AuthContext la limpie
+    // A delayed response from an outgoing identity must not revoke the current session.
+    if (!deviceSession && requestGeneration === authGeneration) onUnauthorized?.();
     throw new Error('Tu sesión expiró. Vuelve a iniciar sesión.');
   }
   if (!res.ok) throw new Error(await errorMessage(res, path));
@@ -96,12 +118,91 @@ export async function postJson<T>(path: string, body: unknown): Promise<T> {
   return request<T>('POST', path, body);
 }
 
+/** Device cleanup keeps its outgoing session even after another login; its 401 cannot log out the new user. */
+export async function postJsonWithToken<T>(path: string, body: unknown, token: string, signal?: AbortSignal): Promise<T> {
+  return request<T>('POST', path, body, { token, signal });
+}
+
 export async function patchJson<T>(path: string, body: unknown): Promise<T> {
   return request<T>('PATCH', path, body);
 }
 
 export async function putJson<T>(path: string, body: unknown): Promise<T> {
   return request<T>('PUT', path, body);
+}
+
+/** DELETE sin cuerpo. Lo usa la reversión de una corrección del mapeo, que no borra nada en la
+ *  base: el servidor inserta la reversión y devuelve la señal como queda. */
+export async function deleteJson<T>(path: string): Promise<T> {
+  return request<T>('DELETE', path);
+}
+
+// ── Comandos de válvula (canal oficial, Fase 5) ───────────────────────────────────────────────
+
+/** Resultado de POST /api/plants/:plantId/commands, tal como lo devuelve el WriteService. */
+
+/**
+ * Envía un comando de válvula. A diferencia del resto del cliente, NO lanza en 4xx/5xx: un
+ * `502 failed` trae información imprescindible (se escribió el bit pero el equipo no confirmó),
+ * y perderla convertiría un diagnóstico útil en un error genérico.
+ */
+export async function sendValveCommand(
+  plantId: string,
+  command: 'open' | 'close',
+  target: string,
+): Promise<ValveCommandResult> {
+  const requestGeneration = authGeneration;
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/plants/${plantId}/commands`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ command, target }),
+    });
+    if (res.status === 401) {
+      if (requestGeneration === authGeneration) onUnauthorized?.();
+      return {
+        http: 401,
+        status: 'error',
+        reason: 'SESSION_EXPIRED',
+        previousValue: null,
+        writtenValue: null,
+        confirmedValue: null,
+        writeEcho: null,
+        writeVerified: null,
+      };
+    }
+    const raw: unknown = await res.json().catch(() => ({}));
+    const body = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+    // Nest envuelve los errores HTTP: el cuerpo útil puede venir en `message`.
+    const inner = (
+      body.status ? body : ((body.message as Record<string, unknown>) ?? body)
+    ) as Record<string, unknown>;
+    return {
+      http: res.status,
+      status: (inner.status as ValveCommandResult['status']) ?? 'error',
+      reason: (inner.reason as string) ?? null,
+      previousValue: (inner.previousValue as number | boolean | null) ?? null,
+      writtenValue: (inner.writtenValue as number | boolean | null) ?? null,
+      confirmedValue: (inner.confirmedValue as number | boolean | null) ?? null,
+      writeEcho: (inner.writeEcho as number | boolean | null) ?? null,
+      writeVerified: (inner.writeVerified as boolean | null) ?? null,
+      idempotent: Boolean(inner.idempotent),
+    };
+  } catch {
+    // Fallo de red: no se sabe si la orden salió. Nunca reportar éxito.
+    return {
+      http: 0,
+      status: 'error',
+      reason: 'NETWORK',
+      previousValue: null,
+      writtenValue: null,
+      confirmedValue: null,
+      writeEcho: null,
+      writeVerified: null,
+    };
+  }
 }
 
 /** Lista de plantas con su liveness (GET /api/plants). */
@@ -143,7 +244,9 @@ export async function fetchConnectionEvents(): Promise<ConnectionEvent[]> {
 
 /** Una sonda del backend: internet del servidor, ping ICMP al host, o TCP al puerto OPC. */
 export interface RouteProbe {
-  name: 'internet' | 'ping' | 'plc';
+  /** `control` = otro puerto del MISMO host del PLC; distingue "no hay ruta" de "ese puerto está
+   *  bloqueado". Si contesta (aunque sea "cerrado"), la ruta está bien. */
+  name: 'internet' | 'ping' | 'plc' | 'control';
   target: string; // host[:puerto]
   outcome: 'ok' | 'timeout' | 'refused' | 'error';
   ms: number;
@@ -162,7 +265,11 @@ export interface RouteCheckReport {
   /** IP pública del servidor — con ella un técnico identifica al proveedor (whois). */
   serverPublicIp: string | null;
   probes: RouteProbe[];
-  verdict: { code: string; where: 'servidor' | 'ruta-o-planta' | 'plc-servicio' | 'ninguno'; message: string };
+  verdict: {
+    code: string;
+    where: 'servidor' | 'ruta-o-planta' | 'plc-servicio' | 'ninguno';
+    message: string;
+  };
   bridge: { status: string; reconnectCount: number; lastNotificationAt: string | null };
 }
 
@@ -173,17 +280,6 @@ export async function runRouteCheck(): Promise<RouteCheckReport> {
 
 // ── Registro continuo 24 h (GET /api/diagnostics/route-history, solo admin) ─────
 
-export interface RouteHistorySummary {
-  windowHours: number;
-  samples: number;
-  plcOk: number;
-  /** % de muestras en las que el puerto del PLC aceptó conexión. */
-  uptimePct: number;
-  oldestAt: string | null;
-  newestAt: string | null;
-  /** Inicio del corte VIGENTE (null si la última muestra fue OK). */
-  downSince: string | null;
-}
 
 /** Una muestra del sampler (detalle compacto persistido en audit_log). */
 export interface RouteHistorySample {
@@ -209,4 +305,45 @@ export interface RouteHistoryResponse {
  *  manuales del botón. Requiere `system_config`. */
 export async function fetchRouteHistory(): Promise<RouteHistoryResponse> {
   return getJson<RouteHistoryResponse>('/api/diagnostics/route-history');
+}
+
+export interface PlantReport {
+  plantId: string;
+  displayName: string;
+  at: string;
+  network: { scope: 'global'; latest: RouteHistorySample | null; history: RouteHistorySample[] };
+  bridge: {
+    scope: 'global'; status: import('@ptap/shared').BridgeStatus; at: string | null;
+    diagnostics: { reconnectCount: number };
+    history: ConnectionEvent[];
+  };
+  plant: { plantId: string; lastFrameAt: string | null; buffersTotal: number; buffersFaulted: number } | null;
+  buffers: { plantId: string; browseName: string; channel: string; resolved: boolean; faulted: boolean; reason: string | null; sourceTimestamp: string | null }[];
+  liveness: import('@ptap/shared').LivenessDto | null;
+  signals: (import('@ptap/shared').SignalDto & { domainKey: string })[];
+  anomalies: { at: string; type: string; plantId: string; domainKey: string; detail: string }[];
+  freshness: { browseName: string; channel: string; sourceTimestamp: string | null; statusCode: string; ageMs: number | null; veredicto: 'fresco' | 'congelado' | 'indeterminado' | 'comando' }[] | null;
+  deepProbe: boolean;
+}
+
+/** Consulta de cache: nunca activa la lectura directa del PLC. */
+export async function fetchPlantReport(plantId: string): Promise<PlantReport> {
+  return getJson<PlantReport>(`/api/diagnostics/plant/${encodeURIComponent(plantId)}`);
+}
+
+/**
+ * ¿Responde el backend? GET /api/health (público, sin JWT). `false` ante error, respuesta no-OK o
+ * si no contesta en `timeoutMs`: el login nunca debe mostrar "en línea" sin haberlo comprobado.
+ */
+export async function checkServerHealth(timeoutMs = 8000): Promise<boolean> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/health`, { signal: ctrl.signal });
+    return res.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
 }

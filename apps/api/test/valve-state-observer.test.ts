@@ -19,6 +19,8 @@ import { AuditLogService, type AuditEntry } from '../src/infrastructure/audit/au
 import { PlantCache } from '../src/infrastructure/connectivity/pipeline/plant-cache';
 import { PlantPipelineService } from '../src/infrastructure/connectivity/pipeline/plant-pipeline.service';
 import { ValveStateObserver, VALVE_STATE_EVENT } from '../src/modules/notifications/valve-state.observer';
+import type { NotificationRepository } from '../src/modules/notifications/notification.repository';
+import type { CommandLogRepository } from '../src/modules/commands/command-log.repository';
 
 function sig(value: number, over: Partial<SignalDto> = {}): SignalDto {
   return {
@@ -59,7 +61,9 @@ function observador(snapshot: PlantSnapshotDto, previos: AuditEntry[] = []) {
   const pipeline = { listPlants: () => [{ plantId: 'sirena', displayName: 'La Sirena' }] } as unknown as PlantPipelineService;
   const cache = { get: () => snapshot } as unknown as PlantCache;
 
-  return { obs: new ValveStateObserver(pipeline, cache, audit), registros };
+  const notifications = { create: async () => 1 } as unknown as NotificationRepository;
+  const commands = { huboOrdenReciente: async () => false } as unknown as CommandLogRepository;
+  return { obs: new ValveStateObserver(pipeline, cache, audit, notifications, commands), registros };
 }
 
 test('observador: un valor NUNCA visto se registra con el caudal de esa válvula', async () => {

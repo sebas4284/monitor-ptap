@@ -12,7 +12,7 @@ import { INestApplication, Module } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import type { Role } from '@ptap/shared';
-import { AuditLogService } from '../src/infrastructure/audit/audit-log.service';
+import { AuditLogService, type AuditEntry } from '../src/infrastructure/audit/audit-log.service';
 import { CONNECTIVITY_ADAPTER, CONNECTIVITY_CONFIG } from '../src/infrastructure/connectivity/connectivity.tokens';
 import { PlantCache } from '../src/infrastructure/connectivity/pipeline/plant-cache';
 import type { PlantSnapshotDto } from '../src/infrastructure/connectivity/pipeline/plant-snapshot.dto';
@@ -31,9 +31,11 @@ import type { WriteSpec } from '../src/infrastructure/connectivity/mapping/opc-m
 process.env.JWT_SECRET = process.env.JWT_SECRET ?? 'test-secret-commands-e2e';
 
 const WRITE: WriteSpec = {
+  mode: 'absolute',
+  pulse: null,
   target: { channel: 'intOut', sourceBuffer: 'INT_OUT_TEST', index: 3 },
   commands: { openValve: 1, closeValve: 0 },
-  readBack: { channel: 'intOut', sourceBuffer: 'INT_OUT_TEST', index: 3, confirmsWrittenValue: true },
+  readBack: { channel: 'intOut', sourceBuffer: 'INT_OUT_TEST', index: 3, confirmsWrittenValue: true, stateVerified: true },
   timeoutMs: 60,
   rollbackValue: 0,
   permission: 'control_valves',
@@ -63,7 +65,7 @@ const usersDouble = {
     const role = id.replace(/^u-/, '');
     return {
       id, email: `${role}@ptap.co`, name: role, role, plant: 'voragine',
-      passwordHash: 'x', pepperVersion: 1, isActive: true,
+      passwordHash: 'x', pepperVersion: 1, isActive: true, emailVerified: true,
     };
   },
 } as unknown as UsersRepository;
@@ -77,7 +79,8 @@ function fakeRepo(): CommandLogRepository {
   } as unknown as CommandLogRepository;
 }
 
-async function buildApp(secure: boolean): Promise<{ app: INestApplication; jwt: JwtService }> {
+async function buildApp(secure: boolean): Promise<{ app: INestApplication; jwt: JwtService; records: AuditEntry[] }> {
+  const records: AuditEntry[] = [];
   @Module({
     controllers: [CommandsController],
     providers: [
@@ -91,10 +94,10 @@ async function buildApp(secure: boolean): Promise<{ app: INestApplication; jwt: 
       { provide: CommandMappingResolver, useValue: { resolve: () => ({ domainKey: 'valveEV01', write: WRITE }) } },
       { provide: CommandLogRepository, useValue: fakeRepo() },
       { provide: UsersRepository, useValue: usersDouble },
-      { provide: AuditLogService, useValue: { record: async () => undefined } },
+      { provide: AuditLogService, useValue: { record: async (entry: AuditEntry) => { records.push(entry); } } },
       // La maniobra se firma y deja un aviso en la bandeja. Aquí se doblan las dos: lo que este
       // test protege es el camino HTTP y el RBAC, no el libro de firmas.
-      { provide: CommandSignatureService, useValue: { firmar: async () => 'firma-de-prueba' } },
+      { provide: CommandSignatureService, useValue: { firmar: async (_id: number, _name: string | null, finalize?: () => Promise<void>) => { await finalize?.(); return 'firma-de-prueba'; } } },
       { provide: NotificationRepository, useValue: { create: async () => true } },
     ],
   })
@@ -104,7 +107,7 @@ async function buildApp(secure: boolean): Promise<{ app: INestApplication; jwt: 
   const app = moduleRef.createNestApplication();
   app.setGlobalPrefix('api');
   await app.init();
-  return { app, jwt: moduleRef.get(JwtService) };
+  return { app, jwt: moduleRef.get(JwtService), records };
 }
 
 function token(jwt: JwtService, role: Role): string {
@@ -112,6 +115,32 @@ function token(jwt: JwtService, role: Role): string {
 }
 
 const body = { command: 'openValve', target: 'valveEV01' };
+
+test('commands-e2e: abrir/cerrar registra identidad autenticada e IP para operador, jefe y admin', async () => {
+  const { app, jwt, records } = await buildApp(true);
+  try {
+    for (const role of ['operador', 'jefe', 'admin'] as const) {
+      for (const command of ['openValve','closeValve']) {
+        const res = await request(app.getHttpServer()).post('/api/plants/voragine/commands')
+          .set('Authorization', `Bearer ${token(jwt,role)}`)
+          .set('X-Forwarded-For','198.51.100.9').set('X-Request-ID','forged').set('User-Agent','Aquora test')
+          .send({ ...body, command }).expect(200);
+        const entry = records.at(-1)!;
+        assert.equal(entry.eventType,'command.execute');
+        assert.equal(entry.userId,`u-${role}`);
+        assert.equal(entry.role,role);
+        assert.ok(entry.ip);
+        assert.notEqual(entry.ip,'198.51.100.9');
+        assert.equal(entry.detail?.command,command);
+        const evidence = entry.detail?.request as {requestId:string;userAgent:string;peerIp:string};
+        assert.equal(evidence.requestId,res.headers['x-request-id']);
+        assert.notEqual(evidence.requestId,'forged');
+        assert.equal(evidence.userAgent,'Aquora test');
+        assert.ok(evidence.peerIp);
+      }
+    }
+  } finally { await app.close(); }
+});
 
 test('commands-e2e: sin JWT → 401', async () => {
   const { app } = await buildApp(true);

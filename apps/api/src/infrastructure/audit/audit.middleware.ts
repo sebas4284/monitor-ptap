@@ -1,6 +1,7 @@
 import { Inject, Injectable, NestMiddleware } from '@nestjs/common';
 import type { NextFunction, Request, Response } from 'express';
 import type { AuthenticatedRequest } from '../../modules/auth/authenticated-request';
+import { requestEvidence } from './request-evidence';
 import { AuditLogService } from './audit-log.service';
 
 /** Prefijos de rutas protegidas que se auditan (permitidas Y denegadas). */
@@ -29,6 +30,7 @@ export class AuditMiddleware implements NestMiddleware {
     }
 
     const ip = req.ip ?? req.socket?.remoteAddress ?? null;
+    const evidence = requestEvidence(req, res);
     res.on('finish', () => {
       const user = (req as AuthenticatedRequest).user;
       void this.auditLog.record({
@@ -40,6 +42,7 @@ export class AuditMiddleware implements NestMiddleware {
         method: req.method,
         path,
         statusCode: res.statusCode,
+        detail: { request: evidence },
       });
     });
 

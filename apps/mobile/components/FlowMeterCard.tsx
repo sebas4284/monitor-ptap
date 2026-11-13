@@ -1,21 +1,25 @@
 import { memo } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { View, Text, StyleSheet, Animated } from 'react-native';
+import Ionicons from './AppIcon';
 import Colors from '../constants/colors';
+import { Fonts } from '../constants/fonts';
 import type { SignalDto } from '../services/api';
-import { directionFor } from '../services/signal-kind';
+import { directionLook, isAnomalous, signalState } from '../services/card-look';
+import { useStateFlash } from '../hooks/useStateFlash';
 import { GaugeCard } from './GaugeCard';
-import { sameSignalCard } from './memo-compare';
 import { BotonSilencio } from './BotonSilencio';
+import { sameSignalCard } from './memo-compare';
+
+const B = Colors.brand;
 
 /** Formato numérico es-CO (coma decimal + separador de miles), coherente con el reloj del tablero. */
 const fmt = (n: number, d = 2): string =>
   n.toLocaleString('es-CO', { minimumFractionDigits: d, maximumFractionDigits: d });
 
 /**
- * Tarjeta de caudal con barra de progreso 0-100%, estilo "Macromedidor" de xtio.
- * Requiere opMin y opMax numéricos y con rango > 0 para calcular el %; si faltan, o si el rango
- * es degenerado (opMin === opMax → dividir por cero daría "NaN%"), o el valor es null, cae a
+ * Tarjeta de caudal con barra de rango operativo (referencia TableroEscritorio: "Mín · Fuera de
+ * rango · Máx"). Requiere opMin y opMax numéricos y con rango > 0; si faltan, o si el rango es
+ * degenerado (opMin === opMax → dividir por cero daría "NaN%"), o el valor es null, cae a
  * GaugeCard — no hay con qué dibujar la barra.
  */
 function FlowMeterCardBase({
@@ -35,63 +39,81 @@ function FlowMeterCardBase({
    * planta Y señal, porque `outletFlow1` existe en las doce.
    */
   plantId?: string;
-  /** Tablero en modo compacto: oculta las etiquetas 0%/N%/100% bajo la barra. */
+  /** Tablero en modo compacto: oculta la fila Mín/Máx bajo la barra. */
   compact?: boolean;
 }) {
   const numeric = typeof signal.value === 'number';
   const opMin = signal.opMin;
   const opMax = signal.opMax;
   const hasSpan = typeof opMin === 'number' && typeof opMax === 'number' && opMax - opMin > 0;
+  // Hooks antes de cualquier retorno: el número de hooks no puede cambiar entre renders.
+  const flash = useStateFlash(signalState(signal), frozen);
 
   if (!numeric || !hasSpan) {
-    return <GaugeCard signal={signal} name={name} icon={icon} frozen={frozen} compact={compact} />;
+    return (
+      <GaugeCard
+        signal={signal}
+        name={name}
+        icon={icon}
+        frozen={frozen}
+        compact={compact}
+        plantId={plantId}
+      />
+    );
   }
 
   const value = signal.value as number;
   const rawPct = ((value - (opMin as number)) / ((opMax as number) - (opMin as number))) * 100;
   const pct = Math.min(100, Math.max(0, rawPct));
-  // Aviso: fuera del rango operativo (del backend) o valor que se sale del 0–100% de la barra.
-  const outOfRange = Boolean(signal.outOfRange) || rawPct < 0 || rawPct > 100;
-  const direction = directionFor(name);
-  const accent = direction === 'inlet' ? Colors.accentInlet : direction === 'outlet' ? Colors.accentOutlet : Colors.primary;
+  // Mismo criterio que la campana (rango físico u operativo) + la barra que se sale del 0–100 %.
+  const anomaly = isAnomalous(signal) || rawPct < 0 || rawPct > 100;
+  const dir = directionLook(name);
+  const accent = dir?.color ?? B.blue;
+  const label = signal.label ?? name;
 
   return (
-    <View style={[styles.card, frozen && styles.cardFrozen]}>
-      <View style={[styles.headerBar, { backgroundColor: accent + '22', borderColor: accent }]}>
+    <View style={[styles.card, anomaly && styles.cardAnomaly, frozen && styles.cardFrozen]}>
+      <Animated.View pointerEvents="none" style={[styles.flash, { opacity: flash }]} />
+      <View style={styles.top}>
         <Ionicons name={icon as never} size={16} color={accent} />
-        <Text style={[styles.headerText, { color: accent }]} numberOfLines={1}>
-          {(signal.label ?? name).toUpperCase()}
+        <Text style={styles.name} numberOfLines={2}>
+          {label}
         </Text>
+        {plantId ? <BotonSilencio plantId={plantId} subject={name} etiqueta={label} /> : null}
       </View>
-
-      {(frozen || outOfRange) && (
-        <View style={styles.tagsRow}>
-          {frozen && (
-            <View style={styles.frozenTag}>
-              <Text style={styles.frozenTagText}>congelado</Text>
-            </View>
-          )}
-          {outOfRange && (
-            <View style={styles.rangeTag}>
-              <Text style={styles.rangeTagText}>fuera de rango</Text>
-            </View>
-          )}
+      {dir && (
+        <View style={styles.dirRow}>
+          <Ionicons name={dir.icon} size={12} color={dir.color} />
+          <Text style={[styles.dirText, { color: dir.color }]}>{dir.label}</Text>
         </View>
       )}
 
-      <Text style={styles.value} numberOfLines={1} adjustsFontSizeToFit>
+      <Text
+        style={[styles.value, { color: anomaly ? B.dangerText : accent }]}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+      >
         {fmt(value)}
         <Text style={styles.unit}> {signal.unit ?? ''}</Text>
       </Text>
 
       <View style={styles.barOuter}>
-        <View style={[styles.barFill, { width: `${pct}%`, backgroundColor: outOfRange ? Colors.danger : accent }]} />
+        <View
+          style={[
+            styles.barFill,
+            { width: `${pct}%`, backgroundColor: anomaly ? Colors.danger : accent },
+          ]}
+        />
       </View>
       {!compact && (
         <View style={styles.barLabels}>
-          <Text style={styles.barLabelText}>0%</Text>
-          <Text style={[styles.barLabelText, outOfRange && styles.barLabelAlert]}>{Math.round(pct)}%</Text>
-          <Text style={styles.barLabelText}>100%</Text>
+          <Text style={styles.barLabelText}>Mín {fmt(opMin as number)}</Text>
+          {anomaly ? (
+            <Text style={[styles.barLabelText, { color: B.dangerText }]}>Fuera de rango</Text>
+          ) : frozen ? (
+            <Text style={styles.barLabelText}>Congelado</Text>
+          ) : null}
+          <Text style={styles.barLabelText}>Máx {fmt(opMax as number)}</Text>
         </View>
       )}
     </View>
@@ -105,56 +127,43 @@ const styles = StyleSheet.create({
   card: {
     flex: 1,
     margin: 5,
-    padding: 14,
-    backgroundColor: Colors.bg,
+    padding: 16,
+    backgroundColor: B.card,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: Colors.divider,
-  },
-  cardFrozen: { opacity: 0.55 },
-  headerBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    alignSelf: 'flex-start',
-    maxWidth: '100%',
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    marginBottom: 10,
-  },
-  headerText: { fontSize: 11, fontWeight: '700', letterSpacing: 0.5, flexShrink: 1 },
-  tagsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 8 },
-  rangeTag: {
-    backgroundColor: Colors.danger + '22',
-    borderColor: Colors.danger,
-    borderWidth: 1,
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  rangeTagText: { fontSize: 11, fontWeight: '700', color: Colors.danger, letterSpacing: 0.5 },
-  frozenTag: {
-    backgroundColor: Colors.textSecondary + '22',
-    borderColor: Colors.textSecondary,
-    borderWidth: 1,
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  frozenTagText: { fontSize: 11, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.5 },
-  value: { fontSize: 28, fontWeight: '800', color: Colors.textPrimary, marginBottom: 10, fontVariant: ['tabular-nums'] },
-  unit: { fontSize: 14, fontWeight: '400', color: Colors.textSecondary },
-  barOuter: {
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: Colors.surface,
+    borderColor: '#1B3044',
     overflow: 'hidden',
-    marginBottom: 4,
   },
-  barFill: { height: '100%', borderRadius: 4 },
-  barLabels: { flexDirection: 'row', justifyContent: 'space-between' },
-  barLabelText: { fontSize: 12, color: Colors.textSecondary },
-  barLabelAlert: { color: Colors.danger, fontWeight: '700' },
+  cardAnomaly: { borderColor: Colors.danger, borderWidth: 1.5 },
+  cardFrozen: { borderStyle: 'dashed' },
+  flash: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: 'rgba(36,145,204,0.2)',
+  },
+  top: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  name: { flex: 1, fontFamily: Fonts.regular, fontSize: 13, color: B.textSecondary },
+  dirRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
+  dirText: { fontFamily: Fonts.medium, fontSize: 12 },
+  value: {
+    fontFamily: Fonts.semibold,
+    fontSize: 30,
+    lineHeight: 38,
+    marginTop: 6,
+    fontVariant: ['tabular-nums'],
+  },
+  unit: { fontFamily: Fonts.regular, fontSize: 14, color: B.textSecondary },
+  barOuter: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: B.divider,
+    overflow: 'hidden',
+    marginTop: 12,
+  },
+  barFill: { height: '100%', borderRadius: 3 },
+  barLabels: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 6, gap: 6 },
+  barLabelText: { fontFamily: Fonts.regular, fontSize: 12, color: B.textSecondary },
 });

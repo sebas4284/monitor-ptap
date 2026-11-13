@@ -3,10 +3,12 @@
 # dependencies
 node_modules/
 .npm-cache/
+/tmp/
 
 # Expo
 .expo/
 dist/
+apps/mobile/dist-audit/
 web-build/
 expo-env.d.ts
 packages/shared/dist/
@@ -65,3 +67,29 @@ apps/mobile/android/
 # Subagent-driven-development scratch state
 .superpowers/
 apps/mobile/eas.json
+
+# Auditoria local del proyecto: puede mencionar IPs y datos del servidor. No se versiona.
+/contexto.md
+
+# Configuración de Firebase de la APK (push FCM). La APK la necesita dentro y se copia a mano antes de
+# compilar; no va al repositorio. La CLAVE DE SERVICIO del backend tampoco: esa vive solo en la VM
+# (FIREBASE_SERVICE_ACCOUNT_PATH), nunca en este árbol.
+apps/mobile/google-services.json
+
+# Material local de trabajo: conservar fuera del historial publico.
+/.playwright-mcp/
+/cotizacion-aquora-local/
+/docs/security-audit/2026-11-02/
+/docs/security-audit/2026-11-03/
+/docs/superpowers/plans/2026-11-02-pruebas-adversarias-aquora.md
+/docs/superpowers/plans/2026-11-02-vm-seguridad-en-sitio.md
+/tools/vm/*.decision.json
+/tools/vm/web-push-single-test.cjs
+/tools/vm/web-push-single-test.test.cjs
+
+# Helpers puntuales ligados a releases y respaldos privados de la VM.
+/tools/vm/ptap-autonomy-inspect.cjs
+/tools/vm/ptap-autonomy-release.cjs
+/tools/vm/ptap-css-js-release.cjs
+/tools/vm/ptap-valve-ui-release.cjs
+/tools/vm/ptap-mobile-hotfix.cjs

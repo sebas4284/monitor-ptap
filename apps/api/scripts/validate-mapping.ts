@@ -13,6 +13,15 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import Ajv2020 from 'ajv/dist/2020';
+import {
+  bitsCompartidosEntreValvulas,
+  motivoBitsEstadoInvalido,
+  motivoMascarasReadBackInvalido,
+  motivoRealimentacionInvalida,
+  motivoSostenidaInvalida,
+  tieneRealimentacionPorBits,
+  type SenalConMando,
+} from '../src/infrastructure/connectivity/mapping/opc-mapping.loader';
 
 export interface ValidationResult {
   ok: boolean;
@@ -49,8 +58,10 @@ export function semanticErrors(mapping: unknown): string[] {
     const label = typeof p.plantId === 'string' ? p.plantId : `plants[${pIdx}]`;
 
     const signals = Array.isArray(p.signals) ? p.signals : [];
-    const seenSlot = new Set<string>();
+    const seenSlot = new Map<string, { sourceBuffer?: unknown; bits: number | null }>();
     const seenDomainKey = new Set<string>();
+    /** Las válvulas de la planta, para la regla de bits compartidos en una misma palabra. */
+    const conMando: SenalConMando[] = [];
 
     signals.forEach((signal, sIdx) => {
       if (typeof signal !== 'object' || signal === null) return;
@@ -63,18 +74,29 @@ export function semanticErrors(mapping: unknown): string[] {
         max?: unknown;
         opMin?: unknown;
         opMax?: unknown;
+        writable?: unknown;
+        stateEncoding?: { bits?: { open: number; close: number; fault: number } };
         write?: {
           target?: { channel?: unknown; sourceBuffer?: unknown };
-          readBack?: { channel?: unknown; sourceBuffer?: unknown };
+          readBack?: { channel?: unknown; sourceBuffer?: unknown; mask?: unknown; faultMask?: unknown };
+          pulse?: { feedback?: { channel?: unknown; sourceBuffer?: unknown } };
         };
       };
 
+      const bits = s.stateEncoding?.bits;
+      const bitsError = bits === undefined ? null : motivoBitsEstadoInvalido(bits);
+      if (bitsError) errors.push(`${label}: ${bitsError} (${String(s.domainKey)})`);
+      const stateMask = s.writable === false && bits && !bitsError ? bits.open | bits.close | bits.fault : null;
       if (typeof s.buffer === 'string' && typeof s.index === 'number') {
         const slot = `${s.buffer}[${s.index}]`;
-        if (seenSlot.has(slot)) {
+        const previous = seenSlot.get(slot);
+        // Distinct read-only valve states can share a physical word only with explicit disjoint bits.
+        if (previous && (previous.bits === null || stateMask === null || !s.sourceBuffer
+          || s.sourceBuffer !== previous.sourceBuffer || (previous.bits & stateMask) !== 0)) {
           errors.push(`${label}: índice duplicado ${slot} (señal #${sIdx})`);
         }
-        seenSlot.add(slot);
+        seenSlot.set(slot, { sourceBuffer: s.sourceBuffer, bits: previous?.bits === null || stateMask === null
+          ? null : (previous?.bits ?? 0) | stateMask });
       }
 
       if (typeof s.domainKey === 'string') {
@@ -114,12 +136,55 @@ export function semanticErrors(mapping: unknown): string[] {
         if (t && typeof t.sourceBuffer === 'string' && !bufferNames(t.channel).includes(t.sourceBuffer)) {
           errors.push(`${label}: write.target.sourceBuffer "${t.sourceBuffer}" no existe en opcBuffers.${String(t.channel)} (señal "${String(s.domainKey)}")`);
         }
+        const maskError = motivoMascarasReadBackInvalido(s.write);
+        if (maskError) errors.push(`${label}: ${maskError} (${String(s.domainKey)})`);
         const rb = s.write.readBack;
         if (rb && typeof rb.sourceBuffer === 'string' && !bufferNames(rb.channel).includes(rb.sourceBuffer)) {
           errors.push(`${label}: write.readBack.sourceBuffer "${rb.sourceBuffer}" no existe en opcBuffers.${String(rb.channel)} (señal "${String(s.domainKey)}")`);
         }
+
+        // Orden SOSTENIDA: las reglas que el schema no puede expresar (verbos sin bits compartidos)
+        // y, por si el schema cambiara, las demás. Es la MISMA función con la que el loader se niega
+        // a arrancar: lo que pasa aquí arranca allí, y al revés. Desde el 2026-10-23 la sostenida está
+        // RETIRADA en toda válvula accionable: solo se conserva en una writable: false.
+        const w = s.write as Record<string, unknown>;
+        const retirada = s.writable === false;
+        if (w.sustained === true) {
+          // sostenida permitida para válvulas activas bajo regla absoluta
+          const motivo = motivoSostenidaInvalida(w);
+          if (motivo) errors.push(`${label}: write.sustained en "${String(s.domainKey)}": ${motivo}`);
+        }
+
+        // Pulso con REALIMENTACIÓN POR BITS (integrador 2026-10-23): la misma función del loader, y el
+        // buffer de la realimentación tiene que existir en la planta (si no, nunca llegaría y toda
+        // orden acabaría por el tope).
+        if (tieneRealimentacionPorBits(w)) {
+          const motivo = motivoRealimentacionInvalida(w);
+          if (motivo) errors.push(`${label}: write.pulse.feedback en "${String(s.domainKey)}": ${motivo}`);
+          const fb = s.write.pulse?.feedback;
+          if (fb && typeof fb.sourceBuffer === 'string' && !bufferNames(fb.channel).includes(fb.sourceBuffer)) {
+            errors.push(`${label}: write.pulse.feedback.sourceBuffer "${fb.sourceBuffer}" no existe en opcBuffers.${String(fb.channel)} (señal "${String(s.domainKey)}")`);
+          }
+        }
+
+        // Mando RETIRADO (writable: false con write): solo sirve para la limpieza de bits huérfanos,
+        // y la limpieza solo puede apagar bits concretos en una palabra compartida. Un spec que no sea
+        // bitmask con máscaras enteras no le dice qué apagar sin pisar a otra válvula.
+        if (retirada) {
+          const cmds = w.commands as Record<string, unknown> | undefined;
+          const mascarasOk =
+            !!cmds && typeof cmds === 'object' && Object.values(cmds).every((v) => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 0xffff);
+          if (w.mode !== 'bitmask' || !mascarasOk) {
+            errors.push(
+              `${label}: el mando conservado de "${String(s.domainKey)}" (writable: false) tiene que ser bitmask con máscaras enteras de 1 a 65535: es lo que la limpieza de huérfanos apaga, bit a bit`,
+            );
+          }
+        }
+        conMando.push({ plantId: label, domainKey: String(s.domainKey), retirada, write: s.write as SenalConMando['write'] });
       }
     });
+
+    for (const c of bitsCompartidosEntreValvulas(conMando)) errors.push(`${label}: ${c.motivo}`);
 
     const conn = p.connection;
     if (conn && conn.mappingStatus === 'mapped') {

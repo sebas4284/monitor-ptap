@@ -7,8 +7,9 @@
  */
 import { OPCUAClient, MessageSecurityMode, SecurityPolicy, AttributeIds } from 'node-opcua';
 import { writeFileSync } from 'node:fs';
+import { resolverEndpoint } from './opc-endpoint';
 
-const ENDPOINT = process.argv[2] ?? process.env.OPC_ENDPOINT ?? 'opc.tcp://181.204.165.66:59200';
+const ENDPOINT = resolverEndpoint(process.argv[2]);
 const OUT_GUID = '4AB6ECB4-D019-D4F1-A8A8-6177C3FE3278'; // INT_OUT_SIRENA (comando)
 const IN_GUID = '184E4071-DC15-213A-3DE8-442A4E0A354B';  // INT_IN_SIRENA  (estado)
 const HZ = 10;
@@ -23,7 +24,7 @@ const bits = (n: number): string => {
   for (let b = 0; b < 16; b++) if (u & (1 << b)) s.push(b);
   return `{${s.join(',')}}`;
 };
-const nz = (arr: number[]): Array<[number, number]> => arr.map((v, i) => [i, Number(v)] as [number, number]).filter(([, v]) => v !== 0);
+const nz = (arr: number[]): [number, number][] => arr.map((v, i) => [i, Number(v)] as [number, number]).filter(([, v]) => v !== 0);
 
 async function main(): Promise<void> {
   const client = OPCUAClient.create({
@@ -46,10 +47,9 @@ async function main(): Promise<void> {
     console.log(`endpoint ${ENDPOINT}  ·  ns AQUATECH=${aq}  ·  ${HZ}/s × ${SECONDS}s`);
     console.log(`>>> EJECUTA LOS COMANDOS (abrir/cerrar) AHORA. Registro cambios de OUT[0]/IN[0]:\n`);
 
-    const samples: Array<{ ts: string; out0: number; in0: number; outNz: Array<[number, number]> }> = [];
+    const samples: { ts: string; out0: number; in0: number; outNz: [number, number][] }[] = [];
     let prevOut0: number | null = null;
     let prevIn0: number | null = null;
-    let captures = 0;
     const t0 = Date.now();
     const total = HZ * SECONDS;
 
@@ -69,7 +69,6 @@ async function main(): Promise<void> {
 
       if (out0 !== prevOut0 || in0 !== prevIn0) {
         console.log(`t=${ts.padStart(5)}s  OUT[0]=${String(out0).padStart(6)} ${bits(out0)}  OUTnz=${JSON.stringify(outNz)}  |  IN[0]=${String(in0).padStart(6)} ${bits(in0)}`);
-        if (out0 !== 0 && out0 !== prevOut0) captures++;
         prevOut0 = out0;
         prevIn0 = in0;
       } else if (i % (HZ * 5) === 0) {

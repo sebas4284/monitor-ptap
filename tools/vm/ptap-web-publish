@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+#
+# Publica el bundle web ya compilado. ES LA ÚNICA PIEZA CON PRIVILEGIOS.
+#
+# Se instala en /usr/local/sbin/ptap-web-publish, propiedad de root:root y modo 0755, y se autoriza
+# en /etc/sudoers.d/ptap-web-publish con NOPASSWD. Eso es lo que permite desplegar sin escribir una
+# contraseña y sin guardar ningún secreto en ninguna parte.
+#
+# ══ POR QUÉ ESTE ARCHIVO NO PUEDE VIVIR EN ~/deploy-scripts ══
+#
+# Una regla NOPASSWD sobre un script que el propio usuario puede editar ES ser root: bastaría con
+# reescribirlo. Por eso este archivo se copia a /usr/local/sbin, donde `xpertic_app` no escribe, y
+# la regla de sudoers apunta a esa ruta absoluta. Tampoco carga (`source`) nada de ~/deploy-scripts,
+# por lo mismo.
+#
+# ══ QUÉ PUEDE HACER QUIEN LO INVOQUE ══
+#
+# Copiar el contenido de un directorio concreto al raíz web y recargar nginx. Nada más: no acepta
+# argumentos, las rutas están fijas y no toca la configuración de nginx (que es lo que rompía
+# `web-setup.sh`, borrando los server blocks de HTTPS). El alcance residual es «publicar estáticos
+# arbitrarios en la web», que es algo que ese usuario ya podía provocar editando el repositorio.
+# No hay camino de aquí a root.
+set -euo pipefail
+
+SRC="/home/xpertic_app/monitor-ptap/apps/mobile/dist"
+DST="/var/www/ptap-web"
+
+if [[ $EUID -ne 0 ]]; then
+  echo "Este script lo invoca sudo:  sudo -n /usr/local/sbin/ptap-web-publish" >&2
+  exit 1
+fi
+
+if [[ $# -gt 0 ]]; then
+  # Sin argumentos, a propósito: cada parámetro sería una superficie más en algo que corre como root.
+  echo "No acepta argumentos." >&2
+  exit 2
+fi
+
+if [[ ! -f "$SRC/index.html" ]]; then
+  echo "No encuentro $SRC/index.html" >&2
+  echo "Compila primero:  cd ~/monitor-ptap/apps/mobile && API_BASE_URL= npx expo export -p web --clear" >&2
+  exit 3
+fi
+
+# Un enlace simbólico en el bundle haría que `cp` publicara el contenido de lo que apunte —y esto
+# corre como root. Expo no los genera nunca; si aparece uno, algo va mal y no se publica.
+if [[ -n "$(find "$SRC" -type l -print -quit)" ]]; then
+  echo "El bundle contiene enlaces simbólicos. No se publica." >&2
+  exit 4
+fi
+
+echo "=== origen ==="
+echo "  $SRC  ($(find "$SRC" -type f | wc -l) archivos)"
+
+# Respaldo de la publicación anterior: permite volver atrás sin recompilar.
+if [[ -d "$DST" && -n "$(ls -A "$DST" 2>/dev/null)" ]]; then
+  BAK="/var/www/ptap-web.bak-$(date +%Y%m%d-%H%M%S)"
+  cp -a "$DST" "$BAK"
+  echo "  respaldo: $BAK"
+  # Se conservan los 5 últimos: sin poda, cada despliegue deja ~10 MB para siempre en un disco de 47 G.
+  ls -1dt /var/www/ptap-web.bak-* 2>/dev/null | tail -n +6 | xargs -r rm -rf
+fi
+
+install -d -m 0755 "$DST"
+rm -rf "${DST:?}/"*
+cp -r "$SRC/." "$DST/"
+chown -R www-data:www-data "$DST"
+find "$DST" -type d -exec chmod 755 {} \;
+find "$DST" -type f -exec chmod 644 {} \;
+
+echo "=== publicado ==="
+echo "  $DST  ($(find "$DST" -type f | wc -l) archivos)"
+
+# La configuración NO se toca: solo se recarga por los estáticos con caché.
+nginx -t
+systemctl reload nginx
+
+echo "=== verificación ==="
+curl -s -o /dev/null -w '  http://127.0.0.1/           -> HTTP %{http_code}\n' http://127.0.0.1/
+curl -s -o /dev/null -w '  http://127.0.0.1/api/health -> HTTP %{http_code}\n' http://127.0.0.1/api/health
+echo "Listo. La configuración de nginx quedó sin modificar."

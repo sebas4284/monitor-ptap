@@ -107,7 +107,7 @@ async function main(): Promise<void> {
 
   const pool = createPool({ ...readDatabaseConfig(), connectionLimit: 3 });
   const hashing = new PasswordHashingService();
-  const entregas: Array<{ email: string; password: string; rol: string; planta: string; nombre: string; accion: string }> = [];
+  const entregas: { email: string; password: string; rol: string; planta: string; nombre: string; accion: string }[] = [];
 
   try {
     for (const p of peticiones) {

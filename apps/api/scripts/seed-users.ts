@@ -19,7 +19,7 @@ import type { Role } from '@ptap/shared';
 import { readDatabaseConfig } from '../src/infrastructure/database/database.config';
 import { PasswordHashingService } from '../src/modules/auth/password-hashing.service';
 
-const DEMO_USERS: Array<{ email: string; name: string; role: Role }> = [
+const DEMO_USERS: { email: string; name: string; role: Role }[] = [
   { email: 'civil@ptap.co', name: 'Civil Demo', role: 'civil' },
   { email: 'operador@ptap.co', name: 'Operador Demo', role: 'operador' },
   { email: 'jefe@ptap.co', name: 'Jefe Demo', role: 'jefe' },
@@ -56,7 +56,7 @@ async function runCli(): Promise<void> {
       );
       console.log(`✓ ${u.email} (${u.role}) creado.`);
     }
-    console.log(`\nContraseña de todos: "${password}" (SEED_USERS_PASSWORD).`);
+    console.log('\nSiembra completada. Las credenciales no se muestran en los registros.');
   } finally {
     await pool.end();
   }

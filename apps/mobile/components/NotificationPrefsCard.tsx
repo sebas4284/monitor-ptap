@@ -1,5 +1,5 @@
 import { View, Text, Pressable, ActivityIndicator, StyleSheet } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from './AppIcon';
 import Colors from '../constants/colors';
 import { SwitchRow } from './SwitchRow';
 import {

@@ -1,6 +1,7 @@
 module.exports = function (api) {
-  api.cache(true);
+  const web = api.caller(caller => caller?.platform === 'web');
   return {
     presets: ['babel-preset-expo'],
+    plugins: web ? [require.resolve('../../tools/web/babel-native-members.cjs')] : [],
   };
 };

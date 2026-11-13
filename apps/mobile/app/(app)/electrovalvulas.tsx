@@ -1,46 +1,110 @@
-import { useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, ScrollView, RefreshControl, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '../../components/AppIcon';
 import { useSnapshot } from '../../hooks/useSnapshot';
 import { usePlant } from '../../context/PlantContext';
 import { useAuth } from '../../context/AuthContext';
 import { ValveItem } from '../../components/ValveItem';
-import { PlantSelector } from '../../components/PlantSelector';
+import { ValveConfirmDialog } from '../../components/ValveConfirmDialog';
+import { ValveResultDialog } from '../../components/ValveResultDialog';
+import { PlantPickerLayout, PlantPickerTrigger } from '../../components/PlantPicker';
 import { ConnectionBanner } from '../../components/ConnectionBanner';
 import { LiveBadge } from '../../components/LiveBadge';
 import { ListSkeleton } from '../../components/Skeleton';
 import { OfflineNotice } from '../../components/OfflineNotice';
-import { valvesFromSnapshot } from '../../services/valves';
-import { useValveSupervisor } from '../../hooks/useValveSupervisor';
+import {
+  valvesFromSnapshot,
+  accionDisponible,
+  resumenDeValvulas,
+  type CommandVerdict,
+} from '../../services/valves';
+import { useValveSupervisor, type SupervisedValve } from '../../hooks/useValveSupervisor';
 import { useDashboardPrefs } from '../../services/dashboard-prefs';
+import { getAuthGeneration } from '../../services/api';
+import { EN_INTEGRACION } from '../../services/plant-status';
 import Colors from '../../constants/colors';
+import { Fonts } from '../../constants/fonts';
+
+/**
+ * El mando remoto está habilitado en TODAS las plantas que tengan válvula mapeada. Antes solo
+ * La Sirena estaba autorizada, por ser la única verificada en campo de punta a punta
+ * (docs/PRUEBA_VALVULA_SIRENA.md). Esa lista blanca se retiró por decisión de operación.
+ *
+ * La protección pasó a ser la doble confirmación (ValveConfirmDialog): ninguna orden sale de un
+ * solo toque. El resto de las defensas del backend siguen intactas — RBAC, interlock, idempotencia,
+ * read-back y auditoría; ninguna se relajó aquí.
+ */
+
+/** Maniobra a la espera de que el operador confirme en el diálogo. */
+interface Pendiente {
+  plantId: string;
+  valve: SupervisedValve;
+  verb: 'open' | 'close';
+}
 
 export default function ElectrovalvulasScreen() {
   const { selectedPlant } = usePlant();
   const { hasPermission } = useAuth();
   const canView = hasPermission('view_dashboard'); // el Civil no ve electroválvulas
+  const canControl = hasPermission('control_valves');
 
-  const { data: snapshot, isLoading, isError, refetch, isRefetching } = useSnapshot(selectedPlant.id, canView);
+  const {
+    data: snapshot,
+    isLoading,
+    isError,
+    refetch,
+    isRefetching,
+  } = useSnapshot(selectedPlant.id, canView);
   const rawValves = useMemo(() => valvesFromSnapshot(snapshot), [snapshot]);
-  const { valves } = useValveSupervisor(selectedPlant.id, rawValves);
+  const { valves, send, busy } = useValveSupervisor(selectedPlant.id, rawValves);
+  const [pendiente, setPendiente] = useState<Pendiente | null>(null);
+  /** Veredicto de la última orden, a la espera de acuse de recibo. NUNCA es un toast: ver
+   *  `ValveResultDialog`. */
+  const [resultado, setResultado] = useState<(CommandVerdict & { valveName: string }) | null>(null);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const livenessState = snapshot?.liveness.state ?? 'frozen';
   const frozen = livenessState === 'frozen';
+  // Aún no conectada al PLC maestro: su `frozen` no es una caída (ver services/plant-status.ts).
+  const integrationPending = snapshot?.integrationPending === true;
   const apiReachable = !isError || (!!snapshot && !snapshot.pending);
   const showError = isError && !snapshot;
   const plantName = snapshot?.displayName ?? selectedPlant.name;
 
   // El hook hidrata además del almacenamiento: antes solo el tablero lo hacía, así que entrar
   // directo a esta pantalla (recarga web en /electrovalvulas) ignoraba la preferencia guardada.
-  useDashboardPrefs();
+  const { compact } = useDashboardPrefs();
 
-  // Memoizado: eran dos recorridos completos del array en CADA render.
-  const { openCount, closedCount } = useMemo(
+  // Memoizados: eran tres recorridos completos del array en CADA render.
+  const { openCount, closedCount, unconfirmedCount, faultCount, conLecturaDeEstado } = useMemo(
     () => ({
-      openCount: valves.filter((v) => v.effectiveState === 'open').length,
-      closedCount: valves.filter((v) => v.effectiveState === 'closed').length,
+      ...resumenDeValvulas(valves),
+      // Sin señal de estado eléctrico el read-back no puede confirmar la maniobra: hay que avisarlo.
+      conLecturaDeEstado: valves.some((v) => v.byState !== null),
     }),
     [valves],
+  );
+
+  /** El toque en la lista ya NO ejecuta: solo propone la maniobra y abre la confirmación.
+   *  Estable (`useCallback`) para que las N filas compartan la MISMA función y su memo funcione. */
+  const onToggle = useCallback(
+    (valve: SupervisedValve, requestedVerb?: 'open' | 'close') => {
+      // El verbo lo decide `accionDisponible`, la MISMA función con la que la fila decidió qué
+      // botón dibujar. Calcularlo aquí por separado —como se hacía antes— permite que el botón
+      // diga "Abrir" y salga un "close" si los dos criterios se separan al evolucionar. Y si la
+      // acción está bloqueada no se abre ningún diálogo: la fila no debería haber ofrecido nada.
+      if (!canControl || busy) return;
+      const accion = accionDisponible(valve, frozen, requestedVerb);
+      if (accion.kind !== 'command') return;
+      setPendiente({ plantId: selectedPlant.id, valve, verb: accion.verb });
+    },
+    [frozen, canControl, busy, selectedPlant.id],
   );
 
   // Guard de rol de pantalla (coherente con tablero/reportes). Va tras TODOS los hooks: si a
@@ -51,73 +115,206 @@ export default function ElectrovalvulasScreen() {
         <View style={styles.centered}>
           <Ionicons name="lock-closed-outline" size={40} color={Colors.textSecondary} />
           <Text style={styles.plantName}>Acceso restringido</Text>
-          <Text style={styles.sectionSubtitle}>Las electroválvulas no están disponibles para tu rol.</Text>
+          <Text style={styles.sectionSubtitle}>
+            Las electroválvulas no están disponibles para tu rol.
+          </Text>
         </View>
       </SafeAreaView>
     );
   }
 
+  /** Segundo paso: el operador aceptó en el diálogo. Recién aquí sale la orden al PLC. */
+  async function onConfirmar() {
+    if (!pendiente) return;
+    const { valve, verb, plantId } = pendiente;
+    setPendiente(null);
+    if (plantId !== selectedPlant.id) return;
+    const current = valves.find((v) => v.id === valve.id);
+    if (!current || !canControl || busy) return;
+    const action = accionDisponible(current, frozen, verb);
+    if (action.kind === 'blocked') {
+      setResultado({
+        ok: false,
+        signalSent: false,
+        tone: 'danger',
+        title: 'Orden bloqueada',
+        message: action.explain,
+        valveName: current.name,
+      });
+      return;
+    }
+    const originName = plantName;
+    const authGeneration = getAuthGeneration();
+    const verdict = await send(current, verb);
+    if (!mounted.current || getAuthGeneration() !== authGeneration) return verdict;
+    // A un diálogo con acuse de recibo, NO a un toast: aquí se movió un actuador físico y el
+    // veredicto puede ser "enviado pero sin confirmar", que el operador debe leer sí o sí.
+    setResultado({
+      ...verdict,
+      valveName: `${originName} · ${valve.name}`,
+      message: `Planta: ${originName} (${plantId}).\n\n${verdict.message}`,
+    });
+    return verdict;
+  }
+
   return (
-    <SafeAreaView style={styles.safe} edges={['bottom']}>
-      <PlantSelector />
-      <ConnectionBanner apiReachable={apiReachable} bridgeStatus={snapshot?.bridgeStatus} />
+    <PlantPickerLayout>
+      <SafeAreaView style={styles.safe} edges={['bottom']}>
+        <ConnectionBanner
+          apiReachable={apiReachable}
+          bridgeStatus={snapshot?.bridgeStatus}
+          integrationPending={integrationPending}
+        />
 
-      <ScrollView
-        contentContainerStyle={styles.content}
-        refreshControl={
-          <RefreshControl refreshing={isRefetching} onRefresh={refetch} colors={[Colors.primary]} tintColor={Colors.primary} />
-        }
-      >
-        <View style={styles.sectionHeader}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.plantName}>{plantName}</Text>
-            <Text style={styles.sectionSubtitle}>Electroválvulas</Text>
-          </View>
-          {valves.length > 0 && (
-            <View style={styles.summary}>
-              <Text style={[styles.summaryCount, { color: Colors.success }]}>{openCount} abiertas</Text>
-              <Text style={styles.summaryDot}> · </Text>
-              <Text style={[styles.summaryCount, { color: Colors.danger }]}>{closedCount} cerradas</Text>
+        <ScrollView
+          contentContainerStyle={styles.content}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefetching}
+              onRefresh={() => {
+                void refetch();
+              }}
+              colors={[Colors.primary]}
+              tintColor={Colors.primary}
+            />
+          }
+        >
+          <View style={styles.sectionHeader}>
+            <View style={{ flex: 1 }}>
+              <PlantPickerTrigger name={plantName} textStyle={styles.plantName} />
+              <Text style={styles.sectionSubtitle}>Electroválvulas</Text>
             </View>
-          )}
-        </View>
-
-        {isLoading && !snapshot ? (
-          <ListSkeleton rows={3} label="Cargando las electroválvulas" />
-        ) : showError ? (
-          <OfflineNotice
-            title="No se pudieron cargar las electroválvulas."
-            detail="No hay conexión con el servidor y este dispositivo no tiene ninguna lectura guardada de esta planta. Sin estado real no se debe operar una válvula."
-            onRetry={() => void refetch()}
-            retryLabel="Reintentar la carga de las electroválvulas"
-          />
-        ) : valves.length === 0 ? (
-          <View style={styles.loadingWrap}>
-            <Ionicons name="git-branch-outline" size={34} color={Colors.textSecondary} />
-            <Text style={styles.loadingText}>Esta planta no tiene electroválvulas mapeadas.</Text>
-            <Text style={styles.loadingSub}>
-              Solo los sitios con buffers de comando (INT_OUT/INT_IN) exponen válvulas. Los tanques
-              retransmitidos por otra planta no tienen canal propio.
-            </Text>
+            {valves.length > 0 && (
+              <View style={styles.summary}>
+                <Text style={[styles.summaryCount, { color: Colors.success }]}>
+                  {openCount} abiertas
+                </Text>
+                <Text style={styles.summaryDot}> · </Text>
+                <Text style={[styles.summaryCount, { color: Colors.danger }]}>
+                  {closedCount} cerradas
+                </Text>
+                {unconfirmedCount > 0 && (
+                  <Text style={[styles.summaryCount, { color: Colors.textSecondary }]}>
+                    {' '}
+                    · {unconfirmedCount} sin confirmar
+                  </Text>
+                )}
+                {faultCount > 0 && (
+                  <Text style={[styles.summaryCount, { color: Colors.danger }]}>
+                    {' '}
+                    · {faultCount} en falla
+                  </Text>
+                )}
+              </View>
+            )}
           </View>
-        ) : (
-          valves.map((valve) => <ValveItem key={valve.id} valve={valve} frozen={frozen} />)
-        )}
-      </ScrollView>
 
-      <LiveBadge state={livenessState} loading={isLoading && !snapshot} />
-    </SafeAreaView>
+          {/*
+          Aquí había dos franjas fijas y una lista de avisos efímeros. Se quitaron a petición de
+          operación: TODO lo que tenga que ver con una válvula va a la bandeja de notificaciones,
+          donde queda registrado con quién lo hizo, a qué hora y con la firma de la maniobra — y
+          donde lo ve el resto del equipo, no solo quien tuviera esta pantalla abierta.
+
+          Lo que decían no se ha perdido: la advertencia de que esta planta no confirma
+          eléctricamente la maniobra vive ahora en el diálogo de confirmación, justo antes de que
+          alguien mande la orden, que es cuando sirve para algo.
+        */}
+          {isLoading && !snapshot ? (
+            <ListSkeleton rows={3} label="Cargando las electroválvulas" />
+          ) : showError ? (
+            <OfflineNotice
+              title="No se pudieron cargar las electroválvulas."
+              detail="No hay conexión con el servidor y este dispositivo no tiene ninguna lectura guardada de esta planta. Sin estado real no se debe operar una válvula."
+              onRetry={() => void refetch()}
+              retryLabel="Reintentar la carga de las electroválvulas"
+            />
+          ) : valves.length === 0 && integrationPending ? (
+            // No es «sin válvulas mapeadas» a secas: las tiene en campo, pero la planta aún no está
+            // conectada al PLC maestro, y decirlo así evita que alguien lo reporte como una falla.
+            <View style={styles.loadingWrap}>
+              <Ionicons name="construct-outline" size={34} color={Colors.textSecondary} />
+              <Text style={styles.loadingText}>{EN_INTEGRACION.titulo}</Text>
+              <Text style={styles.loadingSub}>{EN_INTEGRACION.valvulas}</Text>
+            </View>
+          ) : valves.length === 0 ? (
+            <View style={styles.loadingWrap}>
+              <Ionicons name="git-branch-outline" size={34} color={Colors.textSecondary} />
+              <Text style={styles.loadingText}>Esta planta no tiene electroválvulas mapeadas.</Text>
+              <Text style={styles.loadingSub}>
+                Solo aparecen las válvulas declaradas en el mapping de la planta: las de mando
+                (INT_OUT/INT_IN) y las proporcionales que reportan su apertura. Los tanques
+                retransmitidos por otra planta no tienen canal propio.
+              </Text>
+            </View>
+          ) : (
+            valves.map((valve) => (
+              <ValveItem
+                key={valve.id}
+                valve={valve}
+                frozen={frozen}
+                busy={busy !== null}
+                compact={compact}
+                // Sin canal de comando no hay botón: hacer confirmar una maniobra que solo puede
+                // acabar en 404 es peor que no ofrecerla. ValveItem pone la nota en su lugar.
+                onToggle={canControl && valve.commandable ? onToggle : undefined}
+              />
+            ))
+          )}
+
+          {valves.length > 0 && !canControl && (
+            <Text style={styles.note}>Tu rol puede ver el estado, pero no operar válvulas.</Text>
+          )}
+        </ScrollView>
+
+        <ValveConfirmDialog
+          visible={pendiente !== null}
+          valveName={pendiente?.valve.name ?? ''}
+          plantName={plantName}
+          verb={pendiente?.verb ?? 'open'}
+          busy={pendiente !== null && busy === pendiente.valve.id}
+          conLecturaDeEstado={conLecturaDeEstado}
+          onConfirm={() => void onConfirmar()}
+          onCancel={() => setPendiente(null)}
+        />
+
+        <ValveResultDialog verdict={resultado} onClose={() => setResultado(null)} />
+
+        <LiveBadge
+          state={livenessState}
+          loading={isLoading && !snapshot}
+          integrationPending={integrationPending}
+        />
+      </SafeAreaView>
+    </PlantPickerLayout>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.surface },
+  safe: { flex: 1, minWidth: 0, backgroundColor: Colors.brand.page },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 10 },
-  content: { padding: 14 },
-  sectionHeader: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 12 },
-  plantName: { fontSize: 17, fontWeight: '800', color: Colors.textPrimary },
-  sectionSubtitle: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
-  summary: { flexDirection: 'row', alignItems: 'center', marginTop: 4 },
+  content: { padding: 16, paddingBottom: 28 },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  plantName: { fontSize: 22, lineHeight: 30, fontFamily: Fonts.semibold, color: Colors.brand.text },
+  sectionSubtitle: {
+    fontFamily: Fonts.regular,
+    fontSize: 13,
+    lineHeight: 20,
+    color: Colors.brand.textSecondary,
+    marginTop: 4,
+  },
+  summary: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    maxWidth: '65%',
+    marginTop: 4,
+  },
   summaryCount: { fontSize: 12, fontWeight: '700' },
   summaryDot: { color: Colors.textSecondary, fontSize: 12 },
   notice: {
@@ -149,5 +346,17 @@ const styles = StyleSheet.create({
   eventMsg: { fontSize: 11.5, lineHeight: 16, color: Colors.textSecondary, marginTop: 2 },
   loadingWrap: { paddingVertical: 44, alignItems: 'center', gap: 8 },
   loadingText: { color: Colors.textSecondary, fontSize: 14, textAlign: 'center' },
-  loadingSub: { color: Colors.textSecondary, fontSize: 12, textAlign: 'center', paddingHorizontal: 20 },
+  loadingSub: {
+    color: Colors.textSecondary,
+    fontSize: 12,
+    textAlign: 'center',
+    paddingHorizontal: 20,
+  },
+  note: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    marginTop: 12,
+    fontStyle: 'italic',
+  },
 });

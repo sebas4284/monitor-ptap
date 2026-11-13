@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Aquora · Tablero celular</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#04101A}
+a{color:#7CC4EC}a:hover{color:#B5DEF5}
+@keyframes aqDrift{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+@keyframes aqRise{from{transform:translateY(100%)}to{transform:translateY(0)}}
+@keyframes aqPulse{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes aqSheet{from{transform:translateY(100%)}to{transform:translateY(0)}}
+@keyframes aqFade{from{opacity:0}to{opacity:1}}
+.aq-wave{position:absolute;left:0;bottom:0;width:200%;animation:aqDrift linear infinite}
+@media (prefers-reduced-motion: reduce){.aq-wave,.aq-anim{animation:none!important}}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; position: relative; overflow: hidden; font-family: Poppins, sans-serif; color: #F2F7FA; background: #04101A">
+
+<header style="position: relative; overflow: hidden; background: #061827; padding: 18px 20px 70px">
+<div class="aq-anim" aria-hidden="true" style="position: absolute; left: 0; right: 0; bottom: 0; height: 80px; animation: aqRise 2s cubic-bezier(.2,.7,.2,1) both">
+<svg class="aq-wave" viewBox="0 0 1560 80" preserveAspectRatio="none" style="height: 80px; animation-duration: 14s"><path d="M0 30 Q97.5 5 195 30 T390 30 T585 30 T780 30 T975 30 T1170 30 T1365 30 T1560 30 V80 H0 Z" fill="#0B3A5C"></path></svg>
+<svg class="aq-wave" viewBox="0 0 1560 80" preserveAspectRatio="none" style="height: 60px; animation-duration: 9s; animation-direction: reverse"><path d="M0 25 Q130 0 260 25 T520 25 T780 25 T1040 25 T1300 25 T1560 25 V80 H0 Z" fill="#12608F" fill-opacity="0.8"></path></svg>
+<svg class="aq-wave" viewBox="0 0 1560 80" preserveAspectRatio="none" style="height: 40px; animation-duration: 6s"><path d="M0 18 Q65 4 130 18 T260 18 T390 18 T520 18 T650 18 T780 18 T910 18 T1040 18 T1170 18 T1300 18 T1430 18 T1560 18 V80 H0 Z" fill="#2491CC" fill-opacity="0.85"></path></svg>
+</div>
+<div style="position: relative; display: flex; justify-content: space-between; align-items: center">
+<img src="/_blob/4ce09daf0f394db755966491555c8841" alt="Aquora" style="width: 46px; height: 38px; object-fit: contain">
+<button type="button" aria-label="Alertas, 1 sin ver" style="position: relative; width: 44px; height: 44px; border: 0; border-radius: 12px; background: transparent; cursor: pointer; display: flex; align-items: center; justify-content: center">
+<svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#F2F7FA" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"></path><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"></path></svg>
+<span style="position: absolute; top: 6px; right: 6px; min-width: 16px; height: 16px; border-radius: 8px; background: #E5484D; color: #fff; font-size: 10px; display: flex; align-items: center; justify-content: center">1</span>
+</button>
+</div>
+<button type="button" onClick="{{ openSheet }}" aria-haspopup="dialog" style="position: relative; margin-top: 14px; display: flex; align-items: center; gap: 8px; border: 0; background: transparent; padding: 4px 0; cursor: pointer; color: #F2F7FA; font-family: Poppins, sans-serif">
+<span style="font-size: 26px; font-weight: 600; letter-spacing: -0.3px">{{ current }}</span>
+<svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#7CC4EC" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"></path></svg>
+</button>
+<div style="position: relative; display: flex; align-items: center; gap: 8px; font-size: 13px; color: #A9C0CF; margin-top: 2px">
+<span class="aq-anim" aria-hidden="true" style="width: 8px; height: 8px; border-radius: 50%; background: #88BD4C; animation: aqPulse 2s ease-in-out infinite"></span>
+<span><b style="color: #88BD4C; font-weight: 500">En vivo</b> · 3:14 p. m.</span>
+</div>
+</header>
+
+<div style="position: absolute; left: 0; right: 0; top: 206px; bottom: 74px; overflow-y: auto; padding: 16px 16px 20px; box-sizing: border-box; display: flex; flex-direction: column; gap: 16px">
+
+<div role="alert" style="display: flex; align-items: flex-start; gap: 10px; background: #2A1416; border: 1px solid #E5484D; border-radius: 12px; padding: 12px 14px; font-size: 13px; line-height: 1.45">
+<svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#FF7A7A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex: 0 0 auto; margin-top: 1px"><path d="M12 9v4M12 17h.01"></path><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"></path></svg>
+<span><b style="font-weight: 600; color: #FF9A9A">Caudal de salida fuera de rango.</b> <span style="color: #E6C9C9">62,27 l/s, máximo 3,00.</span></span>
+</div>
+
+<section aria-labelledby="m-entrada" style="display: flex; flex-direction: column; gap: 10px">
+<h2 id="m-entrada" style="margin: 0; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 6px"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#7CC4EC" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>Entrada</h2>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px">
+<div style="background: #0A1C2A; border: 1px solid #1B3044; border-radius: 14px; padding: 14px">
+<div style="font-size: 12px; color: #A9C0CF">Caudal</div>
+<div style="font-size: 26px; font-weight: 600; color: #7CC4EC; margin-top: 4px">84,26</div>
+<div style="font-size: 12px; color: #A9C0CF">l/s · <span style="color: #88BD4C">Normal</span></div>
+</div>
+<div style="background: #0A1C2A; border: 1px solid #1B3044; border-radius: 14px; padding: 14px">
+<div style="font-size: 12px; color: #A9C0CF">Presión</div>
+<div style="font-size: 26px; font-weight: 600; color: #7CC4EC; margin-top: 4px">89,99</div>
+<div style="font-size: 12px; color: #A9C0CF">psi · <span style="color: #88BD4C">Normal</span></div>
+</div>
+</div>
+</section>
+
+<section aria-labelledby="m-salida" style="display: flex; flex-direction: column; gap: 10px">
+<h2 id="m-salida" style="margin: 0; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 6px"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2491CC" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 6l-6 6 6 6"></path></svg>Salida</h2>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px">
+<div style="background: #0A1C2A; border: 1.5px solid #E5484D; border-radius: 14px; padding: 14px">
+<div style="font-size: 12px; color: #A9C0CF">Caudal</div>
+<div style="font-size: 26px; font-weight: 600; color: #FF7A7A; margin-top: 4px">62,27</div>
+<div style="font-size: 12px; color: #FF9A9A">l/s · Máx 3,00</div>
+</div>
+<div style="background: #0A1C2A; border: 1px solid #1B3044; border-radius: 14px; padding: 14px">
+<div style="font-size: 12px; color: #A9C0CF">Presión</div>
+<div style="font-size: 26px; font-weight: 600; color: #4FA8DC; margin-top: 4px">72,42</div>
+<div style="font-size: 12px; color: #A9C0CF">psi · <span style="color: #88BD4C">Normal</span></div>
+</div>
+</div>
+</section>
+
+<section aria-labelledby="m-tanque" style="background: #0A1C2A; border: 1px solid #1B3044; border-radius: 14px; padding: 14px; display: flex; gap: 16px; align-items: center">
+<div role="img" aria-label="Tanque 1 al 72 %" style="position: relative; width: 64px; height: 92px; border: 2px solid #4F6A82; border-top: 0; border-radius: 0 0 10px 10px; overflow: hidden; flex: 0 0 auto">
+<div style="position: absolute; left: 0; right: 0; bottom: 0; height: 72%; background: #12608F">
+<svg class="aq-wave" aria-hidden="true" viewBox="0 0 256 12" preserveAspectRatio="none" style="top: -8px; bottom: auto; height: 12px; animation-duration: 4s"><path d="M0 6 Q16 0 32 6 T64 6 T96 6 T128 6 T160 6 T192 6 T224 6 T256 6 V12 H0 Z" fill="#12608F"></path></svg>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 3px">
+<h2 id="m-tanque" style="margin: 0; font-size: 14px; font-weight: 600">Tanque 1</h2>
+<div style="font-size: 26px; font-weight: 600">72 <span style="font-size: 13px; font-weight: 400; color: #A9C0CF">%</span></div>
+<div style="font-size: 12px; color: #A9C0CF">Nivel 1,42 m</div>
+<div style="font-size: 12px; color: #F3CB35">Autonomía si cierras: 15 h 58 min</div>
+</div>
+</section>
+</div>
+
+<nav aria-label="Secciones" style="position: absolute; left: 0; right: 0; bottom: 0; height: 74px; background: #061827; border-top: 1px solid #16293A; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr))">
+<a href="#tablero" aria-current="page" style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 11px; color: #7CC4EC; text-decoration: none; border-top: 2px solid #2491CC"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect></svg>Tablero</a>
+<a href="#valvulas" style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 11px; color: #A9C0CF; text-decoration: none"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="10" rx="5"></rect><circle cx="16" cy="12" r="3"></circle></svg>Válvulas</a>
+<a href="#reportes" style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 11px; color: #A9C0CF; text-decoration: none"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5M9 13h6M9 17h6"></path></svg>Reportes</a>
+</nav>
+
+<sc-if value="{{ open }}" hint-placeholder-val="{{ false }}">
+<div style="position: absolute; inset: 0; background: rgba(2,8,14,.7); animation: aqFade .2s both" onClick="{{ closeSheet }}"></div>
+<div role="dialog" aria-label="Elegir planta" style="position: absolute; left: 0; right: 0; bottom: 0; height: 640px; background: #061827; border-radius: 22px 22px 0 0; border-top: 1px solid #1E3A52; padding: 10px 16px 16px; box-sizing: border-box; display: flex; flex-direction: column; gap: 12px; animation: aqSheet .32s cubic-bezier(.2,.8,.2,1) both">
+<div style="width: 40px; height: 4px; border-radius: 2px; background: #4F6A82; align-self: center"></div>
+<div style="display: flex; justify-content: space-between; align-items: center">
+<h2 style="margin: 0; font-size: 18px; font-weight: 600">Elegir planta</h2>
+<button type="button" onClick="{{ closeSheet }}" aria-label="Cerrar" style="width: 44px; height: 44px; border: 0; background: transparent; border-radius: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center"><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#A9C0CF" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"></path></svg></button>
+</div>
+<div role="group" aria-label="Filtrar por estado" style="display: flex; gap: 6px">
+<sc-for list="{{ filters }}" as="f" hint-placeholder-count="3">
+<button type="button" onClick="{{ f.pick }}" aria-pressed="{{ f.pressed }}" style="{{ f.style }}">{{ f.label }}</button>
+</sc-for>
+</div>
+<div style="flex: 1; overflow-y: auto; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; align-content: start">
+<sc-for list="{{ plants }}" as="p" hint-placeholder-count="12">
+<button type="button" onClick="{{ p.pick }}" aria-pressed="{{ p.selected }}" style="{{ p.style }}">
+<span style="font-size: 14px; font-weight: 500; color: #F2F7FA">{{ p.name }}</span>
+<span style="display: flex; align-items: center; gap: 6px; font-size: 11px; color: {{ p.textColor }}"><span style="width: 7px; height: 7px; border-radius: 50%; background: {{ p.dot }}; flex: 0 0 auto"></span>{{ p.status }}</span>
+<svg aria-hidden="true" width="100%" height="16" viewBox="0 0 140 16" preserveAspectRatio="none" style="position: absolute; left: 0; bottom: 0"><path d="M0 8 Q17.5 2 35 8 T70 8 T105 8 T140 8 V16 H0 Z" fill="{{ p.dot }}" fill-opacity="0.3"></path></svg>
+</button>
+</sc-for>
+</div>
+</div>
+</sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { selected: 'voragine', filter: 'todas', open: false };
+  }
+  renderVals() {
+    const s = this.state;
+    const data = [
+      ['voragine', 'La Vorágine', 'live'], ['soledad', 'Soledad', 'live'], ['montebello', 'Montebello', 'stable'],
+      ['cascajal', 'Cascajal', 'live'], ['km18', 'Km 18', 'live'], ['alto', 'Alto de los Mangos', 'stable'],
+      ['campoalegre', 'Campoalegre', 'live'], ['pichinde', 'Pichindé', 'frozen'], ['carbonero', 'Carbonero', 'live'],
+      ['sirena', 'La Sirena', 'live'], ['sanantonio', 'San Antonio', 'live'], ['quijote', 'El Quijote', 'offline'],
+    ];
+    const look = {
+      live: { status: 'En vivo', dot: '#88BD4C', text: '#88BD4C' },
+      stable: { status: 'Estable', dot: '#88BD4C', text: '#88BD4C' },
+      frozen: { status: 'Sin datos 11:40 a. m.', dot: '#888D91', text: '#A9C0CF' },
+      offline: { status: 'Sin conexión', dot: '#E5484D', text: '#FF9A9A' },
+    };
+    const ok = (st) => st === 'live' || st === 'stable';
+    const shown = data.filter(([, , st]) => s.filter === 'todas' || (s.filter === 'linea' ? ok(st) : !ok(st)));
+    const plants = shown.map(([id, name, st]) => {
+      const sel = id === s.selected;
+      return {
+        name, status: look[st].status, dot: look[st].dot, textColor: look[st].text, selected: sel ? 'true' : 'false',
+        style: 'position: relative; overflow: hidden; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-height: 76px; padding: 12px 12px 18px; border-radius: 14px; cursor: pointer; text-align: left; font-family: Poppins, sans-serif; background: ' + (sel ? '#0E2D45' : '#0A1C2A') + '; border: 1.5px solid ' + (sel ? '#2491CC' : '#1B3044'),
+        pick: () => this.setState({ selected: id, open: false }),
+      };
+    });
+    const filters = [['todas', 'Todas'], ['linea', 'En línea'], ['sin', 'Sin conexión']].map(([id, label]) => {
+      const on = s.filter === id;
+      return {
+        label, pressed: on ? 'true' : 'false',
+        style: 'height: 36px; padding: 0 12px; border-radius: 99px; cursor: pointer; font: 500 13px Poppins, sans-serif; color: ' + (on ? '#FFFFFF' : '#A9C0CF') + '; background: ' + (on ? '#1C6FA0' : 'transparent') + '; border: 1px solid ' + (on ? '#1C6FA0' : '#24384A'),
+        pick: () => this.setState({ filter: id }),
+      };
+    });
+    const cur = data.find(([id]) => id === s.selected);
+    return {
+      plants, filters, open: s.open,
+      current: cur ? cur[1] : 'La Vorágine',
+      openSheet: () => this.setState({ open: true }),
+      closeSheet: () => this.setState({ open: false }),
+    };
+  }
+}
+</script>
+</body>
+</html>

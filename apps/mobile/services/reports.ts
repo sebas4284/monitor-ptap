@@ -1,26 +1,13 @@
 import { Platform, Share } from 'react-native';
+import type { ReportInfo } from '@ptap/shared';
 import { API_BASE_URL, getAuthToken, getJson, postJson } from './api';
+
+export type { ReportInfo, ReportStatus } from '@ptap/shared';
 
 /**
  * Cliente REAL de informes por métrica (CSV). Reemplaza el mock de reportes: la lista, el estado
  * y el archivo salen del backend. Generar y descargar exigen el permiso `export_data` (admin).
  */
-export type ReportStatus = 'idle' | 'collecting' | 'ready';
-
-export interface ReportInfo {
-  metric: string;
-  label: string;
-  unit: string | null;
-  status: ReportStatus;
-  /** Muestras tomadas / total mientras `collecting`. */
-  progress: number | null;
-  total: number | null;
-  /** ISO de la última generación completada, o null. */
-  generatedAt: string | null;
-  rows: number | null;
-  nextAutoAt: string | null;
-}
-
 /** Métricas de la planta con el estado de su informe. */
 export async function fetchReports(plantId: string): Promise<ReportInfo[]> {
   const body = await getJson<{ reports: ReportInfo[] }>(`/api/reports/${plantId}`);

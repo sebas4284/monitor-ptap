@@ -1,4 +1,6 @@
 import { Platform } from 'react-native';
+import { CANAL_AVISOS, CANAL_CRITICAS } from '@ptap/shared';
+import { CANALES_AQUORA, CANALES_RETIRADOS } from './push-rules';
 
 /**
  * Notificaciones del SISTEMA OPERATIVO (panel de Android / centro de notificaciones del navegador).
@@ -7,8 +9,10 @@ import { Platform } from 'react-native';
  * servidor (`services/notifications.ts`). Esto es lo que aparece **fuera** de la aplicación.
  *
  * Dos implementaciones, porque no hay una que sirva para ambas:
- *  - **Nativo (APK)**: `expo-notifications` con notificaciones LOCALES. No hay servidor de push
- *    (nada de Firebase): el propio dispositivo consulta y levanta el aviso. Ver `notification-sync.ts`.
+ *  - **Nativo (APK)**: `expo-notifications`. Desde la 1.4.0 los avisos de planta llegan sobre todo por
+ *    PUSH (FCM): los muestra Android aunque la app esté cerrada (`push-registration.ts`). Las
+ *    notificaciones LOCALES de aquí quedan para la consulta de respaldo de los teléfonos sin push y
+ *    para el aviso de actualización. Ver `notification-sync.ts`.
  *  - **Web**: la API `Notification` del navegador. `expo-notifications` no soporta web.
  *
  * ⚠️ **En web esto solo funciona sobre HTTPS.** La API exige un *contexto seguro*; sobre
@@ -46,12 +50,20 @@ export function unsupportedReason(): string | null {
   return 'Este navegador no admite notificaciones.';
 }
 
+/**
+ * Traduce el estado de `expo-notifications` al nuestro. Compartido por la consulta y la petición
+ * para que ambas digan lo mismo del mismo permiso.
+ */
+function desdeEstadoNativo(status: string): PermissionState {
+  return status === 'granted' ? 'granted' : status === 'denied' ? 'denied' : 'undetermined';
+}
+
 export async function getPermission(): Promise<PermissionState> {
   if (!isSupported()) return 'unsupported';
   if (isWeb) return window.Notification.permission as PermissionState;
   const { getPermissionsAsync } = await nativeModule();
   const { status } = await getPermissionsAsync();
-  return status === 'granted' ? 'granted' : status === 'denied' ? 'denied' : 'undetermined';
+  return desdeEstadoNativo(status);
 }
 
 /**
@@ -67,42 +79,63 @@ export async function requestPermission(): Promise<PermissionState> {
     if (result === 'granted') unlockWebAudio();
     return result as PermissionState;
   }
+  // Android 13 cannot show its permission prompt before a notification channel exists.
+  await ensureAndroidChannel();
   const { requestPermissionsAsync } = await nativeModule();
   const { status } = await requestPermissionsAsync();
-  return status === 'granted' ? 'granted' : 'denied';
+  // `undetermined` se respeta, no se convierte en `denied`: en Android 13+ cerrar el diálogo sin
+  // elegir deja el permiso sin decidir y se puede volver a pedir. Darlo por denegado escondía la
+  // franja de «Activar» y mandaba a la persona a los ajustes del sistema sin necesidad.
+  return desdeEstadoNativo(status);
 }
 
 /**
- * Canal de Android. Obligatorio desde Android 8: sin canal, el sistema descarta la notificación
- * sin avisar. Importancia alta para que aparezca como aviso emergente, no solo en la lista.
- */
-export const CANAL_NORMAL = 'ptap-alertas';
-/**
- * Canal aparte para lo crítico. Los canales de Android son INMUTABLES una vez creados —cambiarle la
- * importancia a uno existente no surte efecto—, así que separar la urgencia exige un id nuevo.
+ * Canal de Android de los avisos normales. Obligatorio desde Android 8: sin canal, el sistema
+ * descarta la notificación sin avisar.
  *
- * Existe porque hasta ahora un rebose real y un «el máximo está mal medido» sonaban y vibraban
- * exactamente igual. Cuando todo suena igual, el operario aprende a ignorarlo todo.
+ * Importancia ALTA: suena, vibra y se despliega como aviso emergente sobre la pantalla, como un
+ * mensaje de WhatsApp. El canal anterior (`ptap-alertas`) estaba en DEFAULT —sonaba, pero el banner
+ * no salía— y no se podía subir: los canales de Android son INMUTABLES una vez creados, así que el
+ * arreglo exigió un id nuevo. El id es el que nombra el servidor en cada push (`@ptap/shared`).
  */
-export const CANAL_CRITICO = 'ptap-criticas';
+export const CANAL_NORMAL = CANAL_AVISOS;
+/**
+ * Canal aparte para lo crítico, de importancia MÁXIMA y con su propia vibración, larga.
+ *
+ * Existe porque un rebose real y un «el máximo está mal medido» sonaban y vibraban exactamente igual.
+ * Cuando todo suena igual, el operario aprende a ignorarlo todo.
+ */
+export const CANAL_CRITICO = CANAL_CRITICAS;
 
+/**
+ * Crea (o deja como están) los canales de Aquora y borra los de las versiones anteriores.
+ *
+ * Se llama al arrancar y antes de publicar. Tiene que ejecutarse antes del primer push: si el push
+ * nombra un canal que el teléfono todavía no tiene, Android lo publica en uno de reserva sin banner.
+ *
+ * Sin `sound`: así el canal usa el sonido de notificación del sistema. Pasar `'default'` lo buscaría
+ * como un archivo de sonido propio de la app, y expo dejaría un error en el log en cada arranque.
+ */
 export async function ensureAndroidChannel(): Promise<void> {
   if (Platform.OS !== 'android') return;
   const Notifications = await nativeModule();
-  await Notifications.setNotificationChannelAsync(CANAL_NORMAL, {
-    name: 'Avisos de planta',
-    description: 'Sensores sin refrescar, señales fuera de rango y niveles de tanque.',
-    importance: Notifications.AndroidImportance.DEFAULT,
-    vibrationPattern: [0, 250],
-    enableVibrate: true,
-  });
-  await Notifications.setNotificationChannelAsync(CANAL_CRITICO, {
-    name: 'Alertas críticas',
-    description: 'Tanque rebosando, sin autonomía o planta sin datos. Requieren actuar.',
-    importance: Notifications.AndroidImportance.MAX,
-    vibrationPattern: [0, 400, 200, 400, 200, 400],
-    enableVibrate: true,
-  });
+  for (const canal of CANALES_AQUORA) {
+    await Notifications.setNotificationChannelAsync(canal.id, {
+      name: canal.nombre,
+      description: canal.descripcion,
+      importance: Notifications.AndroidImportance[canal.importancia],
+      vibrationPattern: canal.vibracion,
+      enableVibrate: true,
+      // Visible entera con el teléfono bloqueado: es un aviso de planta, no un mensaje privado.
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+      bypassDnd: canal.saltarNoMolestar,
+    });
+  }
+  // Los viejos fuera: si no, «Avisos de planta» saldría dos veces en los ajustes del sistema, uno de
+  // ellos muerto. Borrar un canal que no existe no hace nada.
+  for (const id of CANALES_RETIRADOS) {
+    await Notifications.deleteNotificationChannelAsync(id).catch(() => undefined);
+  }
 }
 
 /**
@@ -147,6 +180,10 @@ function pitido(): void {
 /**
  * Muestra un aviso en el panel del sistema. Silencioso si no hay permiso: nunca lanza.
  *
+ * Devuelve `true` solo si el sistema aceptó la notificación; `false` sin soporte, sin permiso o si
+ * publicarla falló. Quien la llama lo necesita para no dar por anunciado lo que nunca salió: de eso
+ * depende que avance el puntero de `notification-sync.ts` y que se recuerde el aviso de versión.
+ *
  * `critica` cambia dos cosas, y las dos importan:
  *  - va por el canal de importancia MÁXIMA, con su propia vibración;
  *  - es PERSISTENTE (`sticky` en Android, `requireInteraction` en web): no se descarta sola. Un
@@ -157,13 +194,16 @@ export async function presentNotification(
   body: string,
   data?: Record<string, unknown>,
   critica = false,
-): Promise<void> {
+  isCurrent: () => boolean = () => true,
+): Promise<boolean> {
   try {
-    if (!isSupported()) return;
-    if ((await getPermission()) !== 'granted') return;
+    if (!isCurrent()) return false;
+    if (!isSupported()) return false;
+    if ((await getPermission()) !== 'granted') return false;
+    if (!isCurrent()) return false;
 
     if (isWeb) {
-      new window.Notification(title, {
+      const n = new window.Notification(title, {
         body,
         tag: String(data?.tag ?? title),
         data,
@@ -174,11 +214,29 @@ export async function presentNotification(
         // una sala de control es un aviso que nadie ve.
         silent: false,
       });
+      // Que la notificación LLEVE a algún sitio. En web el destino se cuelga aquí, al crearla: la
+      // API del navegador no tiene un manejador global de toques como el nativo. Sin esto, el aviso
+      // de actualización se podía leer pero no seguir, que es la mitad de su utilidad.
+      const destino = typeof data?.downloadUrl === 'string' ? data.downloadUrl : null;
+      if (destino) {
+        n.onclick = () => {
+          window.open(destino, '_blank', 'noopener');
+          n.close();
+        };
+      }
       if (critica) pitido();
-      return;
+      return true;
     }
+    // Los avisos de planta (`tag` = `n-<id>`) usan el tag como identificador de la notificación. El
+    // puntero de `notification-sync` prefiere repetir un aviso a perderlo, y con un identificador
+    // fijo Android REEMPLAZA la notificación anterior en vez de apilar otra igual. El resto (resumen,
+    // actualización) conserva el identificador aleatorio de siempre.
+    const tag = typeof data?.tag === 'string' ? data.tag : null;
+    await ensureAndroidChannel();
     const Notifications = await nativeModule();
+    if (!isCurrent()) return false;
     await Notifications.scheduleNotificationAsync({
+      ...(tag?.startsWith('n-') ? { identifier: tag } : {}),
       content: {
         title,
         body,
@@ -190,7 +248,10 @@ export async function presentNotification(
       },
       trigger: null, // null = inmediata
     });
+    return true;
   } catch {
-    // Una notificación que no se puede mostrar no debe romper nada de lo que la invocó.
+    // Una notificación que no se puede mostrar no debe romper nada de lo que la invocó; basta con
+    // decirlo, para que no se dé por entregada.
+    return false;
   }
 }

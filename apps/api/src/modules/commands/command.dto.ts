@@ -1,5 +1,8 @@
 import { z } from 'zod';
-import type { CommandValue } from './command-log.repository';
+import type { CommandResult } from '@ptap/shared';
+import type { RequestEvidence } from '../../infrastructure/audit/request-evidence';
+
+export type { CommandOutcome, CommandResult } from '@ptap/shared';
 
 /** Cuerpo de POST /api/plants/:plantId/commands. API de DOMINIO, nunca de NodeIds. */
 export const commandRequestSchema = z
@@ -11,16 +14,6 @@ export const commandRequestSchema = z
   .strict();
 
 export type CommandRequest = z.infer<typeof commandRequestSchema>;
-
-/**
- * `sent` es un desenlace intermedio deliberado, no un "casi confirmado": la escritura salió y el
- * eco la verificó en el canal, pero el canal de ESTADO de ese sitio no tiene semántica verificada
- * en campo (`readBack.stateVerified: false`), así que el sistema **no puede afirmar ni negar** que
- * el equipo se movió. Reportarlo como `failed` acusaría al equipo con base en un valor inferido;
- * reportarlo como `confirmed` afirmaría un movimiento que nadie observó. Ninguna de las dos es
- * cierta, y por eso existe este tercer estado.
- */
-export type CommandOutcome = 'confirmed' | 'sent' | 'failed' | 'rejected';
 
 /** Motivos de rechazo (comando NO ejecutado) y de fallo (ejecutado, sin confirmar). */
 export const REJECT = {
@@ -52,41 +45,57 @@ export const FAIL = {
    * borra justo el dato que sirve para distinguirlas.
    */
   HOLD_FEEDBACK_TIMEOUT: 'HOLD_FEEDBACK_TIMEOUT',
+  /**
+   * Realimentación por bits (`pulse.feedback`): durante el sostenido el PLC informó FALLA de la
+   * válvula. En una orden sostenida la salida permanece puesta; este resultado no la libera.
+   * No es lo mismo que un tope agotado: aquí el equipo SÍ respondió, y
+   * lo que dijo es que no puede moverse (en La Vorágine, el temporizador de falla de 90 s del PLC, o
+   * una falla anterior que hay que rearmar desde la HMI).
+   */
+  VALVE_FAULT: 'VALVE_FAULT',
+  /**
+   * El sostenido se cortó porque llegó la orden CONTRARIA sobre la misma válvula (cerrar mientras se
+   * sostenía abrir). Se soltó sin confirmación: ni el equipo falló ni se agotó el tope.
+   */
+  HOLD_REPLACED: 'HOLD_REPLACED',
+  /**
+   * El proceso se detuvo (reinicio, despliegue, caída) con el sostenido en marcha. El bit lo apagó el
+   * apagado ordenado o la limpieza de huérfanos al volver a conectar el puente; qué hizo la válvula
+   * no se sabe.
+   */
+  HOLD_INTERRUPTED: 'HOLD_INTERRUPTED',
 } as const;
 
-/** Motivos de desenlace `sent`: se escribió y se verificó, pero no hay con qué confirmar el estado. */
+/** Motivos de `sent`: escritura verificada, estado físico aún sin confirmar. */
 export const SENT = {
+  /** The sustained command echo is verified; physical endpoint feedback is still pending.
+   * The output stays set and the normal telemetry pipeline continues reporting actual position.
+   * This acknowledgment does not start a background hold, timer, cleanup or later command write.
+   */
+  SENT_FEEDBACK_PENDING: 'SENT_FEEDBACK_PENDING',
   /**
    * El eco confirma que el valor quedó en el canal de comando, pero el canal de ESTADO de este
    * sitio está declarado `stateVerified: false` — su valor esperado es una inferencia, no una
    * captura. No se afirma que el equipo se movió, ni se lo acusa de no haberlo hecho.
    */
   SENT_STATE_UNVERIFIED: 'SENT_STATE_UNVERIFIED',
+  /**
+   * Realimentación por bits (`pulse.feedback`, integrador 2026-10-23): la orden salió y se mantiene en
+   * SEGUNDO PLANO hasta que el PLC confirme o informe falla (máx. `holdMs`). La respuesta HTTP no
+   * espera: el resultado final queda en `command_log` (fila de resultado), en la auditoría y en la
+   * bandeja, y la app lo ve en el estado en vivo de la válvula.
+   *
+   * Mientras el sostenido sigue, la fila de la orden conserva este motivo; es lo que permite saber,
+   * tras un reinicio, qué órdenes se quedaron sin resultado (ver `FAIL.HOLD_INTERRUPTED`).
+   */
+  SENT_HOLDING_UNTIL_FEEDBACK: 'SENT_HOLDING_UNTIL_FEEDBACK',
 } as const;
 
-export interface CommandResult {
-  status: CommandOutcome;
-  reason: string | null;
-  plantId: string;
-  target: string;
-  command: string;
-  previousValue: CommandValue;
-  writtenValue: CommandValue;
-  confirmedValue: CommandValue;
-  /**
-   * ECO del canal de COMANDO leído INMEDIATAMENTE después de escribir (el mismo elemento que se
-   * escribió). Responde "¿se escribió en ese instante?" de forma independiente del canal de estado.
-   * null = no se pudo leer el eco.
-   */
-  writeEcho: CommandValue;
-  /** true si el eco coincide con el valor escrito → la escritura SÍ llegó al canal. */
-  writeVerified: boolean | null;
-  /** sequence del snapshot usado para el interlock (trazabilidad). */
-  interlockSequence: number | null;
-  /** true si es una respuesta idempotente (comando ya ejecutado con la misma idempotencyKey). */
-  idempotent: boolean;
-  at: string;
-}
+/** Resultado del sostenido con realimentación: lo que va al aviso, a la auditoría y a `command_log`. */
+export const RESULTADO_DEL_SOSTENIDO = {
+  /** El PLC informó el estado del verbo (abierta con abrir, cerrada con cerrar). */
+  FEEDBACK_CONFIRMED: 'FEEDBACK_CONFIRMED',
+} as const;
 
 /** Actor autenticado que emite el comando (de request.user + IP). */
 export interface CommandActor {
@@ -102,6 +111,7 @@ export interface CommandActor {
   userEmail: string | null;
   role: string | null;
   ip: string | null;
+  request?: RequestEvidence;
 }
 
 /**

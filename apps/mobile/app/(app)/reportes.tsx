@@ -1,14 +1,28 @@
 import { useState } from 'react';
-import { View, Text, ScrollView, RefreshControl, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
+import {
+  View,
+  Text,
+  ScrollView,
+  RefreshControl,
+  StyleSheet,
+  TouchableOpacity,
+  ActivityIndicator,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Ionicons } from '@expo/vector-icons';
-import { fetchReports, generateReport, downloadReport, type ReportInfo } from '../../services/reports';
+import Ionicons from '../../components/AppIcon';
+import {
+  fetchReports,
+  generateReport,
+  downloadReport,
+  type ReportInfo,
+} from '../../services/reports';
 import { usePlant } from '../../context/PlantContext';
 import { useAuth } from '../../context/AuthContext';
-import { PlantSelector } from '../../components/PlantSelector';
+import { PlantPickerLayout, PlantPickerTrigger } from '../../components/PlantPicker';
 import { toast } from '../../services/toast-store';
 import Colors from '../../constants/colors';
+import { Fonts } from '../../constants/fonts';
 
 function fechaHora(iso: string | null): string {
   if (!iso) return '';
@@ -25,7 +39,13 @@ export default function ReportesScreen() {
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState<string | null>(null); // metric en acción
 
-  const { data: reports, isLoading, isError, refetch, isRefetching } = useQuery({
+  const {
+    data: reports,
+    isLoading,
+    isError,
+    refetch,
+    isRefetching,
+  } = useQuery({
     queryKey: ['reports', selectedPlant.id],
     queryFn: () => fetchReports(selectedPlant.id),
     // No dispara la petición para quien no puede ver (evita un 403 inútil).
@@ -39,9 +59,13 @@ export default function ReportesScreen() {
   if (!canView) {
     return (
       <SafeAreaView style={{ flex: 1, backgroundColor: Colors.bg }}>
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 10 }}>
+        <View
+          style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 10 }}
+        >
           <Ionicons name="lock-closed-outline" size={40} color={Colors.textSecondary} />
-          <Text style={{ fontSize: 18, fontWeight: '700', color: Colors.textPrimary }}>Acceso restringido</Text>
+          <Text style={{ fontSize: 18, fontWeight: '700', color: Colors.textPrimary }}>
+            Acceso restringido
+          </Text>
           <Text style={{ fontSize: 13, color: Colors.textSecondary, textAlign: 'center' }}>
             Los informes están disponibles para operador, jefe y administrador.
           </Text>
@@ -70,66 +94,83 @@ export default function ReportesScreen() {
       if (!ok) toast.error('No se pudo descargar', 'El informe aún no está disponible.');
     } catch (err) {
       // Sin este catch, un fallo de red dejaba un rechazo silencioso (a diferencia de Generar).
-      toast.error('No se pudo descargar', err instanceof Error ? err.message : 'Revisa tu conexión e intenta de nuevo.');
+      toast.error(
+        'No se pudo descargar',
+        err instanceof Error ? err.message : 'Revisa tu conexión e intenta de nuevo.',
+      );
     } finally {
       setBusy(null);
     }
   }
 
   return (
-    <SafeAreaView style={styles.safe} edges={['bottom']}>
-      <PlantSelector />
-
-      <ScrollView
-        contentContainerStyle={styles.content}
-        refreshControl={
-          <RefreshControl refreshing={isRefetching} onRefresh={refetch} colors={[Colors.primary]} tintColor={Colors.primary} />
-        }
-      >
-        <View style={styles.sectionHeader}>
-          <Text style={styles.plantName}>{selectedPlant.name}</Text>
-          <Text style={styles.sectionSubtitle}>
-            Informes por métrica · 1 muestra/min por 1 h · automáticos cada 7 días
-          </Text>
-        </View>
-
-        {isLoading ? (
-          <View style={styles.loadingWrap}>
-            <Text style={styles.loadingText}>Cargando informes…</Text>
-          </View>
-        ) : isError ? (
-          // Distinto de "sin métricas": aquí la petición FALLÓ (backend caído/timeout). Antes esto
-          // se confundía con "planta vacía" y desinformaba.
-          <View style={styles.loadingWrap}>
-            <Ionicons name="cloud-offline-outline" size={34} color={Colors.textSecondary} />
-            <Text style={styles.loadingText}>No se pudieron cargar los informes.</Text>
-            <TouchableOpacity style={styles.retryBtn} onPress={() => refetch()} activeOpacity={0.8}>
-              <Ionicons name="refresh-outline" size={16} color={Colors.primary} />
-              <Text style={styles.retryText}>Reintentar</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (reports?.length ?? 0) === 0 ? (
-          <View style={styles.loadingWrap}>
-            <Text style={styles.loadingText}>Esta planta no tiene métricas mapeadas.</Text>
-          </View>
-        ) : (
-          reports?.map((r) => (
-            <ReportRow
-              key={r.metric}
-              report={r}
-              canExport={canExport}
-              busy={busy === r.metric}
-              onGenerate={() => onGenerate(r)}
-              onDownload={() => onDownload(r)}
+    <PlantPickerLayout>
+      <SafeAreaView style={styles.safe} edges={['bottom']}>
+        <ScrollView
+          contentContainerStyle={styles.content}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefetching}
+              onRefresh={() => {
+                void refetch();
+              }}
+              colors={[Colors.primary]}
+              tintColor={Colors.primary}
             />
-          ))
-        )}
+          }
+        >
+          <View style={styles.sectionHeader}>
+            <PlantPickerTrigger name={selectedPlant.name} textStyle={styles.plantName} />
+            <Text style={styles.sectionSubtitle}>
+              Informes por métrica · 1 muestra/min por 1 h · automáticos cada 7 días
+            </Text>
+          </View>
 
-        {!canExport && (reports?.length ?? 0) > 0 && (
-          <Text style={styles.note}>Solo un administrador puede generar y descargar informes.</Text>
-        )}
-      </ScrollView>
-    </SafeAreaView>
+          {isLoading ? (
+            <View style={styles.loadingWrap}>
+              <Text style={styles.loadingText}>Cargando informes…</Text>
+            </View>
+          ) : isError ? (
+            // Distinto de "sin métricas": aquí la petición FALLÓ (backend caído/timeout). Antes esto
+            // se confundía con "planta vacía" y desinformaba.
+            <View style={styles.loadingWrap}>
+              <Ionicons name="cloud-offline-outline" size={34} color={Colors.textSecondary} />
+              <Text style={styles.loadingText}>No se pudieron cargar los informes.</Text>
+              <TouchableOpacity
+                style={styles.retryBtn}
+                accessibilityRole="button"
+                onPress={() => refetch()}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="refresh-outline" size={16} color={Colors.primary} />
+                <Text style={styles.retryText}>Reintentar</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (reports?.length ?? 0) === 0 ? (
+            <View style={styles.loadingWrap}>
+              <Text style={styles.loadingText}>Esta planta no tiene métricas mapeadas.</Text>
+            </View>
+          ) : (
+            reports?.map((r) => (
+              <ReportRow
+                key={r.metric}
+                report={r}
+                canExport={canExport}
+                busy={busy === r.metric}
+                onGenerate={() => onGenerate(r)}
+                onDownload={() => onDownload(r)}
+              />
+            ))
+          )}
+
+          {!canExport && (reports?.length ?? 0) > 0 && (
+            <Text style={styles.note}>
+              Solo un administrador puede generar y descargar informes.
+            </Text>
+          )}
+        </ScrollView>
+      </SafeAreaView>
+    </PlantPickerLayout>
   );
 }
 
@@ -154,7 +195,9 @@ function ReportRow({
     <View style={styles.card}>
       <View style={[styles.icon, { backgroundColor: statusColor + '18' }]}>
         <Ionicons
-          name={collecting ? 'hourglass-outline' : ready ? 'document-text-outline' : 'ellipse-outline'}
+          name={
+            collecting ? 'hourglass-outline' : ready ? 'document-text-outline' : 'ellipse-outline'
+          }
           size={22}
           color={statusColor}
         />
@@ -183,14 +226,32 @@ function ReportRow({
           ) : (
             <>
               {ready && (
-                <TouchableOpacity style={styles.actionBtn} onPress={onDownload} activeOpacity={0.8}>
+                <TouchableOpacity
+                  style={styles.actionBtn}
+                  onPress={onDownload}
+                  activeOpacity={0.8}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Descargar informe de ${report.label}`}
+                >
                   <Ionicons name="download-outline" size={16} color={Colors.primary} />
                   <Text style={styles.actionText}>Descargar</Text>
                 </TouchableOpacity>
               )}
-              <TouchableOpacity style={styles.actionBtn} onPress={onGenerate} activeOpacity={0.8}>
-                <Ionicons name={ready ? 'refresh-outline' : 'play-outline'} size={16} color={Colors.textSecondary} />
-                <Text style={[styles.actionText, { color: Colors.textSecondary }]}>{ready ? 'Regenerar' : 'Generar'}</Text>
+              <TouchableOpacity
+                style={styles.actionBtn}
+                onPress={onGenerate}
+                activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel={`${ready ? 'Regenerar' : 'Generar'} informe de ${report.label}`}
+              >
+                <Ionicons
+                  name={ready ? 'refresh-outline' : 'play-outline'}
+                  size={16}
+                  color={Colors.textSecondary}
+                />
+                <Text style={[styles.actionText, { color: Colors.textSecondary }]}>
+                  {ready ? 'Regenerar' : 'Generar'}
+                </Text>
               </TouchableOpacity>
             </>
           )}
@@ -201,25 +262,43 @@ function ReportRow({
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: Colors.surface },
-  content: { padding: 14 },
+  safe: { flex: 1, minWidth: 0, backgroundColor: Colors.brand.page },
+  content: { padding: 16, paddingBottom: 28 },
   sectionHeader: { marginBottom: 14, paddingHorizontal: 2 },
-  plantName: { fontSize: 17, fontWeight: '800', color: Colors.textPrimary },
-  sectionSubtitle: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
+  plantName: { fontSize: 22, lineHeight: 30, fontFamily: Fonts.semibold, color: Colors.brand.text },
+  sectionSubtitle: {
+    fontFamily: Fonts.regular,
+    fontSize: 13,
+    lineHeight: 20,
+    color: Colors.brand.textSecondary,
+    marginTop: 4,
+  },
   loadingWrap: { paddingVertical: 48, alignItems: 'center', gap: 10 },
   loadingText: { color: Colors.textSecondary, fontSize: 14, textAlign: 'center' },
-  retryBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 8 },
+  retryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
   retryText: { fontSize: 13, fontWeight: '700', color: Colors.primary },
-  note: { fontSize: 12, color: Colors.textSecondary, textAlign: 'center', marginTop: 12, fontStyle: 'italic' },
+  note: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    marginTop: 12,
+    fontStyle: 'italic',
+  },
   card: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.bg,
+    backgroundColor: Colors.brand.card,
     borderRadius: 14,
     padding: 12,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: Colors.brand.cardBorder,
     gap: 10,
   },
   icon: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },

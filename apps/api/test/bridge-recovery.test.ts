@@ -17,7 +17,7 @@ const config = { opcua: { reconnectMaxDelayMs: 10_000 } } as unknown as Connecti
 
 /** Adaptador doble: captura el listener de estado y cuenta start()/stop(). `startImpl` permite
  *  simular un arranque que emite Faulted y lanza (caso de arranque). */
-function fakeAdapter(startImpl?: (emit: (s: BridgeStatus) => void) => Promise<void>) {
+function fakeAdapter(startImpl?: (emit: (s: BridgeStatus, reason?: string) => void) => Promise<void>) {
   let listener: ((s: BridgeStatus, reason: string) => void) | null = null;
   const calls = { start: 0, stop: 0 };
   const emit = (s: BridgeStatus, reason = ''): void => listener?.(s, reason);

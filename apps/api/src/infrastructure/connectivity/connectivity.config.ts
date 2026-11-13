@@ -44,13 +44,14 @@ export interface OpcUaConfig {
   staleThresholdMs: number;
   writesEnabled: boolean; // OPCUA_WRITES_ENABLED (Fase 5); aquí solo se lee, nunca habilita write en Fase 1
   /**
-   * ⚠️ EXCEPCIÓN DELIBERADA Y TEMPORAL a la regla 9 ("sin excepciones, ni para probar"): permite
-   * que `getWriteSecurity()` reporte `secure:true` aunque la sesión NO sea SignAndEncrypt+no-anónima.
-   * Existe SOLO porque el servidor real hoy únicamente acepta Anonymous+None (hallazgo P0) y se
-   * necesitó una prueba de campo controlada (válvula de Sirena, 2026-07-29). Default false — debe
-   * quedar en false salvo durante una prueba explícita, auditada y revertida al terminar.
+   * @deprecated Legacy configuration retained for diagnostics/migration only. This flag can no
+   * longer authorize writes. Network approval uses separate endpoint-bound configuration.
    */
   allowInsecureWrites: boolean; // OPCUA_ALLOW_INSECURE_WRITES
+  /** Explicit operator-approved network exception for mapped commands, never anonymous access. */
+  trustedNetworkWrites?: boolean;
+  trustedNetworkEndpoint?: string;
+  trustedNetworkApproval?: string;
 }
 
 export interface LivenessConfig {
@@ -66,6 +67,13 @@ export interface ConnectivityConfig {
   provider: ConnectivityProvider;
   opcua: OpcUaConfig;
   liveness: LivenessConfig;
+  /**
+   * Tope del ring de DeadLetter en RAM (regla 12: "tope acotado ... por env"). Acota la memoria
+   * del buffer de señales anómalas: los CONTADORES por tipo nunca se pierden, solo se descartan
+   * las entradas más viejas del detalle. 0 = ilimitado está PROHIBIDO por eso mismo — el mínimo
+   * es 1, así que un valor inválido revienta al arrancar en vez de dejar crecer el ring sin fin.
+   */
+  deadLetterCapacity: number;
 }
 
 function num(name: string, fallback: number): number {
@@ -125,11 +133,19 @@ export function loadConnectivityConfig(): ConnectivityConfig {
     );
   }
 
+  // Regla 12: el tope del DeadLetter sale de .env, no del código. Un ring de capacidad 0
+  // no acota nada — se traga las entradas en silencio, que es justo lo que la regla prohíbe.
+  const deadLetterCapacity = num('OPC_DEAD_LETTER_CAPACITY', 500);
+  if (deadLetterCapacity < 1) {
+    throw new Error(`OPC_DEAD_LETTER_CAPACITY (${deadLetterCapacity}) debe ser >= 1`);
+  }
+
   return {
     provider,
     opcua: {
-      // El servidor se anuncia con IP interna 10.10.51.225 → endpointMustExist:false.
-      endpoint: str('OPC_ENDPOINT', 'opc.tcp://181.204.165.66:59100'),
+      // Ruta interna por la red OT: la planta cerró el path público el 2026-09-21. El servidor se
+      // anuncia con esta misma IP interna, pero tras NAT → endpointMustExist:false igualmente.
+      endpoint: str('OPC_ENDPOINT', 'opc.tcp://10.10.51.225:59100'),
       endpointMustExist: bool('OPC_ENDPOINT_MUST_EXIST', false),
       securityMode: str('OPC_SECURITY_MODE', 'None'),
       securityPolicy: str('OPC_SECURITY_POLICY', 'None'),
@@ -149,6 +165,9 @@ export function loadConnectivityConfig(): ConnectivityConfig {
       staleThresholdMs: num('OPCUA_STALE_THRESHOLD_MS', 300000), // 5 min (FASE 0.3: frescura de datos)
       writesEnabled: bool('OPCUA_WRITES_ENABLED', false),
       allowInsecureWrites: bool('OPCUA_ALLOW_INSECURE_WRITES', false),
+      trustedNetworkWrites: bool('OPCUA_TRUSTED_NETWORK_WRITES', false),
+      trustedNetworkEndpoint: str('OPCUA_TRUSTED_NETWORK_ENDPOINT', ''),
+      trustedNetworkApproval: str('OPCUA_TRUSTED_NETWORK_APPROVAL', ''),
       autoAcceptUnknownCertificate: bool('OPC_AUTO_ACCEPT_UNKNOWN_CERTIFICATE', false),
     },
     liveness: {
@@ -156,5 +175,6 @@ export function loadConnectivityConfig(): ConnectivityConfig {
       windowSec: num('LIVENESS_WINDOW_SEC', 300),
       sweepMs: num('LIVENESS_SWEEP_MS', 2000),
     },
+    deadLetterCapacity,
   };
 }

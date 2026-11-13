@@ -1,18 +1,43 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { detectManual, type ValveState, type ValveView } from '../services/valves';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { getAuthGeneration, sendValveCommand } from '../services/api';
+import {
+  detectManual,
+  interpretCommand,
+  vigilaOperacionManual,
+  presentacionDeValvula,
+  type CommandVerdict,
+  type ValveState,
+  type ValveView,
+} from '../services/valves';
 
 /**
- * Supervisor de electroválvulas: mantiene el estado MOSTRADO consistente con la realidad física.
+ * Supervisor de electroválvulas: mantiene el estado de la app CONSISTENTE con la realidad física y
+ * envía las órdenes por el canal oficial.
  *
- * A veces la válvula se abre/cierra a mano. Entonces el caudal cruza el umbral (0.1) pero la
- * lectura eléctrica del PLC no reporta nada. Sin detectarlo, la app seguiría mostrando el estado
- * eléctrico viejo como si fuera el actual. Aquí se detecta y el estado mostrado pasa a seguir al
- * caudal (override) hasta que la lectura eléctrica coincida.
+ * Dos problemas que resuelve, ambos reportados desde planta:
+ *  1. **Operación manual.** A veces la válvula se abre/cierra a mano. Entonces el caudal cruza el
+ *     umbral (0.1) pero la lectura eléctrica del PLC no reporta nada. Si la app no lo detecta,
+ *     acabaría mandando "abrir" a una válvula ya abierta. Aquí se detecta y el estado mostrado pasa
+ *     a seguir al caudal (override) hasta que la lectura eléctrica coincida.
  *
- * El AVISO de que alguien la movió a mano lo publica el servidor en la bandeja de notificaciones
- * (`valve_manual`): así lo ve todo el equipo de la planta, no solo quien tuviera esta pantalla
- * abierta. Aquí solo se corrige lo que se MUESTRA.
+ *     **Ya no genera avisos en pantalla.** Los llevaba dentro de esta pantalla, se descartaban con
+ *     un toque, solo los veía quien estuviera mirando y desaparecían al recargar. Todo lo que tenga
+ *     que ver con una válvula va ahora a la bandeja de notificaciones, donde lo ve el resto del
+ *     equipo y donde queda. Aquí solo se corrige lo que se MUESTRA.
+ *  2. **Saber qué pasó de verdad tras una orden.** Se distingue "la señal salió" de "el equipo
+ *     respondió" (ver interpretCommand) y, tras enviar, se vigila unos segundos si el estado real
+ *     cambió — así el operador no se queda con un "listo" que no ocurrió.
  */
+
+/**
+ * Ventana tras una orden nuestra en la que un cambio NO se considera manual.
+ *
+ * 60 s, no los 15 s de antes: en La Vorágine la señal se SOSTIENE hasta que el PLC confirma, con un
+ * tope de 45 s. Con la ventana corta, una maniobra que tardara más de 15 s terminaba fuera de ella y
+ * la app avisaba de «válvula abierta manualmente» por una orden que había mandado ella misma.
+ */
+const COMMAND_WINDOW_MS = 60_000;
+
 export interface SupervisedValve extends ValveView {
   /** Estado que la app muestra: sigue al caudal si se detectó operación manual. */
   effectiveState: ValveState;
@@ -21,28 +46,56 @@ export interface SupervisedValve extends ValveView {
 }
 
 export function useValveSupervisor(plantId: string, valves: ValveView[]) {
+  const [busy, setBusy] = useState<string | null>(null);
   const [overrides, setOverrides] = useState<Record<string, ValveState>>({});
-
+  const [overridePlant, setOverridePlant] = useState(plantId);
   // Lecturas anteriores por válvula, para detectar transiciones.
   const prev = useRef<Record<string, { flow: ValveState | null; state: ValveState | null }>>({});
+  const lastCommandAt = useRef<Record<string, number>>({});
+  const scope = useRef({ plantId, generation: 0, mounted: true, operation: 0 });
+  useLayoutEffect(() => {
+    const current = scope.current;
+    if (current.plantId !== plantId) {
+      current.plantId = plantId;
+      current.generation++;
+    }
+  }, [plantId]);
+  // Limpiar antes de confirmar el render evita mostrar el override de otra planta durante un frame.
+  if (overridePlant !== plantId) {
+    setOverridePlant(plantId);
+    setOverrides({});
+  }
+  useEffect(() => {
+    const current = scope.current;
+    current.mounted = true;
+    return () => {
+      current.mounted = false;
+      current.generation++;
+    };
+  }, []);
 
   // Al cambiar de planta se descarta todo: los ids de válvula se repiten entre plantas.
   useEffect(() => {
     prev.current = {};
-    setOverrides({});
+    lastCommandAt.current = {};
   }, [plantId]);
 
   // Detección de operación manual + limpieza del override cuando el PLC ya coincide.
   useEffect(() => {
     for (const v of valves) {
+      // Las proporcionales no se vigilan: su apertura ya refleja quién la mueva (ver la función).
+      if (!vigilaOperacionManual(v)) continue;
       const before = prev.current[v.id];
       prev.current[v.id] = { flow: v.byFlow, state: v.byState };
       if (!before) continue; // primera lectura: no hay transición que juzgar
 
-      // La app ya no manda órdenes desde esta pantalla: ningún cambio es "nuestro".
-      const manual = detectManual(before.flow, v.byFlow, before.state, v.byState, false);
+      const commandRecently = Date.now() - (lastCommandAt.current[v.id] ?? 0) < COMMAND_WINDOW_MS;
+      const manual = detectManual(before.flow, v.byFlow, before.state, v.byState, commandRecently);
 
       if (manual) {
+        // El estado mostrado pasa a seguir al caudal. El AVISO de que alguien la movió a mano lo
+        // publica el servidor en la bandeja (`valve_manual`): así lo ve todo el equipo de la planta
+        // y no solo quien tuviera esta pantalla abierta.
         setOverrides((o) => ({ ...o, [v.id]: manual === 'opened' ? 'open' : 'closed' }));
       } else if (v.byState !== null && overrides[v.id] && v.byState === overrides[v.id]) {
         // La lectura eléctrica ya coincide con el override: se deja de forzar.
@@ -61,11 +114,62 @@ export function useValveSupervisor(plantId: string, valves: ValveView[]) {
   const supervised = useMemo<SupervisedValve[]>(
     () =>
       valves.map((v) => {
-        const ov = overrides[v.id];
+        // Por si una recarga del mapping convierte en proporcional una válvula que tenía override.
+        const ov = vigilaOperacionManual(v) ? overrides[v.id] : undefined;
         return { ...v, effectiveState: ov ?? v.state, manualOverride: ov !== undefined };
       }),
     [valves, overrides],
   );
 
-  return { valves: supervised };
+  /**
+   * Envía la orden. SIEMPRE se envía, incluso si la válvula ya está en ese estado (lo pidió el
+   * operador): así el PLC recibe la orden igual y, si el estado de la app estaba desactualizado, la
+   * respuesta lo corrige. Se avisa cuando ya estaba en ese estado.
+   */
+  const send = useCallback(
+    async (valve: SupervisedValve, verb: 'open' | 'close'): Promise<CommandVerdict> => {
+      const generation = scope.current.generation;
+      const authGeneration = getAuthGeneration();
+      const operation = ++scope.current.operation;
+      const current = () =>
+        scope.current.mounted &&
+        scope.current.plantId === plantId &&
+        scope.current.generation === generation &&
+        getAuthGeneration() === authGeneration;
+      setBusy(valve.id);
+      lastCommandAt.current[valve.id] = Date.now();
+      const yaEstaba = valve.effectiveState === (verb === 'open' ? 'open' : 'closed');
+      try {
+        const res = await sendValveCommand(plantId, verb, valve.id);
+        const verdict = interpretCommand(res, verb, valve.name);
+        const evidence = presentacionDeValvula(valve);
+        const message =
+          yaEstaba && evidence.kind !== 'fault' && evidence.kind !== 'unknown'
+            ? `La lectura previa indicaba: ${evidence.label.toUpperCase()}.\n\n${verdict.message}`
+            : verdict.message;
+
+        // Una orden confirmada es la verdad más fuerte: invalida cualquier override manual.
+        if (verdict.ok && current()) {
+          setOverrides((o) => {
+            if (!current()) return o;
+            const { [valve.id]: _drop, ...rest } = o;
+            return rest;
+          });
+        }
+        return { ...verdict, message };
+      } finally {
+        // Busy is global: only the outstanding operation may release it, even after a plant change.
+        if (
+          scope.current.mounted &&
+          scope.current.operation === operation &&
+          getAuthGeneration() === authGeneration
+        ) {
+          setBusy(null);
+        }
+      }
+    },
+    [plantId],
+  );
+
+  return { valves: supervised, send, busy };
 }

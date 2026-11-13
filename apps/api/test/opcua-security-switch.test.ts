@@ -16,7 +16,10 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { OPCUAServer, MessageSecurityMode, SecurityPolicy } from 'node-opcua';
+import { OPCUAServer, OPCUACertificateManager, MessageSecurityMode, SecurityPolicy } from 'node-opcua';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { OpcUaConnectivityAdapter } from '../src/infrastructure/connectivity/adapters/opcua/opcua-connectivity.adapter';
 import { loadConnectivityConfig } from '../src/infrastructure/connectivity/connectivity.config';
 import type { LoadedMapping } from '../src/infrastructure/connectivity/mapping/opc-mapping.loader';
@@ -71,13 +74,19 @@ function minimalMapping(): LoadedMapping {
   };
 }
 
-async function startSecureTestServer(): Promise<OPCUAServer> {
+async function startSecureTestServer(): Promise<{ server: OPCUAServer; userPki: string }> {
+  const userPki = mkdtempSync(join(tmpdir(), 'ptap-user-pki-'));
   const server = new OPCUAServer({
     port: TEST_PORT,
     hostname: '127.0.0.1', // fuerza que el endpoint se anuncie en 127.0.0.1 (coincide con OPC_ENDPOINT)
     securityModes: [MessageSecurityMode.SignAndEncrypt],
     securityPolicies: [SecurityPolicy.Basic256Sha256],
     allowAnonymous: false,
+    // El servidor de prueba confía en el certificado efímero; producción exige confianza explícita.
+    userCertificateManager: new OPCUACertificateManager({
+      rootFolder: userPki,
+      automaticallyAcceptUnknownCertificate: true,
+    }),
     userManager: {
       // Firma real: (username, password) => boolean — sin `session` como primer arg
       // (a diferencia de isValidUser(session, username, password) en el server interno).
@@ -85,11 +94,11 @@ async function startSecureTestServer(): Promise<OPCUAServer> {
     },
   });
   await server.start();
-  return server;
+  return { server, userPki };
 }
 
 test('security: OPC_IDENTITY=username + SignAndEncrypt/Basic256Sha256 conecta por env, sin tocar código', async () => {
-  const server = await startSecureTestServer();
+  const { server, userPki } = await startSecureTestServer();
   try {
     await withEnv(
       {
@@ -116,11 +125,12 @@ test('security: OPC_IDENTITY=username + SignAndEncrypt/Basic256Sha256 conecta po
     );
   } finally {
     await server.shutdown();
+    rmSync(userPki, { recursive: true, force: true });
   }
 });
 
 test('security: OPC_IDENTITY=certificate usa el certificado de cliente autogenerado por env, sin tocar código', async () => {
-  const server = await startSecureTestServer();
+  const { server, userPki } = await startSecureTestServer();
   try {
     await withEnv(
       {
@@ -146,5 +156,6 @@ test('security: OPC_IDENTITY=certificate usa el certificado de cliente autogener
     );
   } finally {
     await server.shutdown();
+    rmSync(userPki, { recursive: true, force: true });
   }
 });

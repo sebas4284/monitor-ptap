@@ -57,31 +57,65 @@ export function sameSignalCard(a: SignalCardProps, b: SignalCardProps): boolean 
 interface TankCardProps {
   tank: TankView;
   frozen?: boolean;
+  /** Planta no en vivo: la ola del tanque se detiene. */
+  still?: boolean;
   /** Planta del tanque: decide a qué ítem apunta la campana de silencio. */
   plantId?: string;
 }
 
 interface ValveItemProps {
   valve: SupervisedValve;
+  onToggle?: (valve: SupervisedValve, verb?: 'open' | 'close') => void;
   frozen?: boolean;
+  busy?: boolean;
+  compact?: boolean;
 }
 
-/** Para `ValveItem`. Solo compara lo que la tarjeta pinta (ver la regla arriba). */
+/**
+ * Para `ValveItem`. `onToggle` se compara por referencia a propósito: la pantalla lo entrega
+ * envuelto en `useCallback`, así que es estable, y si dejara de serlo esta comparación lo delata
+ * con un re-render de más — nunca con una acción obsoleta.
+ */
 export function sameValveItem(a: ValveItemProps, b: ValveItemProps): boolean {
-  if (a.frozen !== b.frozen) return false;
+  if (a.frozen !== b.frozen || a.busy !== b.busy || a.compact !== b.compact) return false;
+  if (a.onToggle !== b.onToggle) return false;
+  // `source` decide si se muestra posición o sólo flujo. Un cambio de origen tiene que repintar
+  // aunque `effectiveState` siga siendo open/closed. No se comparan los datos que no se pintan:
+  // `byState`/`byFlow`/`flowValue`/`disagreement`/`rawState`.
+  // La regla de este archivo es la inversa y es la peligrosa: un campo PINTADO y no comparado se
+  // queda congelado en pantalla.
   const x = a.valve;
   const y = b.valve;
   return (
     x.id === y.id &&
     x.name === y.name &&
     x.effectiveState === y.effectiveState &&
-    x.manualOverride === y.manualOverride
+    x.source === y.source &&
+    x.manualOverride === y.manualOverride &&
+    x.fault === y.fault &&
+    // Proporcionales: el tipo decide si se pinta la apertura y la puerta `setpoint-pending`, y la
+    // apertura se mueve sin que cambie el estado (30 % → 60 % sigue «Abierta»): sin compararla, el
+    // número y la barra se quedarían congelados en la primera lectura.
+    x.kind === y.kind &&
+    x.positionPct === y.positionPct &&
+    // Los verbos deciden si se dibuja el control y cuál: si cambian (recarga del mapping) la
+    // tarjeta TIENE que repintarse. Se compara la lista elemento a elemento porque
+    // `valvesFromSnapshot` construye un array nuevo en cada snapshot y la identidad nunca coincide.
+    mismosVerbos(x.commands, y.commands) &&
+    x.commandable === y.commandable
   );
+}
+
+/** Igualdad por VALOR de los verbos. Son 1-2 elementos: comparar es más barato que repintar. */
+function mismosVerbos(a: string[], b: string[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  return a.every((v, i) => v === b[i]);
 }
 
 /** Para `TankGaugeCard`. */
 export function sameTankCard(a: TankCardProps, b: TankCardProps): boolean {
-  if (a.frozen !== b.frozen || a.plantId !== b.plantId) return false;
+  if (a.frozen !== b.frozen || a.still !== b.still || a.plantId !== b.plantId) return false;
   const x = a.tank;
   const y = b.tank;
   return (
@@ -99,6 +133,11 @@ export function sameTankCard(a: TankCardProps, b: TankCardProps): boolean {
     // y comparar por referencia haría re-render en cada frame, que es justo lo que este memo evita.
     x.autonomy?.hoursTo0 === y.autonomy?.hoursTo0 &&
     x.autonomy?.hoursTo50 === y.autonomy?.hoursTo50 &&
+    x.autonomy?.flowLps === y.autonomy?.flowLps &&
+    x.autonomy?.hoursToReserve === y.autonomy?.hoursToReserve &&
+    x.autonomy?.reserveLevelM === y.autonomy?.reserveLevelM &&
+    x.autonomy?.reserveBasis === y.autonomy?.reserveBasis &&
+    x.autonomy?.limitation === y.autonomy?.limitation &&
     x.autonomy?.basis === y.autonomy?.basis
   );
 }

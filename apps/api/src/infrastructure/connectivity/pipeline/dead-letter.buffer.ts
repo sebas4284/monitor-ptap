@@ -23,7 +23,16 @@ export class DeadLetterBuffer {
     UNEXPECTED_LENGTH: 0,
   };
 
-  constructor(private readonly capacity = 500) {}
+  /**
+   * `capacity` = tope del ring, SIEMPRE inyectado desde la config (OPC_DEAD_LETTER_CAPACITY,
+   * regla 8: cero valores quemados). El default de 500 sobrevive solo para los tests que
+   * construyen el buffer a mano y no les importa el tope.
+   */
+  constructor(private readonly capacity = 500) {
+    if (!Number.isInteger(capacity) || capacity < 1) {
+      throw new Error(`DeadLetterBuffer: capacity debe ser un entero >= 1 (recibido ${capacity})`);
+    }
+  }
 
   record(type: DeadLetterType, plantId: string, domainKey: string, detail: string): void {
     this.counts[type]++;

@@ -35,6 +35,15 @@ function enInfinitivo(command: string): string {
   return `ejecutar «${command}» en`;
 }
 
+/** Presentación de avisos antiguos: conserva el registro almacenado y evita afirmar movimiento. */
+export function tituloDeManiobraHistorica(kind: string, title: string, message: string): string {
+  if (kind !== 'valve_command'
+    || !message.startsWith('Orden enviada y aceptada por el equipo a las ')
+    || !message.includes('la maniobra no se puede confirmar desde aquí')) return title;
+  return title.replace(/ (abrió|cerró) (Válvula .+)$/, (_match, verb: string, valve: string) =>
+    ` solicitó ${verb === 'abrió' ? 'abrir' : 'cerrar'} ${valve}`);
+}
+
 /** `HH:MM` local, que es como la gente dice la hora. La fecha ya la pone la bandeja. */
 function hora(at: string): string {
   const d = new Date(at);
@@ -58,6 +67,26 @@ export interface ManiobraInput {
    * que la válvula se movió, por muy bien que respondiera el canal de comando.
    */
   estadoVerificado: boolean;
+  /**
+   * Motivo del desenlace. Con realimentación por bits (integrador 2026-10-23) distingue cuatro
+   * finales que comparten `failed` y que piden cosas distintas a quien lee el aviso: falla de la
+   * válvula, tope sin confirmar, orden reemplazada y servidor reiniciado.
+   */
+  reason?: string | null;
+  /** Tope del sostenido, en segundos, para decir «no confirmó en 120 s». */
+  topeSegundos?: number | null;
+  /**
+   * `false` si el bit de mando NO se pudo apagar al terminar el sostenido: queda puesto hasta que la
+   * limpieza de huérfanos lo apague al reconectar el puente. Es lo primero que hay que saber.
+   */
+  bitSoltado?: boolean;
+}
+
+/** Lo que se añade al mensaje cuando el bit no se pudo apagar. */
+function avisoBitPuesto(m: ManiobraInput): string {
+  return m.bitSoltado === false
+    ? ' ATENCIÓN: el bit de mando NO se pudo apagar y sigue puesto; se apagará al reconectar el puente o hay que apagarlo a mano.'
+    : '';
 }
 
 /**
@@ -76,6 +105,14 @@ export function avisoDeManiobra(m: ManiobraInput): ManiobraNotice {
   const cuando = hora(m.at);
   const sello = m.firma ? ` · firma ${m.firma}` : '';
 
+  if (m.status === 'rejected' && m.reason?.includes('VALVE_FAULT')) {
+    return {
+      severity: 'critical',
+      title: `Maniobra bloqueada por falla: ${m.valveName}`,
+      message: `${quien} solicitó ${enInfinitivo(m.command)} ${m.valveName} a las ${cuando}, pero el PLC reporta una falla activa. No se envió ninguna orden al equipo${sello}.`,
+      action: 'El personal autorizado debe diagnosticar la alarma y aplicar el procedimiento de rearme de la planta antes de operar.',
+    };
+  }
   if (m.status === 'rejected') {
     return {
       severity: 'info',
@@ -84,6 +121,41 @@ export function avisoDeManiobra(m: ManiobraInput): ManiobraNotice {
       // dejó. Sin esto, el intento solo quedaba en la auditoría, que no mira nadie a diario.
       message: `${quien} intentó ${enInfinitivo(m.command)} ${m.valveName} a las ${cuando}. El sistema no dejó salir la orden, así que el equipo NO se tocó${sello}.`,
       action: null,
+    };
+  }
+
+  // ── Desenlaces del sostenido con realimentación por bits (integrador, 2026-10-23) ──
+  if (m.status === 'failed' && m.reason === 'VALVE_FAULT') {
+    return {
+      severity: 'critical',
+      title: `Falla en ${m.valveName}`,
+      message: `${quien} ordenó ${enInfinitivo(m.command)} ${m.valveName} a las ${cuando} y el PLC respondió con FALLA de la válvula. Mientras la falla siga activa el mando queda bloqueado; no se puede afirmar que haya abierto o cerrado${sello}.${avisoBitPuesto(m)}`,
+      action: `El personal autorizado debe revisar ${m.valveName} en sitio y aplicar el procedimiento de rearme de la planta antes de volver a operar.`,
+    };
+  }
+  if (m.status === 'failed' && m.reason === 'HOLD_FEEDBACK_TIMEOUT') {
+    const tope = m.topeSegundos ? `${m.topeSegundos} s` : 'el tiempo máximo';
+    return {
+      severity: 'warning',
+      title: `Maniobra sin confirmar: ${m.valveName}`,
+      message: `${quien} ordenó ${enInfinitivo(m.command)} ${m.valveName} a las ${cuando} y el PLC no confirmó en ${tope}. La orden se soltó; la válvula puede haberse movido o no${sello}.${avisoBitPuesto(m)}`,
+      action: `Verificar en sitio cómo quedó ${m.valveName} antes de dar la maniobra por hecha.`,
+    };
+  }
+  if (m.status === 'failed' && m.reason === 'HOLD_REPLACED') {
+    return {
+      severity: 'info',
+      title: `Maniobra interrumpida: ${m.valveName}`,
+      message: `La orden de ${enInfinitivo(m.command)} ${m.valveName} que dio ${quien} a las ${cuando} se soltó sin confirmación porque llegó la orden contraria antes de que el PLC respondiera${sello}.${avisoBitPuesto(m)}`,
+      action: null,
+    };
+  }
+  if (m.status === 'failed' && m.reason === 'HOLD_INTERRUPTED') {
+    return {
+      severity: 'warning',
+      title: `Maniobra sin resultado: ${m.valveName}`,
+      message: `${quien} ordenó ${enInfinitivo(m.command)} ${m.valveName} a las ${cuando}, pero el servidor se detuvo mientras esperaba la confirmación del PLC. El bit de mando se apagó al parar o al volver a conectar; cómo quedó la válvula no se sabe${sello}.${avisoBitPuesto(m)}`,
+      action: `Verificar en sitio cómo quedó ${m.valveName}.`,
     };
   }
 
@@ -99,18 +171,22 @@ export function avisoDeManiobra(m: ManiobraInput): ManiobraNotice {
   if (m.status === 'sent' || !m.estadoVerificado) {
     return {
       severity: 'warning',
-      title: `${quien} ${enPasado(m.command)} ${m.valveName}`,
+      title: `${quien} solicitó ${enInfinitivo(m.command)} ${m.valveName}`,
       // El matiz que no se puede perder: esta planta no informa del estado eléctrico de la válvula.
       // Decir «confirmado» aquí sería afirmar algo que nadie ha comprobado.
-      message: `Orden enviada y aceptada por el equipo a las ${cuando}. Esta planta no reporta el estado eléctrico de la válvula, así que la maniobra no se puede confirmar desde aquí${sello}.`,
+      message: m.reason === 'SENT_FEEDBACK_PENDING'
+        ? `Orden enviada y aceptada por el equipo a las ${cuando}. El PLC todavía no ha confirmado la posición solicitada; la maniobra sigue pendiente de confirmación física${sello}.`
+        : `Orden enviada y aceptada por el equipo a las ${cuando}. Esta planta no reporta el estado eléctrico de la válvula, así que la maniobra no se puede confirmar desde aquí${sello}.`,
       action: `Verificar en sitio que ${m.valveName} quedó como se pidió.`,
     };
   }
 
   return {
-    severity: 'info',
+    // Confirmada pero con el bit de mando sin soltar: la maniobra salió bien y aun así hay algo que
+    // atender ya (un 1 puesto es justo lo que choca con la HMI).
+    severity: m.bitSoltado === false ? 'warning' : 'info',
     title: `${quien} ${enPasado(m.command)} ${m.valveName}`,
-    message: `Maniobra confirmada por el equipo a las ${cuando}${sello}.`,
+    message: `Maniobra confirmada por el equipo a las ${cuando}${sello}.${avisoBitPuesto(m)}`,
     action: null,
   };
 }

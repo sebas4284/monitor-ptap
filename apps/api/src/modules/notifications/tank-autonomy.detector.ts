@@ -1,4 +1,4 @@
-import { Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
 import type { SignalDto, TankAutonomyDto } from '@ptap/shared';
 import { PlantCache } from '../../infrastructure/connectivity/pipeline/plant-cache';
 import { PlantPipelineService } from '../../infrastructure/connectivity/pipeline/plant-pipeline.service';
@@ -8,33 +8,20 @@ import { FlowHourlyRepository } from './flow-hourly.repository';
 import { NotificationRepository, type NewNotification } from './notification.repository';
 import {
   analizarAutonomia,
+  actualizarCaudal,
+  aplicarTendencia,
   debeRecalcular,
   humanHoras,
-  outletFlow,
   AUTONOMIA_CRITICA_H,
-  FRACCION_CRITICA,
+  VENTANA_TENDENCIA_MS,
+  FRESCURA_TENDENCIA_MS,
+  MAX_HUECO_TENDENCIA_MS,
+  type MuestraTanque,
   type AutonomiaTanque,
   type TemporizadorTanque,
 } from './tank-autonomy.analyzer';
 
-/**
- * Autonomía del tanque: cuánto aguanta antes de llegar al 50 % y de vaciarse.
- *
- * El cliente lo pidió como «vida útil de la planta» (2026-08-20), y su propósito operativo es que
- * alguien pueda decidir ANTES de cerrar la entrada, no enterarse cuando ya no hay agua.
- *
- * Dos cosas lo separan de los otros detectores:
- *
- *  1. **Barre cada minuto**, no cada diez. La autonomía es un temporizador, y a diez minutos daría
- *     saltos de diez minutos.
- *  2. **Mantiene un temporizador por tanque** y NO lo recalcula en cada barrido. Con el caudal
- *     instantáneo el número saltaba de 5 h a 3 h y volvía, y así no sirve para decidir nada. Las
- *     reglas de cuándo sí se recalcula están en `debeRecalcular`, con los umbrales que dio el
- *     cliente: banda muerta de 0,2 l/s y salto de régimen de 0,6 l/s.
- *
- * También alimenta el promedio horario del caudal de salida, que es lo que permite proyectar la
- * autonomía cuando la entrada está abierta y el tanque no se está vaciando.
- */
+/** Estima cada tanque por su propio descenso, sin presumir conexión con caudales o válvulas. */
 @Injectable()
 export class TankAutonomyDetector implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger('TankAutonomy');
@@ -44,15 +31,14 @@ export class TankAutonomyDetector implements OnModuleInit, OnModuleDestroy {
   /** plantId → (tank<N> → temporizador vigente). Volátil: al reiniciar se vuelve a fijar. */
   private readonly temporizadores = new Map<string, Map<string, TemporizadorTanque>>();
 
-  /** Acumulador de la hora en curso por planta; se vuelca a la base al cambiar de hora. */
-  private readonly horaEnCurso = new Map<string, { horaMs: number; suma: number; muestras: number }>();
+  private readonly historiales = new Map<string, MuestraTanque[]>();
 
   constructor(
-    private readonly pipeline: PlantPipelineService,
-    private readonly cache: PlantCache,
-    private readonly repo: NotificationRepository,
-    private readonly flujo: FlowHourlyRepository,
-    private readonly store: TankAutonomyStore,
+    @Inject(PlantPipelineService) private readonly pipeline: PlantPipelineService,
+    @Inject(PlantCache) private readonly cache: PlantCache,
+    @Inject(NotificationRepository) private readonly repo: NotificationRepository,
+    @Inject(FlowHourlyRepository) _flujo: FlowHourlyRepository,
+    @Inject(TankAutonomyStore) private readonly store: TankAutonomyStore,
   ) {}
 
   onModuleInit(): void {
@@ -74,24 +60,41 @@ export class TankAutonomyDetector implements OnModuleInit, OnModuleDestroy {
     try {
       for (const plant of this.pipeline.listPlants()) {
         const snapshot = this.cache.get(plant.plantId);
-        if (!snapshot || snapshot.pending) continue;
+        if (!snapshot || snapshot.pending || snapshot.liveness.state === 'frozen' || snapshot.bridgeStatus !== 'Connected') {
+          this.temporizadores.delete(plant.plantId);
+          for (const key of this.historiales.keys()) if (key.startsWith(`${plant.plantId}/`)) this.historiales.delete(key);
+          this.store.set(plant.plantId, []);
+          continue;
+        }
 
-        await this.acumularCaudal(plant.plantId, snapshot.signals, now);
-
-        // El promedio de 24 h solo se usa con la entrada abierta. Si aún no hay historia se pasa
-        // null y el analizador no proyecta nada, en vez de inventar un consumo con dos muestras.
-        const promedio = await this.flujo.promedio(plant.plantId, 'outletFlow1', 24);
-        const lecturas = analizarAutonomia(snapshot, promedio?.avgLps ?? null);
+        const lecturas = analizarAutonomia(snapshot, null).filter((t) => {
+          const ts = snapshot.signals[`${t.tankKey}Level`]?.ts;
+          const ms = ts ? Date.parse(ts) : NaN;
+          return Number.isFinite(ms) && ms <= now.getTime() && now.getTime() - ms <= FRESCURA_TENDENCIA_MS;
+        });
+        const vigentes = new Set(lecturas.map((t) => `${plant.plantId}/${t.tankKey}`));
+        for (const key of this.historiales.keys()) {
+          if (key.startsWith(`${plant.plantId}/`) && !vigentes.has(key)) this.historiales.delete(key);
+        }
+        for (const key of this.temporizadores.get(plant.plantId)?.keys() ?? []) {
+          if (!vigentes.has(`${plant.plantId}/${key}`)) this.temporizadores.get(plant.plantId)?.delete(key);
+        }
 
         const publicables: TankAutonomyDto[] = [];
-        for (const t of lecturas) {
+        for (const lectura of lecturas) {
+          const t = this.conTendencia(plant.plantId, lectura, snapshot.signals, now);
           const temporizador = this.fijarTemporizador(plant.plantId, t, now);
           publicables.push({
             tankN: t.tankN,
+            tankKey: t.tankKey,
             hoursTo50: temporizador.horasHasta50,
             hoursTo0: temporizador.horasHasta0,
             flowLps: temporizador.caudalFijadoLps,
             basis: temporizador.origen,
+            hoursToReserve: temporizador.horasHastaReserva ?? null,
+            reserveLevelM: t.reservaM,
+            reserveBasis: t.reservaOrigen,
+            limitation: t.limitacion,
           });
           const aviso = this.avisoDe(plant.plantId, t, temporizador, now);
           if (aviso && (await this.repo.create(aviso))) created++;
@@ -108,64 +111,64 @@ export class TankAutonomyDetector implements OnModuleInit, OnModuleDestroy {
     return created;
   }
 
-  /**
-   * Acumula el caudal de salida en la hora en curso y lo vuelca a la base al cambiar de hora.
-   *
-   * Se escribe una vez por hora y no una por minuto: son 24 filas por planta al día en vez de 1.440,
-   * y el promedio sale igual. La hora parcial se pierde si el proceso se reinicia — aceptable para
-   * un promedio de 24 h, y escribir cada minuto sería castigar la base para ganar una precisión que
-   * nadie va a notar.
-   */
-  private async acumularCaudal(plantId: string, signals: Record<string, SignalDto>, now: Date): Promise<void> {
-    const caudal = outletFlow(signals);
-    if (caudal === null || caudal < 0) return;
-
-    const horaMs = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours()).getTime();
-    const actual = this.horaEnCurso.get(plantId);
-
-    if (!actual) {
-      this.horaEnCurso.set(plantId, { horaMs, suma: caudal, muestras: 1 });
-      return;
+  /** Fuente PLC, no reloj del barrido: repetir una lectura no aporta una muestra independiente. */
+  private conTendencia(plantId: string, t: AutonomiaTanque, signals: Record<string, SignalDto>, now: Date): AutonomiaTanque {
+    const key = `${plantId}/${t.tankKey}`;
+    const ahoraMs = now.getTime();
+    const level = signals[`${t.tankKey}Level`];
+    const volume = signals[`${t.tankKey}Volume`];
+    const fresh = (ts: string | null | undefined) => {
+      const ms = ts ? Date.parse(ts) : NaN;
+      return Number.isFinite(ms) && ms <= ahoraMs && ahoraMs - ms <= FRESCURA_TENDENCIA_MS ? ms : null;
+    };
+    const nivelTs = fresh(level?.ts);
+    if (nivelTs === null) { this.historiales.delete(key); return t; }
+    const volumenTs = t.volumeM3 !== null ? fresh(volume?.ts) : null;
+    // Nivel y volumen son dos fuentes: no multiplicar muestras de nivel al cambiar solo volumen.
+    // Si el volumen deja de ser válido/fresco, inicia una ventana de nivel independiente.
+    const tsMs = nivelTs;
+    let history = this.historiales.get(key) ?? [];
+    const last = history[history.length - 1];
+    const volumenSincrono = volumenTs !== null && volumenTs === nivelTs;
+    const cambioFuente = last && (last.volumenM3 !== null) !== volumenSincrono;
+    if (last && (tsMs < last.tsMs || tsMs - last.tsMs > MAX_HUECO_TENDENCIA_MS || cambioFuente)) history = [];
+    if (history.length === 0 || tsMs !== history[history.length - 1].tsMs) {
+      history.push({ tsMs, nivelM: t.levelM, volumenM3: volumenSincrono ? t.volumeM3 : null });
     }
-    if (actual.horaMs !== horaMs) {
-      await this.flujo.upsert(
-        plantId,
-        'outletFlow1',
-        new Date(actual.horaMs),
-        actual.suma / actual.muestras,
-        actual.muestras,
-      );
-      this.horaEnCurso.set(plantId, { horaMs, suma: caudal, muestras: 1 });
-      return;
-    }
-    actual.suma += caudal;
-    actual.muestras += 1;
+    history = history.filter((m) => m.tsMs >= ahoraMs - VENTANA_TENDENCIA_MS);
+    this.historiales.set(key, history);
+    // Una fuente de volumen desincronizada no puede reaparecer como stock actual para extrapolar.
+    return aplicarTendencia(volumenSincrono ? t : { ...t, volumeM3: null, areaM2: null }, history, ahoraMs);
   }
 
   /**
    * Devuelve el temporizador vigente, fijándolo de nuevo solo si toca.
    *
-   * Cuando NO toca recalcular se devuelve el anterior tal cual, y eso es justo lo que hace que el
-   * número corra como un reloj en vez de recalcularse —y bailar— en cada barrido.
+   * La banda muerta conserva el caudal estimado y vuelve a aplicar el stock actual.
    */
   private fijarTemporizador(plantId: string, t: AutonomiaTanque, now: Date): TemporizadorTanque {
     const porPlanta = this.temporizadores.get(plantId) ?? new Map<string, TemporizadorTanque>();
     this.temporizadores.set(plantId, porPlanta);
-    const clave = `tank${t.tankN}`;
+    const clave = t.tankKey;
     const previo = porPlanta.get(clave);
 
     // Pasar de vaciado real a proyección (o al revés) es un cambio de SIGNIFICADO, no de valor: el
     // número responde otra pregunta y hay que rehacerlo aunque el caudal sea idéntico.
     const cambioDeOrigen = previo !== undefined && previo.origen !== t.origen;
     const { recalcular } = debeRecalcular(previo, t.caudalLps, now.getTime(), this.sweepMs);
+    // La regresión ya suaviza la tendencia: retener además una banda absoluta sesga caudales bajos.
+    const tendenciaActual = t.origen === 'tendencia_volumen' || t.origen === 'tendencia_nivel';
 
-    if (previo && !recalcular && !cambioDeOrigen) return previo;
+    // El nivel/volumen vigente gobierna siempre el stock. La banda muerta solo estabiliza caudal.
+    const estabilizado = previo && !recalcular && !cambioDeOrigen && !tendenciaActual && !t.limitacion && t.caudalLps > 0
+      ? actualizarCaudal(t, previo.caudalFijadoLps) : t;
 
     const nuevo: TemporizadorTanque = {
-      caudalFijadoLps: t.caudalLps,
-      fijadoEnMs: now.getTime(),
-      horasHasta50: t.horasHasta50,
-      horasHasta0: t.horasHasta0,
+      caudalFijadoLps: estabilizado.caudalLps,
+      fijadoEnMs: previo && !recalcular && !cambioDeOrigen && !tendenciaActual ? previo.fijadoEnMs : now.getTime(),
+      horasHasta50: estabilizado.horasHasta50,
+      horasHasta0: estabilizado.horasHasta0,
+      horasHastaReserva: estabilizado.horasHastaReserva,
       origen: t.origen,
     };
     porPlanta.set(clave, nuevo);
@@ -185,17 +188,18 @@ export class TankAutonomyDetector implements OnModuleInit, OnModuleDestroy {
     temporizador: TemporizadorTanque,
     now: Date,
   ): NewNotification | null {
-    const horas = temporizador.horasHasta0;
-    const bajo50 = t.pct < FRACCION_CRITICA * 100;
+    const horas = temporizador.horasHastaReserva ?? null;
+    const bajo50 = t.reservaM !== null && t.levelM <= t.reservaM;
     const sinMargen = horas !== null && horas <= AUTONOMIA_CRITICA_H;
     if (!bajo50 && !sinMargen) return null;
 
     // Con la entrada abierta el tanque NO se está vaciando: es una proyección y no puede
     // presentarse como cuenta atrás. Ahí solo se avisa si además está por debajo del 50 %.
-    if (t.origen === 'proyeccion_24h' && !bajo50) return null;
+    if (t.origen.startsWith('proyeccion_') && !bajo50) return null;
 
     const tiempo = horas === null ? 'sin dato de autonomía' : `queda ${humanHoras(horas)}`;
-    const hasta50 = temporizador.horasHasta50;
+    const reserva = t.reservaOrigen === 'op_min' ? 'mínimo operativo' : '50 % de referencia';
+    const nivel = t.pct === null ? `${t.levelM.toFixed(2)} m` : `${t.pct.toFixed(0)} % (${t.levelM.toFixed(2)} m de ${t.maxM.toFixed(2)} m)`;
 
     return {
       kind: 'tank_autonomy',
@@ -203,19 +207,18 @@ export class TankAutonomyDetector implements OnModuleInit, OnModuleDestroy {
       // cuánto falta para quedarse sin agua, no cuán lleno se ve el tanque.
       severity: sinMargen ? 'critical' : 'warning',
       plantId,
-      subject: `tank${t.tankN}`,
+      subject: t.tankKey,
       title: sinMargen
-        ? `${t.label}: menos de ${AUTONOMIA_CRITICA_H} h de autonomía`
-        : `${t.label}: por debajo del 50 %`,
+        ? `${t.label}: reserva en ${humanHoras(horas!)}`
+        : `${t.label}: por debajo del ${reserva}`,
       message:
-        `El tanque está al ${t.pct.toFixed(0)} % (${t.levelM.toFixed(2)} m de ${t.maxM.toFixed(2)} m) y ${tiempo} ` +
-        `hasta vaciarse${hasta50 !== null && hasta50 > 0 ? `, ${humanHoras(hasta50)} hasta el 50 %` : ''}. ` +
-        (t.origen === 'vaciado_real'
-          ? `La entrada está cerrada, así que se vacía de verdad a ${t.caudalLps.toFixed(1)} l/s.`
-          : `La entrada está abierta: es una proyección con el consumo medio del día (${t.caudalLps.toFixed(1)} l/s), no una cuenta atrás.`),
+        `El tanque está a ${nivel} y ${tiempo} hasta el ${reserva}. ` +
+        (t.origen === 'tendencia_volumen' ? `Estimación por descenso del volumen propio (${temporizador.caudalFijadoLps.toFixed(1)} l/s netos). ` :
+          t.origen === 'tendencia_nivel' ? 'Estimación por descenso del nivel propio. ' : 'No hay una tendencia propia suficiente para estimar el vaciado. ') +
+        'La conexión del tanque con las válvulas no está declarada.',
       action: sinMargen
-        ? 'Abre la entrada al tanque o reduce la salida ahora: por debajo del 50 % la presión ya da problemas en la red.'
-        : 'Revisa la entrada al tanque. Por debajo del 50 % empiezan los fallos de presión en las tuberías.',
+        ? 'Revisa el abastecimiento y el consumo del tanque antes de alcanzar la reserva.'
+        : 'Verifica el nivel y el abastecimiento del tanque.',
       day: dedupeDay(now),
     };
   }

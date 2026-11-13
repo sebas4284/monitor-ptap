@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { Pool, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import type { NotificationKind, NotificationSeverity } from '@ptap/shared';
 import { MYSQL_POOL } from '../../infrastructure/database/database.tokens';
+import { tituloDeManiobraHistorica } from '../commands/valve-notice';
 
 export type { NotificationKind, NotificationSeverity };
 
@@ -36,6 +37,19 @@ export interface NewNotification {
    */
   eventId?: string;
 }
+
+/**
+ * Un aviso recién insertado, tal como se le pasa al oyente de `create()`: lo que se guardó, más el id
+ * que le dio la base (de él sale la etiqueta `n-<id>` del panel del teléfono).
+ */
+export interface CreatedNotification extends NewNotification {
+  id: number;
+  /** Momento del INSERT en este proceso. Informativo: la hora que rige es la de la fila. */
+  createdAt: string;
+}
+
+/** Quien quiere enterarse de cada aviso NUEVO (hoy, el envío por push). */
+export type NotificationListener = (n: CreatedNotification) => void | Promise<void>;
 
 export interface StoredNotification {
   id: number;
@@ -114,8 +128,28 @@ export function scopeFilter(scope: NotificationScope): { sql: string; params: (s
 @Injectable()
 export class NotificationRepository {
   private readonly logger = new Logger('Notifications');
+  private listener: NotificationListener | null = null;
+  private readonly subscribers = new Set<NotificationListener>();
+
+  /** Independent transports can subscribe without replacing the legacy FCM listener. */
+  subscribeCreated(listener: NotificationListener): () => void {
+    this.subscribers.add(listener);
+    return () => { this.subscribers.delete(listener); };
+  }
 
   constructor(@Inject(MYSQL_POOL) private readonly pool: Pool) {}
+
+  /**
+   * Engancha a quien debe enterarse de cada aviso NUEVO (el envío por push). Uno solo; `null` lo
+   * suelta.
+   *
+   * Es un oyente y no un parámetro de `create()` a propósito: hay seis sitios que crean avisos
+   * (detectores, observador de válvulas, libro de firmas y `WriteService.publicarManiobra`) y
+   * ninguno tiene que saber que existe el push. `create()` sigue devolviendo solo si el aviso es nuevo.
+   */
+  onCreated(listener: NotificationListener | null): void {
+    this.listener = listener;
+  }
 
   /**
    * Crea el aviso si no existe ya uno del mismo problema ese día.
@@ -123,16 +157,57 @@ export class NotificationRepository {
    */
   async create(input: NewNotification): Promise<boolean> {
     try {
-      await this.pool.query<ResultSetHeader>(
+      const resultado = await this.pool.query<ResultSetHeader>(
         `INSERT INTO notification (dedupe_key, kind, severity, plant_id, subject, title, message, action)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [dedupeKeyOf(input), input.kind, input.severity, input.plantId, input.subject, input.title, input.message, input.action ?? null],
       );
+      this.announce(input, resultado);
       return true;
     } catch (err) {
       if ((err as { code?: string }).code === DUP_ENTRY) return false; // ya se avisó hoy
       this.logger.error(`No se pudo crear la notificación: ${err instanceof Error ? err.message : err}`);
       return false;
+    }
+  }
+
+  /**
+   * Pasa el aviso recién creado al oyente SIN esperarlo: en la siguiente vuelta del bucle de eventos
+   * (`setImmediate`) y sin `await`.
+   *
+   * Lo que se protege es la respuesta al operario. Uno de los sitios que crean avisos es la maniobra
+   * de válvula, y `WriteService` espera a `create()` antes de contestar al mando: si el envío por push
+   * corriera dentro, un Google lento o caído retrasaría la respuesta de una orden de válvula. Así
+   * `create()` tarda lo mismo que el INSERT, haya push o no.
+   *
+   * Nunca lanza, ni aquí ni dentro del oyente: el aviso ya está guardado en la bandeja y nada de lo que
+   * pase con el push puede convertir eso en un fallo.
+   */
+  private announce(input: NewNotification, resultado: unknown): void {
+    const listeners = [...this.subscribers];
+    if (this.listener) listeners.push(this.listener);
+    if (!listeners.length) return;
+    try {
+      const cabecera = Array.isArray(resultado) ? (resultado[0] as Partial<ResultSetHeader> | undefined) : undefined;
+      const id = Number(cabecera?.insertId);
+      if (!Number.isSafeInteger(id) || id <= 0) {
+        // Sin id no hay etiqueta `n-<id>` que case con la del teléfono: mejor no empujarlo que
+        // duplicarlo. Sigue en la bandeja y la consulta de respaldo lo encontrará.
+        this.logger.warn(`aviso creado sin insertId utilizable (${String(cabecera?.insertId)}): no se empuja`);
+        return;
+      }
+      const creado: CreatedNotification = { ...input, id, createdAt: new Date().toISOString() };
+      setImmediate(() => {
+        for (const listener of listeners) {
+          Promise.resolve()
+            .then(() => listener(creado))
+            .catch((err: unknown) => {
+              this.logger.error(`el oyente de avisos nuevos falló con el aviso ${id}: ${err instanceof Error ? err.message : err}`);
+            });
+        }
+      });
+    } catch (err) {
+      this.logger.error(`no se pudo anunciar el aviso nuevo: ${err instanceof Error ? err.message : err}`);
     }
   }
 
@@ -163,7 +238,7 @@ export class NotificationRepository {
       severity: r.severity as NotificationSeverity,
       plantId: r.plant_id as string,
       subject: (r.subject as string | null) ?? null,
-      title: r.title as string,
+      title: tituloDeManiobraHistorica(r.kind as string, r.title as string, r.message as string),
       message: r.message as string,
       action: (r.action as string | null) ?? null,
       createdAt: new Date(r.created_at as Date).toISOString(),

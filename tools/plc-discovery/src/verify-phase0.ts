@@ -19,7 +19,7 @@ import { statusCodeToJson, toJsonValue } from './lib/values';
 import { saveArtifact } from './lib/artifacts';
 import { ReadOnlySession } from './lib/readonly-session';
 
-const SITES = ['ALTO_MANGOS','CAMPOALEGRE','CARBONERO','CASCAJAL','KM18','MANGOS','MONTEBELLO','PICHINDE','QUIJOTE','SAN_ANTONO','SAN_ANTONIO','SIRENA','SOLEDAD','VORAGINE'];
+const SITES = ['ALTO_MANGOS','CABUYO','CAMPOALEGRE','CARBONERO','CASCAJAL','KM18','MANGOS','MONTEBELLO','PICHINDE','QUIJOTE','SAN_ANTONO','SAN_ANTONIO','SIRENA','SOLEDAD','VORAGINE'];
 function siteOf(bn: string): string | null {
   const u = bn.toUpperCase();
   const m = SITES.filter((s) => u.includes(s)).sort((a, b) => b.length - a.length)[0];
@@ -40,7 +40,7 @@ function channelOf(bn: string): string | null {
   return null;
 }
 
-const ORDER = ['VORAGINE','SOLEDAD','MONTEBELLO','CASCAJAL','KM18','ALTO_MANGOS','CAMPOALEGRE','PICHINDE','CARBONERO','SIRENA','SAN_ANTONIO','QUIJOTE'];
+const ORDER = ['VORAGINE','SOLEDAD','MONTEBELLO','CASCAJAL','KM18','ALTO_MANGOS','CAMPOALEGRE','PICHINDE','CARBONERO','SIRENA','SAN_ANTONIO','QUIJOTE','CABUYO'];
 
 async function resolveControllerTags(session: ReadOnlySession, rootPath: string[], throttleMs: number): Promise<string> {
   let current = 'i=85';

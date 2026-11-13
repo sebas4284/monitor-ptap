@@ -27,7 +27,7 @@ const usersDouble = {
     const role = id.replace(/^u-/, '');
     return {
       id, email: `${role}@ptap.co`, name: role, role, plant: 'montebello',
-      passwordHash: 'x', pepperVersion: 1, isActive: true,
+      passwordHash: 'x', pepperVersion: 1, isActive: true, emailVerified: true,
     };
   },
 } as unknown as UsersRepository;
@@ -75,7 +75,7 @@ async function buildApp(): Promise<{ app: INestApplication; jwt: JwtService; rec
   })
   class AuditProbeModule implements NestModule {
     configure(consumer: MiddlewareConsumer): void {
-      consumer.apply(AuditMiddleware).forRoutes('*');
+      consumer.apply(AuditMiddleware).forRoutes('{*path}');
     }
   }
 

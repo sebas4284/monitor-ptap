@@ -1,0 +1,31 @@
+{
+  "schema": "telcobras-decision/1",
+  "artifact_id": "ptap-push-readiness.cjs",
+  "source_and_version": "First-party bounded host-local FCM readiness helper; Node26.12.1; installed Firebase Admin14.5.0 declarations and official Firebase sources consulted",
+  "sha256_or_commit": "081c258cb9503bb83da201f3ea657a1283bde2b2d7ee043622db9473545d5cf3",
+  "data_classification": "restricted",
+  "requested_operation": "Stage and run host-local read-only readiness: credential presence/shape/private mode, bounded Firebase named config search, runtime env booleans, aggregate device counts",
+  "authorized_scope": "Explicit user Android notifications request delegated by parent; no notification/auth calls, token output, cloud uploads, env edits, DB writes, process restart or key creation",
+  "environment_and_destination": "Sanitized public record: trusted production Ubuntu host and service identity; exact reviewed destination retained in private operational original",
+  "tools_versions_and_signature_dates": [
+    "Node26.12.1; existing dotenv18.0.9 mysql2 3.24.6; Firebase Admin14.5.0 types inspected"
+  ],
+  "observed_evidence": [
+    "Source reviewed: no cloud API calls or raw content output",
+    "Known paths and Firebase named candidates only; individual config capped128KiB; token query aggregate in read-only transaction",
+    "Synthetic readiness test passed: real local test RSA parses, malformed key does not expose contents, project stripped from output"
+  ],
+  "limitations_and_unexamined_content": [
+    "Credential shape and project agreement do not authenticate to provider or prove device delivery",
+    "No APK or native device delivery test performed"
+  ],
+  "rights_and_notices": "First-party operational helper; existing credentials preserved privately, no redistribution or third-party install",
+  "decision": "allowed_scoped",
+  "conditions_for_next_action": [
+    "Verify helper SHA256 after transfer before execution",
+    "Never output private keys, accounts, projects, token values or user rows",
+    "Provider artifact absence must be reported, never fabricated"
+  ],
+  "reviewer_and_utc_time": "Codex backend FCM agent 2026-10-31T13:20:01.4596735Z",
+  "valid_only_for_identified_bytes_and_operation": true
+}

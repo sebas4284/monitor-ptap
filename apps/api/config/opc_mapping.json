@@ -1,6 +1,6 @@
 {
   "$schema": "./opc_mapping.schema.json",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "protocolVersion": "v2",
   "dtoVersion": "v1",
   "generatedFrom": {
@@ -54,6 +54,8 @@
     "Validez de presiones: [-15, 232] psi. El min NO es 0: los transmisores manométricos derivan bajo cero (Campoalegre salida 1 leyó -0.74 psi real el 2026-07-15) y el vacío físico llega a ≈ -14.7 psi. Bajo -15 psi es imposible físico ⇒ OUT_OF_RANGE (sensor/escala dañados; p. ej. Carbonero salida -57 psi). PENDIENTE verificar contra HMI: Cascajal presión de entrada lee 384 psi (¿unidad/índice/escala?).",
     "opMin/opMax = rango OPERATIVO/normativo entregado por el operador (insumo de alarmas futuras). NO confundir con min/max, que son límites de validez física: una lectura fuera de [opMin,opMax] pero dentro de [min,max] es un dato REAL y usable (p. ej. pH de salida 5.8 o tanque en 0.5 m) que la UI debe mostrar, no descartar.",
     "Topología de san-antonio y quijote verificada por browse: son sitios mínimos reales (solo un buffer de tanque + MSG_READ). topologyVerified: true.",
+    "PLANTAS EN INTEGRACIÓN (alta 2026-10-19): cabuyo (Cabuyo) quedó INTEGRADA el 2026-11-10 con la ficha del integrador del PLC (Brayan Grueso, Telcobras, 2026-11-09/10): 6 tags (REAL_IN/INT_IN/INT_OUT_CABUYO, MSG_READ_CABUYO primaria, MSG_READ_INT_CABUYO, MSG_WRITE_INT_CABUYO), caudales, presión de entrada, apertura de la válvula de salida (solo lectura; su consigna es Fase 4) y mando de la válvula de entrada (bitmask, sostenida, stateVerified: false). Su connection queda UNMAPPED con sourceBuffer MSG_READ_CABUYO: DN/ER/TO pendientes, pedir sus GUID al integrador (no hubo lectura del PLC). luisa (La Luisa), leonera (La Leonera) y gloria (Gloria) siguen dadas de alta SIN señales, a la espera de que el integrador las suba al PLC maestro: sin buffer, NodeId ni índice no hay nada que mapear y no se inventa nada (opcBuffers: {}, connection unmapped con DN/ER/TO en null, signals: []). Equipo declarado por el cliente en las cuatro: válvula de entrada on/off, válvula de salida proporcional (% de apertura + consigna 0–100 %), caudal de entrada, caudal de salida y presión de entrada; solo La Leonera tiene además 1 tanque con sensor de nivel, con datos aún desconocidos. Lo que el integrador debe entregar por planta y los pasos para conectarlas: docs/plc/PLANTAS_NUEVAS_CABUYO_LUISA_LEONERA_GLORIA.md.",
+    "VÁLVULAS, ENTREGA DEL INTEGRADOR DEL 2026-10-23 (corrige la del 2026-10-16): la orden ya no se deja SOSTENIDA (el 1 que dejaba la app chocaba con la HMI); el bit de mando se mantiene en 1 solo hasta que el PLC informa abierta/cerrada (según el verbo) o falla, y vuelve a 0 (pulse.feedback, tope 120 s, minHoldMs 20 s). Solo La Vorágine tiene entregados sus bits de realimentación (INT_IN_VORAGINE[1]): sus dos válvulas pasan a esa forma. Soledad (valve1), Cascajal (valve1, valve2) y Campoalegre (valve1, valve2) quedan en writable: false con _nota hasta que el integrador entregue los suyos; su write sostenido se conserva SOLO para la limpieza de bits huérfanos, que al conectar el puente apaga los bits de mando que sigan puestos sin una orden viva. Sirena, Carbonero y las de pulso de 300 ms (4096) no cambian.",
     "displayName es provisional (displayNameProvisional: true) hasta confirmación escrita de la planta.",
     "generatedFrom.namespaces es referencia histórica de la captura, NO fuente de verdad para el runtime."
   ],
@@ -157,25 +159,33 @@
           "confidence": "confirmed",
           "writable": true,
           "write": {
-            "_riesgo": "VERIFICADO EN CAMPO por el cliente (2026-08-15) y ya operando: abrir = 4096 (bit12) y cerrar = 8192 (bit13) en INT_OUT[0]. Actua sobre el CAUDAL DE SALIDA. LA SENAL ES SOSTENIDA, NO UN PULSO: se mantiene puesta hasta que INT_IN[1] vale 1, y solo entonces se suelta (pulse.until). Antes se soltaba a los 300 ms a ciegas, lo que en una valvula motorizada arranca el movimiento y lo corta a mitad. Se compara el VALOR ENTERO, no bits: INT_IN[1] valia 1025 = bits{0,10} el dia del cambio, asi que una condicion 'bit0 encendido' se habria cumplido en el primer instante y habria cortado la senal antes de que la valvula se moviera. TOPE DURO 45 s, no los 60 s que se plantearon. nginx NO es el limite: se verifico en la VM el 2026-08-15 que /etc/nginx/snippets/ptap-app.conf declara proxy_read_timeout 300s, que es el que gobierna una respuesta lenta del backend. El limite real es el cliente: el fetch de la app no fija timeout, asi que manda el de la plataforma (~60 s en iOS/NSURLSession). Pasarse de ahi le muestra al operador un error de red con la orden viva en el PLC, invitando a pulsar otra vez. Si vence el tope, el bit se limpia igual y el comando sale HOLD_FEEDBACK_TIMEOUT. Lectura del PLC ese dia con la valvula pasando agua (outletFlow1 = 1,61 l/s, entrada 6,93 l/s): INT_OUT[0..19] todos a 0 e INT_IN[0] = 7192 = bits{3,4,10,11,12}. HIPOTESIS, NO CONFIRMADA: el bit12 de INT_IN[0] es el mismo bit del comando de abrir y el bit13 (cerrar) esta ausente. Es UNA sola muestra con la valvula en UNA posicion, asi que readBack sigue con stateVerified:false y el veredicto lo da el caudal de salida. Revertir: pulse a { holdMs: 300 } sin until.",
-            "target": { "channel": "intOut", "sourceBuffer": "INT_OUT_VORAGINE", "index": 0 },
-            "commands": { "open": 4096, "close": 8192 },
-            "mode": "bitmask",
-            "pulse": {
-              "holdMs": 45000,
-              "until": { "channel": "intIn", "sourceBuffer": "INT_IN_VORAGINE", "index": 1, "equals": 1 }
+            "target": {
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_VORAGINE",
+              "index": 0
             },
+            "commands": {
+              "open": 4096,
+              "close": 8192
+            },
+            "mode": "absolute",
+            "sustained": true,
             "readBack": {
               "channel": "intIn",
               "sourceBuffer": "INT_IN_VORAGINE",
-              "index": 0,
+              "index": 1,
               "confirmsWrittenValue": false,
-              "expectedValue": 16385,
-              "stateVerified": false
+              "expectedByCommand": {
+                "open": 1024,
+                "close": 2048
+              },
+              "mask": 3072,
+              "faultMask": 16384,
+              "stateVerified": true
             },
             "timeoutMs": 5000,
-            "rollbackValue": 0,
-            "permission": "control_valves"
+            "permission": "control_valves",
+            "_riesgo": "FUENTE: integrador del PLC (2026-10-16 / 2026-10-29). Valvula de SALIDA: abrir = bit12 (4096), cerrar = bit13 (8192), sobreescritura directa en modo absolute sobre INT_OUT[0]. Senal SOSTENIDA."
           }
         },
         {
@@ -185,10 +195,74 @@
           "domainKey": "valve2",
           "label": "Válvula de entrada",
           "flowDomainKey": "inletFlow1",
-          "_nota": "SIN CANAL DE COMANDO CONOCIDO. Esta valvula existe fisicamente (el cliente confirmo el 2026-08-15 que La Voragine tiene dos: entrada y salida), pero no se sabe con que frecuencia de bits se mueve ni tiene palabra de estado. Por eso writable:false y sin write spec: la app la muestra pero NO la acciona. EL INDICE ES UN ANCLA, NO UNA AFIRMACION. Toda senal debe colgar de un elemento real de un buffer monitorizado o el MappingEngine la marca rota y emite un dead-letter en cada barrido; realIn[0] no servia porque chocaria con inletFlow1 (validate-mapping rechaza dos senales en el mismo canal[indice]). Se eligio INT_OUT_VORAGINE[1] por estar libre y ser el canal donde vivira su comando cuando lo haya, pero NADIE ha verificado que la entrada se mande por esa posicion. No deducir de aqui el indice del comando. SU ESTADO SALE DEL CAUDAL DE ENTRADA (flowDomainKey: inletFlow1), que es evidencia fisica: por encima de 0,1 l/s esta abierta. Cuando el cliente entregue las frecuencias de bits: anadir el write spec, poner writable:true, confidence:confirmed y corregir el indice al que diga el campo.",
           "mappingStatus": "mapped",
-          "confidence": "estimated",
-          "writable": false
+          "confidence": "confirmed",
+          "writable": true,
+          "write": {
+            "target": {
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_VORAGINE",
+              "index": 0
+            },
+            "commands": {
+              "open": 4,
+              "close": 8
+            },
+            "mode": "absolute",
+            "sustained": true,
+            "readBack": {
+              "channel": "intIn",
+              "sourceBuffer": "INT_IN_VORAGINE",
+              "index": 1,
+              "confirmsWrittenValue": false,
+              "expectedByCommand": {
+                "open": 1,
+                "close": 2
+              },
+              "mask": 3,
+              "faultMask": 16,
+              "stateVerified": true
+            },
+            "timeoutMs": 5000,
+            "permission": "control_valves",
+            "_riesgo": "FUENTE: integrador del PLC (2026-10-16 / 2026-10-29). Valvula de ENTRADA: abrir = bit2 (4), cerrar = bit3 (8), sobreescritura directa en modo absolute sobre INT_OUT[0]. Senal SOSTENIDA. ANCLA, NO MANDO: la senal cuelga de index 1 pero MANDA por INT_OUT[0]."
+          }
+        },
+        {
+          "buffer": "intIn",
+          "sourceBuffer": "INT_IN_VORAGINE",
+          "index": 1,
+          "domainKey": "valve1State",
+          "label": "Estado válvula de salida",
+          "mappingStatus": "mapped",
+          "confidence": "confirmed",
+          "writable": false,
+          "stateTrusted": true,
+          "stateEncoding": {
+            "bits": {
+              "open": 1024,
+              "close": 2048,
+              "fault": 16384
+            }
+          }
+        },
+        {
+          "buffer": "intIn",
+          "sourceBuffer": "INT_IN_VORAGINE",
+          "index": 1,
+          "domainKey": "valve2State",
+          "label": "Estado válvula de entrada",
+          "mappingStatus": "mapped",
+          "confidence": "confirmed",
+          "writable": false,
+          "stateTrusted": true,
+          "stateEncoding": {
+            "bits": {
+              "open": 1,
+              "close": 2,
+              "fault": 16
+            }
+          }
         },
         {
           "buffer": "realIn",
@@ -239,8 +313,14 @@
           "opMin": 1,
           "opMax": 3,
           "opRangeByDay": {
-            "semana": { "opMin": 1, "opMax": 3 },
-            "finde":  { "opMin": 1, "opMax": 2 }
+            "semana": {
+              "opMin": 1,
+              "opMax": 3
+            },
+            "finde": {
+              "opMin": 1,
+              "opMax": 2
+            }
           },
           "mappingStatus": "mapped",
           "confidence": "confirmed",
@@ -385,26 +465,67 @@
           "sourceBuffer": "INT_OUT_SOLEDAD",
           "index": 0,
           "domainKey": "valve1",
-          "label": "Válvula 1",
+          "label": "Válvula de salida",
+          "flowDomainKey": "outletFlow1",
           "mappingStatus": "mapped",
           "confidence": "confirmed",
           "writable": true,
           "write": {
-            "target": { "channel": "intOut", "sourceBuffer": "INT_OUT_SOLEDAD", "index": 0 },
-            "commands": { "open": 4096 },
-            "mode": "bitmask",
-            "pulse": { "holdMs": 300 },
+            "target": {
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_SOLEDAD",
+              "index": 0
+            },
+            "commands": {
+              "open": 4096,
+              "close": 8192
+            },
+            "mode": "absolute",
+            "sustained": true,
             "readBack": {
-              "channel": "intIn",
-              "sourceBuffer": "INT_IN_SOLEDAD",
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_SOLEDAD",
               "index": 0,
-              "confirmsWrittenValue": false,
-              "expectedValue": 16385,
+              "confirmsWrittenValue": true,
               "stateVerified": false
             },
             "timeoutMs": 5000,
-            "rollbackValue": 0,
-            "permission": "control_valves"
+            "permission": "control_valves",
+            "_riesgo": "FUENTE: integrador del PLC (2026-10-16 / 2026-10-29). Valvula de SALIDA: abrir = bit12 (4096), cerrar = bit13 (8192), sobreescritura directa en modo absolute sobre INT_OUT[0]. Senal SOSTENIDA."
+          }
+        },
+        {
+          "buffer": "intOut",
+          "sourceBuffer": "INT_OUT_SOLEDAD",
+          "index": 1,
+          "domainKey": "valve2",
+          "label": "Válvula de entrada",
+          "flowDomainKey": "inletFlow1",
+          "mappingStatus": "mapped",
+          "confidence": "confirmed",
+          "writable": true,
+          "write": {
+            "target": {
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_SOLEDAD",
+              "index": 0
+            },
+            "commands": {
+              "open": 4,
+              "close": 8
+            },
+            "mode": "absolute",
+            "sustained": true,
+            "readBack": {
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_SOLEDAD",
+              "index": 0,
+              "confirmsWrittenValue": true,
+              "stateVerified": false
+            },
+            "timeoutMs": 5000,
+            "permission": "control_valves",
+            "_riesgo": "FUENTE: integrador del PLC (2026-10-16 / 2026-10-29). Valvula de ENTRADA: abrir = bit2 (4), cerrar = bit3 (8), sobreescritura directa en modo absolute sobre INT_OUT[0]. Senal SOSTENIDA. ANCLA, NO MANDO: la senal cuelga de index 1 pero MANDA por INT_OUT[0]."
           }
         },
         {
@@ -836,26 +957,67 @@
           "sourceBuffer": "INT_OUT_MONTEBELLO",
           "index": 0,
           "domainKey": "valve1",
-          "label": "Válvula 1",
+          "label": "Válvula de salida",
+          "flowDomainKey": "outletFlow1",
           "mappingStatus": "mapped",
           "confidence": "confirmed",
           "writable": true,
           "write": {
-            "target": { "channel": "intOut", "sourceBuffer": "INT_OUT_MONTEBELLO", "index": 0 },
-            "commands": { "open": 4096 },
-            "mode": "bitmask",
-            "pulse": { "holdMs": 300 },
+            "target": {
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_MONTEBELLO",
+              "index": 0
+            },
+            "commands": {
+              "open": 4096,
+              "close": 8192
+            },
+            "mode": "absolute",
+            "sustained": true,
             "readBack": {
-              "channel": "intIn",
-              "sourceBuffer": "INT_IN_MONTEBELLO",
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_MONTEBELLO",
               "index": 0,
-              "confirmsWrittenValue": false,
-              "expectedValue": 16385,
+              "confirmsWrittenValue": true,
               "stateVerified": false
             },
             "timeoutMs": 5000,
-            "rollbackValue": 0,
-            "permission": "control_valves"
+            "permission": "control_valves",
+            "_riesgo": "FUENTE: integrador del PLC (2026-10-16 / 2026-10-29). Valvula de SALIDA: abrir = bit12 (4096), cerrar = bit13 (8192), sobreescritura directa en modo absolute sobre INT_OUT[0]. Senal SOSTENIDA."
+          }
+        },
+        {
+          "buffer": "intOut",
+          "sourceBuffer": "INT_OUT_MONTEBELLO",
+          "index": 1,
+          "domainKey": "valve2",
+          "label": "Válvula de entrada",
+          "flowDomainKey": "inletFlow1",
+          "mappingStatus": "mapped",
+          "confidence": "confirmed",
+          "writable": true,
+          "write": {
+            "target": {
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_MONTEBELLO",
+              "index": 0
+            },
+            "commands": {
+              "open": 4,
+              "close": 8
+            },
+            "mode": "absolute",
+            "sustained": true,
+            "readBack": {
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_MONTEBELLO",
+              "index": 0,
+              "confirmsWrittenValue": true,
+              "stateVerified": false
+            },
+            "timeoutMs": 5000,
+            "permission": "control_valves",
+            "_riesgo": "FUENTE: integrador del PLC (2026-10-16 / 2026-10-29). Valvula de ENTRADA: abrir = bit2 (4), cerrar = bit3 (8), sobreescritura directa en modo absolute sobre INT_OUT[0]. Senal SOSTENIDA. ANCLA, NO MANDO: la senal cuelga de index 1 pero MANDA por INT_OUT[0]."
           }
         },
         {
@@ -1031,26 +1193,67 @@
           "sourceBuffer": "INT_OUT_CASCAJAL",
           "index": 0,
           "domainKey": "valve1",
-          "label": "Válvula 1",
+          "label": "Válvula de salida",
+          "flowDomainKey": "outletFlow2",
           "mappingStatus": "mapped",
           "confidence": "confirmed",
           "writable": true,
           "write": {
-            "target": { "channel": "intOut", "sourceBuffer": "INT_OUT_CASCAJAL", "index": 0 },
-            "commands": { "open": 4096 },
-            "mode": "bitmask",
-            "pulse": { "holdMs": 300 },
+            "target": {
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_CASCAJAL",
+              "index": 0
+            },
+            "commands": {
+              "open": 4096,
+              "close": 8192
+            },
+            "mode": "absolute",
+            "sustained": true,
             "readBack": {
-              "channel": "intIn",
-              "sourceBuffer": "INT_IN_CASCAJAL",
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_CASCAJAL",
               "index": 0,
-              "confirmsWrittenValue": false,
-              "expectedValue": 16385,
+              "confirmsWrittenValue": true,
               "stateVerified": false
             },
             "timeoutMs": 5000,
-            "rollbackValue": 0,
-            "permission": "control_valves"
+            "permission": "control_valves",
+            "_riesgo": "FUENTE: integrador del PLC (2026-10-16 / 2026-10-29). Valvula de SALIDA: abrir = bit12 (4096), cerrar = bit13 (8192), sobreescritura directa en modo absolute sobre INT_OUT[0]. Senal SOSTENIDA."
+          }
+        },
+        {
+          "buffer": "intOut",
+          "sourceBuffer": "INT_OUT_CASCAJAL",
+          "index": 1,
+          "domainKey": "valve2",
+          "label": "Válvula de entrada",
+          "flowDomainKey": "inletFlow1",
+          "mappingStatus": "mapped",
+          "confidence": "confirmed",
+          "writable": true,
+          "write": {
+            "target": {
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_CASCAJAL",
+              "index": 0
+            },
+            "commands": {
+              "open": 4,
+              "close": 8
+            },
+            "mode": "absolute",
+            "sustained": true,
+            "readBack": {
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_CASCAJAL",
+              "index": 0,
+              "confirmsWrittenValue": true,
+              "stateVerified": false
+            },
+            "timeoutMs": 5000,
+            "permission": "control_valves",
+            "_riesgo": "FUENTE: integrador del PLC (2026-10-16 / 2026-10-29). Valvula de ENTRADA: abrir = bit2 (4), cerrar = bit3 (8), sobreescritura directa en modo absolute sobre INT_OUT[0]. Senal SOSTENIDA. ANCLA, NO MANDO: la senal cuelga de index 1 pero MANDA por INT_OUT[0]."
           }
         },
         {
@@ -1062,7 +1265,9 @@
           "mappingStatus": "mapped",
           "confidence": "confirmed",
           "writable": false,
-          "stateEncoding": { "closed": 251 }
+          "stateEncoding": {
+            "closed": 251
+          }
         },
         {
           "buffer": "realIn",
@@ -1257,26 +1462,67 @@
           "sourceBuffer": "INT_OUT_KM18",
           "index": 0,
           "domainKey": "valve1",
-          "label": "Válvula 1",
+          "label": "Válvula de salida",
+          "flowDomainKey": "outletFlow1",
           "mappingStatus": "mapped",
           "confidence": "confirmed",
           "writable": true,
           "write": {
-            "target": { "channel": "intOut", "sourceBuffer": "INT_OUT_KM18", "index": 0 },
-            "commands": { "open": 4096 },
-            "mode": "bitmask",
-            "pulse": { "holdMs": 300 },
+            "target": {
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_KM18",
+              "index": 0
+            },
+            "commands": {
+              "open": 4096,
+              "close": 8192
+            },
+            "mode": "absolute",
+            "sustained": true,
             "readBack": {
-              "channel": "intIn",
-              "sourceBuffer": "INT_IN_KM18",
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_KM18",
               "index": 0,
-              "confirmsWrittenValue": false,
-              "expectedValue": 16385,
+              "confirmsWrittenValue": true,
               "stateVerified": false
             },
             "timeoutMs": 5000,
-            "rollbackValue": 0,
-            "permission": "control_valves"
+            "permission": "control_valves",
+            "_riesgo": "FUENTE: integrador del PLC (2026-10-16 / 2026-10-29). Valvula de SALIDA: abrir = bit12 (4096), cerrar = bit13 (8192), sobreescritura directa en modo absolute sobre INT_OUT[0]. Senal SOSTENIDA."
+          }
+        },
+        {
+          "buffer": "intOut",
+          "sourceBuffer": "INT_OUT_KM18",
+          "index": 1,
+          "domainKey": "valve2",
+          "label": "Válvula de entrada",
+          "flowDomainKey": "inletFlow1",
+          "mappingStatus": "mapped",
+          "confidence": "confirmed",
+          "writable": true,
+          "write": {
+            "target": {
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_KM18",
+              "index": 0
+            },
+            "commands": {
+              "open": 4,
+              "close": 8
+            },
+            "mode": "absolute",
+            "sustained": true,
+            "readBack": {
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_KM18",
+              "index": 0,
+              "confirmsWrittenValue": true,
+              "stateVerified": false
+            },
+            "timeoutMs": 5000,
+            "permission": "control_valves",
+            "_riesgo": "FUENTE: integrador del PLC (2026-10-16 / 2026-10-29). Valvula de ENTRADA: abrir = bit2 (4), cerrar = bit3 (8), sobreescritura directa en modo absolute sobre INT_OUT[0]. Senal SOSTENIDA. ANCLA, NO MANDO: la senal cuelga de index 1 pero MANDA por INT_OUT[0]."
           }
         },
         {
@@ -1474,26 +1720,67 @@
           "sourceBuffer": "INT_OUT_ALTO_MANGOS",
           "index": 0,
           "domainKey": "valve1",
-          "label": "Válvula 1",
+          "label": "Válvula de salida",
+          "flowDomainKey": "outletFlow1",
           "mappingStatus": "mapped",
           "confidence": "confirmed",
           "writable": true,
           "write": {
-            "target": { "channel": "intOut", "sourceBuffer": "INT_OUT_ALTO_MANGOS", "index": 0 },
-            "commands": { "open": 4096 },
-            "mode": "bitmask",
-            "pulse": { "holdMs": 300 },
+            "target": {
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_ALTO_MANGOS",
+              "index": 0
+            },
+            "commands": {
+              "open": 4096,
+              "close": 8192
+            },
+            "mode": "absolute",
+            "sustained": true,
             "readBack": {
-              "channel": "intIn",
-              "sourceBuffer": "INT_IN_ALTO_MANGOS",
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_ALTO_MANGOS",
               "index": 0,
-              "confirmsWrittenValue": false,
-              "expectedValue": 16385,
+              "confirmsWrittenValue": true,
               "stateVerified": false
             },
             "timeoutMs": 5000,
-            "rollbackValue": 0,
-            "permission": "control_valves"
+            "permission": "control_valves",
+            "_riesgo": "FUENTE: integrador del PLC (2026-10-16 / 2026-10-29). Valvula de SALIDA: abrir = bit12 (4096), cerrar = bit13 (8192), sobreescritura directa en modo absolute sobre INT_OUT[0]. Senal SOSTENIDA."
+          }
+        },
+        {
+          "buffer": "intOut",
+          "sourceBuffer": "INT_OUT_ALTO_MANGOS",
+          "index": 1,
+          "domainKey": "valve2",
+          "label": "Válvula de entrada",
+          "flowDomainKey": "inletFlow1",
+          "mappingStatus": "mapped",
+          "confidence": "confirmed",
+          "writable": true,
+          "write": {
+            "target": {
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_ALTO_MANGOS",
+              "index": 0
+            },
+            "commands": {
+              "open": 4,
+              "close": 8
+            },
+            "mode": "absolute",
+            "sustained": true,
+            "readBack": {
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_ALTO_MANGOS",
+              "index": 0,
+              "confirmsWrittenValue": true,
+              "stateVerified": false
+            },
+            "timeoutMs": 5000,
+            "permission": "control_valves",
+            "_riesgo": "FUENTE: integrador del PLC (2026-10-16 / 2026-10-29). Valvula de ENTRADA: abrir = bit2 (4), cerrar = bit3 (8), sobreescritura directa en modo absolute sobre INT_OUT[0]. Senal SOSTENIDA. ANCLA, NO MANDO: la senal cuelga de index 1 pero MANDA por INT_OUT[0]."
           }
         },
         {
@@ -1669,27 +1956,68 @@
           "sourceBuffer": "INT_OUT_CAMPOALEGRE",
           "index": 0,
           "domainKey": "valve1",
-          "label": "Válvula 1",
+          "label": "Válvula de salida",
+          "flowDomainKey": "outletFlow1",
           "mappingStatus": "mapped",
           "confidence": "confirmed",
           "writable": true,
           "write": {
-            "target": { "channel": "intOut", "sourceBuffer": "INT_OUT_CAMPOALEGRE", "index": 0 },
-            "commands": { "open": 4096 },
-            "mode": "bitmask",
-            "pulse": { "holdMs": 300 },
+            "target": {
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_CAMPOALEGRE",
+              "index": 0
+            },
+            "commands": {
+              "open": 4096,
+              "close": 8192
+            },
+            "mode": "absolute",
+            "sustained": true,
             "readBack": {
-              "channel": "intIn",
-              "sourceBuffer": "INT_IN_CAMPOALEGRE",
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_CAMPOALEGRE",
               "index": 0,
-              "confirmsWrittenValue": false,
-              "expectedValue": 16385,
+              "confirmsWrittenValue": true,
               "stateVerified": false
             },
             "timeoutMs": 5000,
-            "rollbackValue": 0,
-            "permission": "control_valves"
+            "permission": "control_valves",
+            "_riesgo": "FUENTE: integrador del PLC (2026-10-16 / 2026-10-29). Valvula de SALIDA: abrir = bit12 (4096), cerrar = bit13 (8192), sobreescritura directa en modo absolute sobre INT_OUT[0]. Senal SOSTENIDA."
           }
+        },
+        {
+          "buffer": "intOut",
+          "sourceBuffer": "INT_OUT_CAMPOALEGRE",
+          "index": 1,
+          "domainKey": "valve2",
+          "label": "Válvula de entrada",
+          "mappingStatus": "mapped",
+          "confidence": "confirmed",
+          "writable": true,
+          "write": {
+            "target": {
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_CAMPOALEGRE",
+              "index": 0
+            },
+            "commands": {
+              "open": 4,
+              "close": 8
+            },
+            "mode": "absolute",
+            "sustained": true,
+            "readBack": {
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_CAMPOALEGRE",
+              "index": 0,
+              "confirmsWrittenValue": true,
+              "stateVerified": false
+            },
+            "timeoutMs": 5000,
+            "permission": "control_valves",
+            "_riesgo": "FUENTE: integrador del PLC (2026-10-16 / 2026-10-29). Valvula de ENTRADA: abrir = bit2 (4), cerrar = bit3 (8), sobreescritura directa en modo absolute sobre INT_OUT[0]. Senal SOSTENIDA. ANCLA, NO MANDO: la senal cuelga de index 1 pero MANDA por INT_OUT[0]."
+          },
+          "flowDomainKey": "outletFlow2"
         },
         {
           "buffer": "realIn",
@@ -1909,26 +2237,65 @@
           "sourceBuffer": "INT_OUT_PICHINDE",
           "index": 0,
           "domainKey": "valve1",
-          "label": "Válvula 1",
+          "label": "Válvula de salida",
           "mappingStatus": "mapped",
           "confidence": "confirmed",
           "writable": true,
           "write": {
-            "target": { "channel": "intOut", "sourceBuffer": "INT_OUT_PICHINDE", "index": 0 },
-            "commands": { "open": 4096 },
-            "mode": "bitmask",
-            "pulse": { "holdMs": 300 },
+            "target": {
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_PICHINDE",
+              "index": 0
+            },
+            "commands": {
+              "open": 4096,
+              "close": 8192
+            },
+            "mode": "absolute",
+            "sustained": true,
             "readBack": {
-              "channel": "intIn",
-              "sourceBuffer": "INT_IN_PICHINDE",
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_PICHINDE",
               "index": 0,
-              "confirmsWrittenValue": false,
-              "expectedValue": 16385,
+              "confirmsWrittenValue": true,
               "stateVerified": false
             },
             "timeoutMs": 5000,
-            "rollbackValue": 0,
-            "permission": "control_valves"
+            "permission": "control_valves",
+            "_riesgo": "FUENTE: integrador del PLC (2026-10-16 / 2026-10-29). Valvula de SALIDA: abrir = bit12 (4096), cerrar = bit13 (8192), sobreescritura directa en modo absolute sobre INT_OUT[0]. Senal SOSTENIDA."
+          }
+        },
+        {
+          "buffer": "intOut",
+          "sourceBuffer": "INT_OUT_PICHINDE",
+          "index": 1,
+          "domainKey": "valve2",
+          "label": "Válvula de entrada",
+          "mappingStatus": "mapped",
+          "confidence": "confirmed",
+          "writable": true,
+          "write": {
+            "target": {
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_PICHINDE",
+              "index": 0
+            },
+            "commands": {
+              "open": 4,
+              "close": 8
+            },
+            "mode": "absolute",
+            "sustained": true,
+            "readBack": {
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_PICHINDE",
+              "index": 0,
+              "confirmsWrittenValue": true,
+              "stateVerified": false
+            },
+            "timeoutMs": 5000,
+            "permission": "control_valves",
+            "_riesgo": "FUENTE: integrador del PLC (2026-10-16 / 2026-10-29). Valvula de ENTRADA: abrir = bit2 (4), cerrar = bit3 (8), sobreescritura directa en modo absolute sobre INT_OUT[0]. Senal SOSTENIDA. ANCLA, NO MANDO: la senal cuelga de index 1 pero MANDA por INT_OUT[0]."
           }
         },
         {
@@ -2050,26 +2417,66 @@
           "sourceBuffer": "INT_OUT_CARBONERO",
           "index": 0,
           "domainKey": "valve1",
-          "label": "Válvula 1",
+          "label": "Válvula de salida",
           "mappingStatus": "mapped",
           "confidence": "confirmed",
           "writable": true,
           "write": {
-            "target": { "channel": "intOut", "sourceBuffer": "INT_OUT_CARBONERO", "index": 0 },
-            "commands": { "open": 4096 },
-            "mode": "bitmask",
-            "pulse": { "holdMs": 300 },
+            "target": {
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_CARBONERO",
+              "index": 0
+            },
+            "commands": {
+              "open": 4096,
+              "close": 8192
+            },
+            "mode": "absolute",
+            "sustained": true,
             "readBack": {
-              "channel": "intIn",
-              "sourceBuffer": "INT_IN_CARBONERO",
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_CARBONERO",
               "index": 0,
-              "confirmsWrittenValue": false,
-              "expectedValue": 16385,
+              "confirmsWrittenValue": true,
               "stateVerified": false
             },
             "timeoutMs": 5000,
-            "rollbackValue": 0,
-            "permission": "control_valves"
+            "permission": "control_valves",
+            "_riesgo": "FUENTE: integrador del PLC (2026-10-16 / 2026-10-29). Valvula de SALIDA: abrir = bit12 (4096), cerrar = bit13 (8192), sobreescritura directa en modo absolute sobre INT_OUT[0]. Senal SOSTENIDA."
+          }
+        },
+        {
+          "buffer": "intOut",
+          "sourceBuffer": "INT_OUT_CARBONERO",
+          "index": 1,
+          "domainKey": "valve2",
+          "label": "Válvula de entrada",
+          "flowDomainKey": "inletFlow1",
+          "mappingStatus": "mapped",
+          "confidence": "confirmed",
+          "writable": true,
+          "write": {
+            "target": {
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_CARBONERO",
+              "index": 0
+            },
+            "commands": {
+              "open": 4,
+              "close": 8
+            },
+            "mode": "absolute",
+            "sustained": true,
+            "readBack": {
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_CARBONERO",
+              "index": 0,
+              "confirmsWrittenValue": true,
+              "stateVerified": false
+            },
+            "timeoutMs": 5000,
+            "permission": "control_valves",
+            "_riesgo": "FUENTE: integrador del PLC (2026-10-16 / 2026-10-29). Valvula de ENTRADA: abrir = bit2 (4), cerrar = bit3 (8), sobreescritura directa en modo absolute sobre INT_OUT[0]. Senal SOSTENIDA. ANCLA, NO MANDO: la senal cuelga de index 1 pero MANDA por INT_OUT[0]."
           }
         },
         {
@@ -2374,6 +2781,74 @@
       },
       "signals": [
         {
+          "buffer": "intOut",
+          "sourceBuffer": "INT_OUT_SIRENA",
+          "index": 0,
+          "domainKey": "valve1",
+          "label": "Válvula de salida",
+          "flowDomainKey": "outletFlow1",
+          "mappingStatus": "mapped",
+          "confidence": "confirmed",
+          "writable": true,
+          "write": {
+            "target": {
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_SIRENA",
+              "index": 0
+            },
+            "commands": {
+              "open": 4096,
+              "close": 8192
+            },
+            "mode": "absolute",
+            "sustained": true,
+            "readBack": {
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_SIRENA",
+              "index": 0,
+              "confirmsWrittenValue": true,
+              "stateVerified": false
+            },
+            "timeoutMs": 5000,
+            "permission": "control_valves",
+            "_riesgo": "FUENTE: integrador del PLC (2026-10-16 / 2026-10-29). Valvula de SALIDA: abrir = bit12 (4096), cerrar = bit13 (8192), sobreescritura directa en modo absolute sobre INT_OUT[0]. Senal SOSTENIDA."
+          }
+        },
+        {
+          "buffer": "intOut",
+          "sourceBuffer": "INT_OUT_SIRENA",
+          "index": 1,
+          "domainKey": "valve2",
+          "label": "Válvula de entrada",
+          "flowDomainKey": "inletFlow1",
+          "mappingStatus": "mapped",
+          "confidence": "confirmed",
+          "writable": true,
+          "write": {
+            "target": {
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_SIRENA",
+              "index": 0
+            },
+            "commands": {
+              "open": 4,
+              "close": 8
+            },
+            "mode": "absolute",
+            "sustained": true,
+            "readBack": {
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_SIRENA",
+              "index": 0,
+              "confirmsWrittenValue": true,
+              "stateVerified": false
+            },
+            "timeoutMs": 5000,
+            "permission": "control_valves",
+            "_riesgo": "FUENTE: integrador del PLC (2026-10-16 / 2026-10-29). Valvula de ENTRADA: abrir = bit2 (4), cerrar = bit3 (8), sobreescritura directa en modo absolute sobre INT_OUT[0]. Senal SOSTENIDA. ANCLA, NO MANDO: la senal cuelga de index 1 pero MANDA por INT_OUT[0]."
+          }
+        },
+        {
           "buffer": "intIn",
           "sourceBuffer": "INT_IN_SIRENA",
           "index": 0,
@@ -2383,36 +2858,6 @@
           "confidence": "inferred",
           "writable": false,
           "stateTrusted": false
-        },
-        {
-          "buffer": "intOut",
-          "sourceBuffer": "INT_OUT_SIRENA",
-          "index": 0,
-          "domainKey": "valve1",
-          "label": "Válvula 1",
-          "flowDomainKey": "outletFlow1",
-          "mappingStatus": "mapped",
-          "confidence": "confirmed",
-          "writable": true,
-          "write": {
-            "_riesgo": "VERIFICADO EN CAMPO Y OFICIAL (cliente, 2026-08-15). Valvula de SALIDA de La Sirena, unico canal: INT_OUT[0]. Abrir = 1, cerrar = 2, y despues de cualquiera de los dos se vuelve a escribir 0 para limpiar (rollbackValue). El cliente fijo un minimo de 45 s sosteniendo el 2 antes de limpiar; se aplica el MISMO sostenido a abrir, porque es el mismo actuador y el mismo recorrido, y porque un 'abrir' que se soltara antes dejaria la maniobra a medias igual que la dejaba el pulso de 300 ms. TOPE: 45 s. No puede subir sin tocar el cliente: el fetch de la app no fija timeout y hereda el de la plataforma (~60 s en iOS); nginx no estorba (proxy_read_timeout 300s, verificado en la VM). ESTO SUSTITUYE a dos intentos anteriores del mismo dia que NUNCA llegaron a produccion: el 4096 heredado de Voragine y la orden compuesta c0/c1 con relE de inversion. La realidad es mas simple: un solo canal con tres valores. PENDIENTE de una futura actualizacion, dicho por el cliente: ligar la parada al CAUDAL en vez de al reloj. Cuando llegue, es pulse.until (ya existe, lo usa Voragine). El estado sigue sin decidirse por INT_IN[0] (stateTrusted:false, valia 17408 con 18 l/s saliendo): el veredicto lo da outletFlow1, que es evidencia fisica. Revertir no aplica: esta es la entrega oficial de esta valvula.",
-            "target": { "channel": "intOut", "sourceBuffer": "INT_OUT_SIRENA", "index": 0 },
-            "commands": { "open": 1, "close": 2 },
-            "mode": "absolute",
-            "pulse": { "holdMs": 45000 },
-            "readBack": {
-              "channel": "intIn",
-              "sourceBuffer": "INT_IN_SIRENA",
-              "index": 0,
-              "confirmsWrittenValue": false,
-              "expectedValue": 16385,
-              "expectedByCommand": { "open": 16385, "close": 16384 },
-              "stateVerified": false
-            },
-            "timeoutMs": 5000,
-            "rollbackValue": 0,
-            "permission": "control_valves"
-          }
         },
         {
           "buffer": "realIn",
@@ -2790,6 +3235,238 @@
         },
         "mappingStatus": "mapped",
         "confidence": "confirmed"
+      },
+      "signals": []
+    },
+    {
+      "plantId": "cabuyo",
+      "displayName": "Cabuyo",
+      "displayNameProvisional": true,
+      "opcBuffers": {
+        "realIn": [
+          {
+            "browseName": "REAL_IN_CABUYO",
+            "node": {
+              "nsUri": "AQUATECH4",
+              "identifier": "g=95602685-4CD8-F2A1-4522-AA3CA25C6850"
+            },
+            "arrayLength": 30,
+            "dataType": "Float"
+          }
+        ],
+        "intIn": [
+          {
+            "browseName": "INT_IN_CABUYO",
+            "node": {
+              "nsUri": "AQUATECH4",
+              "identifier": "g=17F74BB0-F31C-E8ED-4AA4-12582C2323C1"
+            },
+            "arrayLength": 10,
+            "dataType": "Int16"
+          }
+        ],
+        "intOut": [
+          {
+            "browseName": "INT_OUT_CABUYO",
+            "node": {
+              "nsUri": "AQUATECH4",
+              "identifier": "g=4A2238DA-AE10-9D0D-1F37-988B99A50632"
+            },
+            "arrayLength": 10,
+            "dataType": "Int16"
+          }
+        ],
+        "msgRead": [
+          {
+            "browseName": "MSG_READ_CABUYO",
+            "node": {
+              "nsUri": "AQUATECH4",
+              "identifier": "g=95AB15FD-6F1C-9C3A-B77D-11FE88D33500"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          },
+          {
+            "browseName": "MSG_READ_INT_CABUYO",
+            "node": {
+              "nsUri": "AQUATECH4",
+              "identifier": "g=970CA2D3-EF96-C5D9-3CB9-870825885248"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          }
+        ],
+        "msgWrite": [
+          {
+            "browseName": "MSG_WRITE_INT_CABUYO",
+            "node": {
+              "nsUri": "AQUATECH4",
+              "identifier": "g=CF34248B-824C-CE5A-95DE-DD46A2C13ED6"
+            },
+            "arrayLength": null,
+            "dataType": "MESSAGE"
+          }
+        ]
+      },
+      "connection": {
+        "sourceBuffer": "MSG_READ_CABUYO",
+        "done": null,
+        "error": null,
+        "timeout": null,
+        "mappingStatus": "unmapped",
+        "confidence": "estimated"
+      },
+      "signals": [
+        {
+          "buffer": "intOut",
+          "sourceBuffer": "INT_OUT_CABUYO",
+          "index": 0,
+          "domainKey": "valve2",
+          "label": "Válvula de entrada",
+          "flowDomainKey": "inletFlow1",
+          "mappingStatus": "mapped",
+          "confidence": "confirmed",
+          "writable": true,
+          "write": {
+            "target": {
+              "channel": "intOut",
+              "sourceBuffer": "INT_OUT_CABUYO",
+              "index": 0
+            },
+            "commands": {
+              "open": 4,
+              "close": 8
+            },
+            "mode": "bitmask",
+            "sustained": true,
+            "readBack": {
+              "channel": "intIn",
+              "sourceBuffer": "INT_IN_CABUYO",
+              "index": 1,
+              "confirmsWrittenValue": false,
+              "expectedByCommand": {
+                "open": 1,
+                "close": 2
+              },
+              "mask": 3,
+              "faultMask": 16,
+              "stateVerified": false
+            },
+            "timeoutMs": 5000,
+            "permission": "control_valves",
+            "_riesgo": "FUENTE: integrador del PLC (Brayan Grueso, Telcobras, ficha 2026-11-09/10). Válvula de ENTRADA: abrir = bit2 (4), cerrar = bit3 (8) en INT_OUT_CABUYO[0], orden SOSTENIDA, mode bitmask porque la palabra tiene otros bits en uso. Estado en INT_IN_CABUYO[1]: abierta bit0, cerrada bit1, falla bit4. Sin ancla: es la única señal en INT_OUT_CABUYO[0] y manda por ese mismo índice (el [1] es la consigna de la válvula de salida, Fase 4). stateVerified: false hasta probarla en campo con Aquora."
+          }
+        },
+        {
+          "buffer": "intIn",
+          "sourceBuffer": "INT_IN_CABUYO",
+          "index": 1,
+          "domainKey": "valve2State",
+          "label": "Estado válvula de entrada",
+          "_nota": "Codificación entregada por el integrador (ficha 2026-11-09/10): abierta bit0 (1), cerrada bit1 (2), falla bit4 (16). stateTrusted: true desde el 2026-11-10: el integrador confirmó la codificación verificada en campo (igual que en voragine), así que la app juzga la válvula por esta palabra. write.readBack.stateVerified de valve2 sigue en false hasta la prueba en campo con Aquora.",
+          "mappingStatus": "mapped",
+          "confidence": "confirmed",
+          "writable": false,
+          "stateTrusted": true,
+          "stateEncoding": {
+            "bits": {
+              "open": 1,
+              "close": 2,
+              "fault": 16
+            }
+          }
+        },
+        {
+          "buffer": "realIn",
+          "index": 0,
+          "domainKey": "inletFlow1",
+          "label": "Caudal de entrada",
+          "unit": "l/s",
+          "min": 0,
+          "max": 1000,
+          "mappingStatus": "mapped",
+          "confidence": "confirmed",
+          "writable": false
+        },
+        {
+          "buffer": "realIn",
+          "index": 7,
+          "domainKey": "outletFlow1",
+          "label": "Caudal de salida",
+          "unit": "l/s",
+          "min": 0,
+          "max": 1000,
+          "mappingStatus": "mapped",
+          "confidence": "confirmed",
+          "writable": false
+        },
+        {
+          "buffer": "realIn",
+          "index": 12,
+          "domainKey": "inletPressure1",
+          "label": "Presión de entrada",
+          "unit": "psi",
+          "min": -15,
+          "max": 232,
+          "mappingStatus": "mapped",
+          "confidence": "confirmed",
+          "writable": false
+        },
+        {
+          "buffer": "realIn",
+          "index": 16,
+          "domainKey": "valve1Position",
+          "label": "Válvula de salida",
+          "_nota": "Apertura (realimentación) de la válvula de SALIDA proporcional, 0-100 %, solo lectura. Su mando (valve1) NO se declara: Fase 4. Datos del integrador para la Fase 4: consigna en INT_OUT_CABUYO[1] (INT, 0-100 %, límites 0-100, el PLC satura fuera de límites, sin modo local/manual); rampa desconocida. Umbral de 'abierta' entregado como \"0.99\" sin unidad clara: pendiente de aclarar.",
+          "unit": "%",
+          "min": 0,
+          "max": 100,
+          "flowDomainKey": "outletFlow1",
+          "mappingStatus": "mapped",
+          "confidence": "confirmed",
+          "writable": false
+        }
+      ]
+    },
+    {
+      "plantId": "luisa",
+      "displayName": "La Luisa",
+      "displayNameProvisional": true,
+      "opcBuffers": {},
+      "connection": {
+        "done": null,
+        "error": null,
+        "timeout": null,
+        "mappingStatus": "unmapped",
+        "confidence": "estimated"
+      },
+      "signals": []
+    },
+    {
+      "plantId": "leonera",
+      "displayName": "La Leonera",
+      "displayNameProvisional": true,
+      "opcBuffers": {},
+      "connection": {
+        "done": null,
+        "error": null,
+        "timeout": null,
+        "mappingStatus": "unmapped",
+        "confidence": "estimated"
+      },
+      "signals": []
+    },
+    {
+      "plantId": "gloria",
+      "displayName": "Gloria",
+      "displayNameProvisional": true,
+      "opcBuffers": {},
+      "connection": {
+        "done": null,
+        "error": null,
+        "timeout": null,
+        "mappingStatus": "unmapped",
+        "confidence": "estimated"
       },
       "signals": []
     }

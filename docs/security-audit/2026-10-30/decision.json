@@ -1,0 +1,28 @@
+{
+  "schema": "telcobras-decision/1",
+  "artifact_id": "monitor-ptap-security-audit-2026-10-30",
+  "source_and_version": "Local workspace monitor-ptap; HEAD ffaad3844e321825959498496282c06316fd3945. Existing user changes in docs/RUNBOOK_PRODUCCION.md and tools/vm/ptap-install-renewed-tls.sh excluded from execution.",
+  "sha256_or_commit": "ffaad3844e321825959498496282c06316fd3945; package-lock.json sha256 05019aed47376a250e190bd247ef511cc2ed0f44f9c340542a78769e620766d6; tools/plc-discovery/package-lock.json sha256 1d0c8f2c1507e89226a61bd66e313c01c0addfad0eca22b2925c9f8f81c237d0",
+  "data_classification": "internal",
+  "requested_operation": "Read-only source security audit, local report, and bounded synthetic checks of reviewed first-party logic with fake dependencies and fictitious records.",
+  "authorized_scope": "User requested a cybersecurity audit and explanations. No deployment, real PLC commands, database access, dependency installation, external scanning, or publication.",
+  "environment_and_destination": "Local Windows workspace; Node v26.12.1 built-ins only for synthetic checks. Official public documentation via web/Context7 using public package identifiers only; no source, lockfile, secrets, hashes, or corporate samples transmitted.",
+  "tools_versions_and_signature_dates": ["Node.js v26.12.1", "PowerShell local source reads", "Official Expo SDK v58 documentation read on 2026-10-31 UTC", "Official Socket.IO v4 documentation consulted on 2026-10-31 UTC"],
+  "observed_evidence": [
+    "Reviewed gateway, HTTP guards, permission matrix, command signing, session storage, snapshot storage, authentication, email, controllers, deployment scripts and CI as source text.",
+    "Synthetic checker will strip imports and framework decorators, transpile reviewed TypeScript with Node built-ins, and supply fake process/env, sockets, repositories, storage and loggers. No first-party entrypoint or third-party dependency will be imported.",
+    "Each exercised source file is hashed in the local results. Cryptographic chain checks use synthetic facts and a disposable nonproduction key.",
+    "Local structural checker validate_record.py and its schema reviewed before invocation."
+  ],
+  "limitations_and_unexamined_content": [
+    "No verified disposable VM is available; untrusted code, package install scripts, application entrypoints, native artifacts and PLC discovery tools are outside this authorization.",
+    "Node vm is a dependency-injection test mechanism, not a security isolation boundary. Only explicitly reviewed first-party logic is exercised.",
+    "No live production configuration, network exposure, MySQL transactions, full Nest/Socket.IO integration or malware-free certification.",
+    "No npm audit submission of the corporate dependency tree; advisory research uses public package names only."
+  ],
+  "rights_and_notices": "Internal review only. Existing license and attribution notices preserved. No acquisition or redistribution of third-party components.",
+  "decision": "allowed_scoped",
+  "conditions_for_next_action": ["Reevaluate if bytes, dependencies, execution capabilities, recipients or operations change.", "Unknown executables, network-enabled application execution and real equipment tests require a separate isolation and operational assessment."],
+  "reviewer_and_utc_time": "Codex; 2026-10-31T03:00:37Z (user-facing date 2026-10-30 America/Bogota)",
+  "valid_only_for_identified_bytes_and_operation": true
+}

@@ -1,0 +1,40 @@
+{
+  "schema": "telcobras-decision/1",
+  "artifact_id": "tools/vm/ptap-configure-smtp.cjs",
+  "source_and_version": "Locally authored SMTP configuration helper; inspected existing Nodemailer 10.2.1 and dotenv 18.0.9",
+  "sha256_or_commit": "1b798cb2a85f98c05d5d22652601f885e23df573645fbdaecb99ffb1ab0460aa",
+  "data_classification": "internal",
+  "requested_operation": "Prepare and test helper locally with synthetic fixtures; read installed SMTP source through verified SSH; read public official documentation",
+  "authorized_scope": "Parent-authorized SMTP preparation. No production env edits, API restart, test email, browser interaction or persistent credentials. Parent explicitly coordinated private temporary Linux synthetic fixture execution; completed without production env edits.",
+  "environment_and_destination": "Windows workspace; read-only SSH xpertic_app@181.204.165.66:7498; official Expo documentation and Context7 public Nodemailer documentation",
+  "tools_versions_and_signature_dates": [
+    "Node v26.12.1 local and production",
+    "Nodemailer10.2.1 and dotenv18.0.9 local and production",
+    "No new dependencies or artifact downloads"
+  ],
+  "observed_evidence": [
+    "Expo v58 exact version documentation read before code",
+    "Installed SMTP verify() and requireTLS source inspected",
+    "Script requires Linux TTY, no arguments, verified TLS1.2+ and SMTP auth before write; refuses disabled process TLS",
+    "No credentials read or transmitted by this task; no SMTP messages sent",
+    "Review corrected backups to .env.bak-smtp-* and temporaries to .env.bak-smtp-tmp-*; git check-ignore --no-index confirms both match existing .env.bak* rule without creating secret files",
+    "Final production Linux private temporary fixture: 5 tests pass, including actual git ignore behavior, mode0600 backup/replacement, stale input rejection and symlink rejection. Temporary fixtures removed.",
+    "Exact executed helper SHA256 1b798cb2a85f98c05d5d22652601f885e23df573645fbdaecb99ffb1ab0460aa; test SHA256 de7e61fdb17893ec4ae15d454df6ff625838dcdc5e277c1c334d616c8f51fa6d"
+  ],
+  "limitations_and_unexamined_content": [
+    "Actual SMTP hostname/mailbox/password not yet provided",
+    "Delivery authorization and mailbox sender policy unverified",
+    "This scope does not authorize production .env activation",
+    "Hidden-input interactive behavior not yet exercised with actual terminal/user credentials"
+  ],
+  "rights_and_notices": "Own implementation; existing installed dependency notices unchanged. Public documentation consulted without redistribution.",
+  "decision": "allowed_scoped",
+  "conditions_for_next_action": [
+    "Parent coordination before upload or production execution",
+    "Confirm provider hostname and authorized mailbox",
+    "User must enter password directly in private interactive SSH terminal; never chat, argv, logs or clipboard",
+    "Separately authorize recipient for any delivery test"
+  ],
+  "reviewer_and_utc_time": "Codex smtp_production 2026-10-31T13:01:42.6048874Z",
+  "valid_only_for_identified_bytes_and_operation": true
+}

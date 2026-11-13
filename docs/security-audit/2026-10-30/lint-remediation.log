@@ -1,0 +1,201 @@
+
+> monitor-ptap@1.0.0 lint
+> npm run lint --workspaces --if-present
+
+
+> @ptap/api@1.0.0 lint
+> eslint .
+
+
+C:\Users\User\Documents\monitor-ptap\apps\api\scripts\add-valve-signals.ts
+   28:31  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+   29:13  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  101:18  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+
+C:\Users\User\Documents\monitor-ptap\apps\api\scripts\asignar-credenciales.ts
+  110:19  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+
+C:\Users\User\Documents\monitor-ptap\apps\api\scripts\efficiency-collector.ts
+  123:9   warning  'health' is assigned a value but never used                  @typescript-eslint/no-unused-vars
+  131:49  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  223:16  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+
+C:\Users\User\Documents\monitor-ptap\apps\api\scripts\fieldtest-valve-run.ts
+  87:22  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+
+C:\Users\User\Documents\monitor-ptap\apps\api\scripts\fix-valve-state.ts
+  28:13  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead            @typescript-eslint/array-type
+  71:3   warning  Expected an assignment or function call and instead saw an expression  no-unused-expressions
+
+C:\Users\User\Documents\monitor-ptap\apps\api\scripts\migrate.ts
+  34:38  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+
+C:\Users\User\Documents\monitor-ptap\apps\api\scripts\monitor-sirena-sub.ts
+  17:16  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  30:29  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  31:7   warning  'arrOf' is assigned a value but never used                   @typescript-eslint/no-unused-vars
+  45:19  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  45:56  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+
+C:\Users\User\Documents\monitor-ptap\apps\api\scripts\monitor-sirena-write.ts
+  27:29  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  50:20  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  50:74  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  73:46  warning  'captures' is assigned a value but never used                @typescript-eslint/no-unused-vars
+
+C:\Users\User\Documents\monitor-ptap\apps\api\scripts\monitor-valve-capture.ts
+  43:29  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  89:17  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  89:55  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  91:18  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+
+C:\Users\User\Documents\monitor-ptap\apps\api\scripts\monitor-voragine-msg.ts
+  44:12  warning  Array type using 'ReadonlyArray<T>' is forbidden. Use 'readonly T[]' instead  @typescript-eslint/array-type
+
+C:\Users\User\Documents\monitor-ptap\apps\api\scripts\read-opcua-node.ts
+  1:10  warning  'ClientSession' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\User\Documents\monitor-ptap\apps\api\scripts\seed-users.ts
+  22:19  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+
+C:\Users\User\Documents\monitor-ptap\apps\api\scripts\voragine-valvulas-bits.ts
+  438:11  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  485:13  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  530:57  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+
+C:\Users\User\Documents\monitor-ptap\apps\api\src\infrastructure\connectivity\adapters\opcua\opcua-connectivity.adapter.ts
+  505:39  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+
+C:\Users\User\Documents\monitor-ptap\apps\api\src\infrastructure\connectivity\mapping\opc-mapping.loader.ts
+  319:30  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  646:4   warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  647:38  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  663:21  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  873:14  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  879:9   warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+
+C:\Users\User\Documents\monitor-ptap\apps\api\src\infrastructure\connectivity\opcua\namespace-resolver.ts
+  30:12  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  31:33  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+
+C:\Users\User\Documents\monitor-ptap\apps\api\src\infrastructure\connectivity\ports\connectivity-adapter.port.ts
+  15:1   warning  Import in body of module; reorder to top                     import/first
+  21:11  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  84:22  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+
+C:\Users\User\Documents\monitor-ptap\apps\api\src\main.ts
+  7:8  warning  Using exported name 'rateLimit' as identifier for default import  import/no-named-as-default
+
+C:\Users\User\Documents\monitor-ptap\apps\api\test\command-mapping.test.ts
+  121:13  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  123:35  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  124:17  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  154:13  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  156:17  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  231:13  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  231:48  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  283:30  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  293:34  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  295:13  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  295:48  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  387:58  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  411:16  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  434:16  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  469:58  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  573:16  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  573:31  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+
+C:\Users\User\Documents\monitor-ptap\apps\api\test\dia-operativo.test.ts
+  54:13  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  54:48  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  72:13  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  72:48  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+
+C:\Users\User\Documents\monitor-ptap\apps\api\test\email-verification.test.ts
+  43:15  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+
+C:\Users\User\Documents\monitor-ptap\apps\api\test\gateway-security.test.ts
+   6:37  warning  'C:\Users\User\Documents\monitor-ptap\apps\api\src\infrastructure\connectivity\connectivity.gateway.ts' imported multiple times  import/no-duplicates
+  11:33  warning  'C:\Users\User\Documents\monitor-ptap\apps\api\src\infrastructure\connectivity\connectivity.gateway.ts' imported multiple times  import/no-duplicates
+
+C:\Users\User\Documents\monitor-ptap\apps\api\test\mapping-override.test.ts
+  456:16  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+
+C:\Users\User\Documents\monitor-ptap\apps\api\test\pipeline.test.ts
+  16:59  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+
+C:\Users\User\Documents\monitor-ptap\apps\api\test\plantas-en-integracion.test.ts
+   72:31  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+   74:13  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  206:20  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+
+C:\Users\User\Documents\monitor-ptap\apps\api\test\plc-replay.test.ts
+  18:10  warning  'loadMapping' is defined but never used                      @typescript-eslint/no-unused-vars
+  31:82  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+
+C:\Users\User\Documents\monitor-ptap\apps\api\test\raw-buffers.test.ts
+  22:63  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+
+C:\Users\User\Documents\monitor-ptap\apps\api\test\register.test.ts
+  68:54  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  69:15  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+
+C:\Users\User\Documents\monitor-ptap\apps\api\test\users-admin.test.ts
+  11:10  warning  'INestApplication' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\User\Documents\monitor-ptap\apps\api\test\voragine-valvulas-bits.test.ts
+  40:26  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  68:13  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  68:47  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+
+C:\Users\User\Documents\monitor-ptap\apps\api\test\voragine-valvulas-opcua.test.ts
+   48:19  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  265:13  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  265:47  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+
+C:\Users\User\Documents\monitor-ptap\apps\api\test\write-service.test.ts
+    50:11  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+    62:19  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+   341:30  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+   558:19  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+   614:20  warning  'adapter' is assigned a value but never used                 @typescript-eslint/no-unused-vars
+   700:15  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+   787:17  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+   939:16  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+  1000:16  warning  Array type using 'Array<T>' is forbidden. Use 'T[]' instead  @typescript-eslint/array-type
+
+✖ 93 problems (0 errors, 93 warnings)
+  0 errors and 83 warnings potentially fixable with the `--fix` option.
+
+
+> @ptap/mobile@1.0.0 lint
+> expo lint
+
+
+C:\Users\User\Documents\monitor-ptap\apps\mobile\components\FlowMeterCard.tsx
+  9:10  warning  'BotonSilencio' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\User\Documents\monitor-ptap\apps\mobile\components\RegistroIntegridadCard.tsx
+  40:16  warning  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+C:\Users\User\Documents\monitor-ptap\apps\mobile\components\RegistroIntegridadCard.tsx:40:16
+  38 |
+  39 |   useEffect(() => {
+> 40 |     if (puede) comprobar();
+     |                ^^^^^^^^^ Avoid calling setState() directly within an effect
+  41 |   }, [puede, comprobar]);
+  42 |
+  43 |   if (!puede) return null;  react-hooks/set-state-in-effect
+
+✖ 2 problems (0 errors, 2 warnings)
+
+
+> @ptap/shared@1.0.0 lint
+> eslint .
+

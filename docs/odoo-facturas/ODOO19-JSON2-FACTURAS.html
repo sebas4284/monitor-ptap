@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="es">
+<!-- Guia corta Odoo 19 JSON-2 + DIAN. Autocontenido: build.ps1 inyecta las fuentes woff2 en base64. -->
+<head>
+<meta charset="utf-8">
+<title>Odoo 19 JSON-2 · Facturas e integración DIAN</title>
+<style>
+<!--FONTS-->
+</style>
+<style>
+:root{
+  --ground:#F6F8FB; --surface:#FFFFFF; --raised:#EEF2F7; --sunken:#E7ECF3;
+  --ink:#0E1626; --ink-2:#3A485C; --ink-3:#5A6B82; --hair:#D6DEE9; --hair-2:#E4EAF1;
+  --brand:#0F6E7C; --brand-2:#127C8A; --brand-ink:#0A4C56;
+  --live:#1F9D57; --live-bg:#E5F5EC;
+  --stable:#2563C9; --stable-bg:#E6EEFB;
+  --frozen:#DC2626; --frozen-bg:#FBE7E7;
+  --warn:#B4740A; --warn-bg:#FBF0DC;
+  --shadow-sm:0 1px 2px rgba(14,22,38,.07);
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:#fff;color:var(--ink);
+  font-family:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  font-size:9.8pt;line-height:1.44;-webkit-font-smoothing:antialiased;
+  -webkit-print-color-adjust:exact;print-color-adjust:exact}
+h1,h2,h3,h4{font-family:"Archivo","IBM Plex Sans",system-ui,sans-serif;line-height:1.14;letter-spacing:-.014em;margin:0}
+code,.mono{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace}
+code{background:var(--sunken);border:1px solid var(--hair-2);border-radius:4px;padding:.04em .32em;font-size:.87em}
+p{margin:.34rem 0}
+strong,b{font-weight:600}
+@page{size:A4;margin:11mm 13mm 9mm}
+.page{break-after:page}
+.page:last-of-type{break-after:auto}
+.avoid{break-inside:avoid}
+
+.hdr{background:linear-gradient(122deg,#0A4C56 0%,#0F6E7C 55%,#127C8A 100%);color:#fff;
+  border-radius:12px;padding:.8rem 1rem .85rem;margin-bottom:.75rem;
+  display:flex;align-items:center;gap:.9rem}
+.hdr .mk{width:40px;height:40px;border-radius:12px;background:rgba(255,255,255,.16);
+  border:1px solid rgba(255,255,255,.3);display:grid;place-items:center;flex:none;
+  font-family:"Archivo";font-weight:800;font-size:19px}
+.hdr .lbl{font-size:7.4pt;letter-spacing:.19em;text-transform:uppercase;color:rgba(255,255,255,.72);font-weight:700}
+.hdr h1{font-size:19pt;font-weight:800;margin:.05rem 0 .1rem}
+.hdr .sub{font-family:"IBM Plex Mono";font-size:9.2pt;color:rgba(255,255,255,.9)}
+
+.eyebrow{font-size:7.4pt;letter-spacing:.19em;text-transform:uppercase;color:var(--brand-2);font-weight:700;margin:0 0 .3rem}
+h2{font-size:14pt;font-weight:800;margin:0 0 .4rem}
+h3{font-size:11pt;font-weight:700;margin:.75rem 0 .28rem}
+h3 .n{font-family:"IBM Plex Mono";font-size:9pt;color:var(--brand-2);font-weight:600;margin-right:.3rem}
+
+.cred{border:1px solid var(--brand);border-left-width:5px;border-radius:11px;background:#F2F8F9;
+  padding:.6rem .8rem;margin:.55rem 0}
+.cred .ct{font-size:7.4pt;letter-spacing:.16em;text-transform:uppercase;color:var(--brand-ink);font-weight:700;margin-bottom:.45rem}
+.cred dl{display:grid;grid-template-columns:auto 1fr;gap:.22rem .9rem;margin:0}
+.cred dt{font-size:8.6pt;color:var(--ink-3);font-weight:600;padding-top:.12rem}
+.cred dd{margin:0;font-family:"IBM Plex Mono";font-size:9.2pt;font-weight:600;color:var(--brand-ink);letter-spacing:-.01em}
+
+table{border-collapse:collapse;width:100%;font-size:8.6pt;background:var(--surface)}
+.tw{border:1px solid var(--hair);border-radius:10px;overflow:hidden;margin:.5rem 0;box-shadow:var(--shadow-sm)}
+th,td{text-align:left;padding:.28rem .55rem;border-bottom:1px solid var(--hair-2);vertical-align:top}
+thead th{background:var(--raised);font-family:"Archivo";font-weight:700;font-size:8.2pt;letter-spacing:.02em}
+tbody tr:last-child td{border-bottom:0}
+td.k{font-weight:600;color:var(--ink)}
+td .v{font-family:"IBM Plex Mono";font-size:8.8pt;color:var(--brand-ink);font-weight:600}
+
+.call{border:1px solid var(--hair);border-left-width:4px;border-radius:9px;padding:.48rem .7rem;margin:.5rem 0;background:var(--surface)}
+.call .ct{font-weight:700;font-size:9pt;display:flex;align-items:center;gap:.45rem;margin-bottom:.05rem}
+.call p{font-size:8.6pt;margin:.12rem 0 0;line-height:1.4}
+.call p:last-child{margin-bottom:0}
+.call .ico{font-family:"Archivo";font-weight:800;width:15px;height:15px;border-radius:4px;display:inline-grid;place-items:center;font-size:8pt;color:#fff;flex:none}
+.call.ok{border-left-color:var(--live);background:var(--live-bg)} .call.ok .ct{color:var(--live)} .call.ok .ico{background:var(--live)}
+.call.info{border-left-color:var(--stable);background:var(--stable-bg)} .call.info .ct{color:var(--stable)} .call.info .ico{background:var(--stable)}
+.call.warn{border-left-color:var(--warn);background:var(--warn-bg)} .call.warn .ct{color:var(--warn)} .call.warn .ico{background:var(--warn)}
+
+.two{display:grid;grid-template-columns:1fr 1fr;gap:.6rem;margin:.5rem 0}
+.card{border:1px solid var(--hair);border-radius:11px;background:var(--surface);box-shadow:var(--shadow-sm);overflow:hidden}
+.card .ch{background:var(--raised);border-bottom:1px solid var(--hair-2);padding:.38rem .7rem}
+.card .ch h4{font-size:11pt;font-weight:800}
+.card .ch span{font-size:7.6pt;color:var(--ink-3);font-family:"IBM Plex Mono"}
+.card .cb{padding:.5rem .7rem .55rem}
+ol.steps{margin:0;padding-left:1.1rem;font-size:8.7pt;line-height:1.38}
+ol.steps li{margin:.16rem 0}
+ol.steps li::marker{font-family:"IBM Plex Mono";font-size:8pt;color:var(--brand-2);font-weight:700}
+ul.tight{margin:.15rem 0 0;padding-left:1rem;font-size:8.6pt;line-height:1.38}
+ul.tight li{margin:.12rem 0}
+
+.pill{display:inline-flex;align-items:center;font-size:7.6pt;font-weight:700;padding:.11rem .48rem;border-radius:999px;background:var(--live-bg);color:var(--live)}
+.pill.y{background:var(--warn-bg);color:var(--warn)}
+.pill.r{background:var(--frozen-bg);color:var(--frozen)}
+footer{border-top:1px solid var(--hair);margin-top:.55rem;padding-top:.35rem;font-size:7.6pt;color:var(--ink-3)}
+
+pre{background:#0E1626;color:#E7ECF3;border-radius:9px;padding:.5rem .68rem;margin:.4rem 0;
+  font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:7.6pt;line-height:1.34;overflow:hidden}
+pre .c{color:#7FD1B9} pre .s{color:#F2C57C} pre .m{color:#8FB8F0}
+.srcs{font-size:7.8pt;line-height:1.42;color:var(--ink-2)}
+.srcs b{color:var(--ink);font-size:8.6pt}
+.srcs div{margin:.3rem 0}
+.srcs a{color:var(--brand-ink);word-break:break-all;text-decoration:none}
+</style>
+</head>
+<body>
+
+<!-- ==================== PAGINA 1 ==================== -->
+<div class="page">
+  <div class="hdr">
+    <div class="mk">T</div>
+    <div>
+      <div class="lbl">Telcobras · Integración Odoo</div>
+      <h1>Facturas por API</h1>
+      <div class="sub">Odoo 19 Online Custom · JSON-2 · DIAN</div>
+    </div>
+  </div>
+
+  <div class="cred avoid">
+    <div class="ct">Lo invariable de toda llamada</div>
+    <dl>
+      <dt>Endpoint</dt><dd>POST https://TU_BASE.odoo.com/json/2/&lt;modelo&gt;/&lt;metodo&gt;</dd>
+      <dt>Auth</dt><dd>Authorization: bearer &lt;API_KEY&gt;</dd>
+      <dt>Tipo</dt><dd>Content-Type: application/json</dd>
+      <dt>Modelo</dt><dd>account.move</dd>
+    </dl>
+    <p style="font-size:8.6pt;color:var(--ink-2);margin:.5rem 0 0">El modelo y el método van <b>en la URL</b>. La API externa exige plan <b>Custom</b>, que es el contratado. Las API keys de Odoo <b>caducan</b> (máximo tres meses): la rotación entra en el diseño desde el principio.</p>
+  </div>
+
+  <div class="call info avoid">
+    <div class="ct"><span class="ico">i</span> La regla que evita la mayoría de los errores</div>
+    <p>La API recibe <b>nombres técnicos e IDs</b>, no las etiquetas de la pantalla. Se envía <code>partner_id: 123</code>, nunca <code>"Cliente": "ACME"</code>. Igual con diario, moneda e impuestos.</p>
+  </div>
+
+  <h3><span class="n">01</span>Los cuatro tipos de documento</h3>
+  <div class="tw avoid">
+  <table>
+    <thead><tr><th style="width:150px">move_type</th><th>Qué crea</th></tr></thead>
+    <tbody>
+      <tr><td><span class="v">out_invoice</span></td><td>Factura de cliente (venta)</td></tr>
+      <tr><td><span class="v">in_invoice</span></td><td>Factura de proveedor (compra)</td></tr>
+      <tr><td><span class="v">out_refund</span></td><td>Nota crédito de cliente</td></tr>
+      <tr><td><span class="v">in_refund</span></td><td>Nota crédito de proveedor</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3><span class="n">02</span>Crear una factura de cliente</h3>
+  <pre><span class="c">POST /json/2/account.move/create</span>
+{
+  <span class="m">"vals_list"</span>: [{
+    <span class="m">"move_type"</span>: <span class="s">"out_invoice"</span>,
+    <span class="m">"partner_id"</span>: 123,
+    <span class="m">"journal_id"</span>: 7,
+    <span class="m">"invoice_date"</span>: <span class="s">"2026-09-10"</span>,
+    <span class="m">"currency_id"</span>: 1,
+    <span class="m">"invoice_date_due"</span>: <span class="s">"2026-10-10"</span>,
+    <span class="m">"invoice_line_ids"</span>: [
+      [0, 0, {
+        <span class="m">"name"</span>: <span class="s">"Servicio mensual"</span>,
+        <span class="m">"quantity"</span>: 1,
+        <span class="m">"price_unit"</span>: 250000,
+        <span class="m">"tax_ids"</span>: [[6, 0, [21]]]
+      }]
+    ]
+  }]
+}</pre>
+
+  <div class="tw avoid">
+  <table>
+    <thead><tr><th style="width:130px">Detalle</th><th>Por qué</th></tr></thead>
+    <tbody>
+      <tr><td class="k">vals_list</td><td>Es el argumento de <code>create(vals_list)</code>: una lista de diccionarios.</td></tr>
+      <tr><td class="k">[0, 0, {…}]</td><td>Triple literal que <b>crea</b> una línea. Por RPC no se usan los Command de Python.</td></tr>
+      <tr><td class="k">[[6, 0, [ids]]]</td><td>Comando <b>6</b>: fija el conjunto de una Many2many. Los impuestos van así, no como lista plana.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="call warn avoid">
+    <div class="ct"><span class="ico">!</span> Nace en borrador</div>
+    <p>La factura queda en <code>draft</code> y <b>no tiene efecto contable</b> hasta contabilizarla con <code>action_post</code>.</p>
+  </div>
+
+  <footer>Odoo 19 Online Custom · JSON-2 · página 1 de 5</footer>
+</div>
+
+<!-- ==================== PAGINA 2 ==================== -->
+<div class="page">
+  <p class="eyebrow">Proveedor · secuencia · trampas</p>
+  <h2>Del borrador a la factura contabilizada</h2>
+
+  <h3><span class="n">03</span>Factura de proveedor</h3>
+  <pre><span class="c">POST /json/2/account.move/create</span>
+{
+  <span class="m">"vals_list"</span>: [{
+    <span class="m">"move_type"</span>: <span class="s">"in_invoice"</span>,
+    <span class="m">"partner_id"</span>: 456,
+    <span class="m">"journal_id"</span>: 8,
+    <span class="m">"invoice_date"</span>: <span class="s">"2026-09-08"</span>,
+    <span class="m">"currency_id"</span>: 1,
+    <span class="m">"ref"</span>: <span class="s">"FV-45871"</span>,
+    <span class="m">"invoice_date_due"</span>: <span class="s">"2026-10-08"</span>,
+    <span class="m">"invoice_line_ids"</span>: [
+      [0, 0, {<span class="m">"name"</span>: <span class="s">"Compra de equipo"</span>, <span class="m">"quantity"</span>: 2,
+              <span class="m">"price_unit"</span>: 800000, <span class="m">"tax_ids"</span>: [[6, 0, [21]]]}]
+    ]
+  }]
+}</pre>
+  <p style="font-size:8.6pt;margin:.3rem 0 0"><code>ref</code> es el número que <b>entrega el proveedor</b>. No es el número interno de Odoo: son dos cosas distintas y conviene no mezclarlas.</p>
+
+  <h3><span class="n">04</span>Contabilizar</h3>
+  <pre><span class="c">POST /json/2/account.move/action_post</span>
+{ <span class="m">"ids"</span>: [&lt;ID_FACTURA&gt;] }</pre>
+
+  <div class="two">
+    <div class="card avoid">
+      <div class="ch"><h4>Secuencia de producción</h4><span>el orden importa</span></div>
+      <div class="cb">
+        <ol class="steps">
+          <li>Leer <code>/doc</code> de la base</li>
+          <li>Resolver maestros y cachear IDs</li>
+          <li>Validar fechas, moneda y líneas</li>
+          <li><code>create</code></li>
+          <li>Revisar el borrador</li>
+          <li><code>action_post</code></li>
+          <li>Verificar <code>state</code>, <code>name</code>, <code>payment_state</code></li>
+          <li>Ante error: guardar respuesta e ID. <b>No reintentar a ciegas</b></li>
+        </ol>
+      </div>
+    </div>
+    <div class="card avoid">
+      <div class="ch"><h4>Resolver los IDs</h4><span>search_read</span></div>
+      <div class="cb">
+        <pre style="margin:0;font-size:7.6pt"><span class="c">POST /json/2/res.partner/search_read</span>
+{
+  <span class="m">"domain"</span>: [[<span class="s">"name"</span>,<span class="s">"ilike"</span>,<span class="s">"ACME"</span>]],
+  <span class="m">"fields"</span>: [<span class="s">"id"</span>,<span class="s">"name"</span>,<span class="s">"vat"</span>],
+  <span class="m">"limit"</span>: 10
+}</pre>
+        <p style="font-size:8.4pt;margin:.4rem 0 0">Igual para <code>account.journal</code> (<code>type=sale</code>), <code>res.currency</code> y <code>account.tax</code>. Cachear: no asumir IDs.</p>
+      </div>
+    </div>
+  </div>
+
+  <h3><span class="n">05</span>Errores que cuestan tiempo</h3>
+  <div class="tw avoid">
+  <table>
+    <thead><tr><th style="width:220px">El error</th><th>Qué hacer</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Mandar <span class="v">"COP"</span> en currency_id</td><td>Es Many2one: va el <b>ID</b> de <code>res.currency</code>.</td></tr>
+      <tr><td class="k">Inventar el <span class="v">name</span> en una venta</td><td>En factura electrónica colombiana la <b>secuencia del diario</b> genera el número. No enviarlo.</td></tr>
+      <tr><td class="k">Vencimiento y términos juntos</td><td><code>invoice_date_due</code> <b>o</b> <code>invoice_payment_term_id</code>, no ambos.</td></tr>
+      <tr><td class="k"><span class="v">tax_ids</span> como lista plana</td><td>Usar el comando <b>6</b>: <code>[[6,0,[21]]]</code>.</td></tr>
+      <tr><td class="k">Cabecera sin líneas</td><td>Sin <code>invoice_line_ids</code> Odoo no conoce importe, cuenta ni impuestos.</td></tr>
+      <tr><td class="k">Contabilizar sin revisar</td><td>Validar maestros, impuestos y secuencia antes de <code>action_post</code>.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <footer>Odoo 19 Online Custom · JSON-2 · página 2 de 5</footer>
+</div>
+
+<!-- ==================== PAGINA 3 ==================== -->
+<div class="page">
+  <p class="eyebrow">Antes de codificar</p>
+  <h2>Lo que hay que confirmar en tu base</h2>
+
+  <div class="call warn avoid">
+    <div class="ct"><span class="ico">!</span> Tipo de documento DIAN: 01 no es 04</div>
+    <p><b>01</b> es la factura electrónica de venta. <b>04</b> es la asociada a <b>contingencia</b> por inconvenientes tecnológicos de la DIAN. No enviar 04 por defecto.</p>
+  </div>
+
+  <h3><span class="n">06</span>Los tres campos que dependen de tu instalación</h3>
+  <div class="tw avoid">
+  <table>
+    <thead><tr><th style="width:150px">Dato</th><th style="width:175px">Campo</th><th>Cómo obtenerlo</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Tipo de documento</td><td><span class="v">l10n_latam_document_type_id</span></td><td>Many2one: buscar por código en <code>l10n_latam.document.type</code> y guardar el ID.</td></tr>
+      <tr><td class="k">Tipo de operación</td><td>específico de Colombia</td><td>Leer <code>/doc</code>. Enviar el <b>valor técnico</b>, no la etiqueta «Estándar».</td></tr>
+      <tr><td class="k">Método de pago</td><td>específico Colombia/EDI</td><td>Leer <code>/doc</code>. «Instrumento no definido» es etiqueta, no valor.</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p style="font-size:8.6pt;margin:.3rem 0 0">Los nombres dependen de los módulos instalados (<code>l10n_co</code>, <code>l10n_co_dian</code>, <code>l10n_co_edi</code>). <code>/doc</code> de la propia base es la autoridad final.</p>
+
+  <h3><span class="n">07</span>Maestros que deben existir antes</h3>
+  <div class="tw avoid">
+  <table>
+    <thead><tr><th style="width:210px">Maestro</th><th>Modelo</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Cliente / proveedor</td><td><span class="v">res.partner</span> — id, NIT, responsabilidades fiscales</td></tr>
+      <tr><td class="k">Diario</td><td><span class="v">account.journal</span> — resolución y secuencia DIAN</td></tr>
+      <tr><td class="k">Moneda</td><td><span class="v">res.currency</span></td></tr>
+      <tr><td class="k">Producto</td><td><span class="v">product.product</span> — con UNSPSC si la localización lo exige</td></tr>
+      <tr><td class="k">Impuesto</td><td><span class="v">account.tax</span></td></tr>
+      <tr><td class="k">Tipo de documento</td><td><span class="v">l10n_latam.document.type</span></td></tr>
+      <tr><td class="k">Término de pago</td><td><span class="v">account.payment.term</span></td></tr>
+      <tr><td class="k">Banco</td><td><span class="v">res.partner.bank</span></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="call warn avoid">
+    <div class="ct"><span class="ico">!</span> Dos formas del payload circulan por ahí</div>
+    <p>Esta guía usa <code>{"vals_list": [{…}]}</code>, coherente con <code>/json/2/</code>, donde modelo y método ya van en la URL. Circula otra variante con envoltura <code>jsonrpc</code>/<code>kwargs</code>/<code>fields</code>, que corresponde al <b>RPC clásico</b> (<code>/web/dataset/call_kw</code>).</p>
+    <p><b>No se verificó contra una base real.</b> Confirmar en <code>/doc</code> antes de codificar — y de paso los nombres exactos de los campos <code>l10n_co_dian</code>, incluida la caja del CUFE.</p>
+  </div>
+
+  <footer>Odoo 19 Online Custom · JSON-2 · página 3 de 5</footer>
+</div>
+
+<!-- ==================== PAGINA 4 ==================== -->
+<div class="page">
+  <p class="eyebrow">Integración DIAN</p>
+  <h2>De dónde partimos y qué se puede automatizar</h2>
+
+  <div class="call ok avoid">
+    <div class="ct"><span class="ico">&#10003;</span> El punto de partida es bueno <span class="pill">ya funciona</span></div>
+    <p>La facturación electrónica y el documento soporte <b>ya operan</b> contra la DIAN desde Odoo. La suscripción <b>Custom</b> ya habilita JSON-2.</p>
+    <p>Lo que sigue <b>no reemplaza</b> esa conexión: añade una capa de sincronización y control encima. Riesgo bajo.</p>
+  </div>
+
+  <h3><span class="n">08</span>La arquitectura</h3>
+  <div class="avoid" style="border:1px solid var(--hair);border-radius:11px;background:var(--surface);box-shadow:var(--shadow-sm);padding:.7rem;margin:.6rem 0">
+  <svg viewBox="0 0 660 130" style="width:100%;height:auto" role="img" aria-label="Odoo envia por JSON-2 a Make, Make consulta DIAN por SOAP, y la respuesta vuelve a Odoo por JSON-2">
+    <defs>
+      <marker id="ar" markerWidth="9" markerHeight="9" refX="8" refY="3.2" orient="auto">
+        <path d="M0,0 L8,3.2 L0,6.4 z" fill="#0F6E7C"/>
+      </marker>
+    </defs>
+    <rect x="8" y="26" width="168" height="46" rx="9" fill="#F2F8F9" stroke="#0F6E7C" stroke-width="1.4"/>
+    <text x="92" y="45" font-family="Archivo,sans-serif" font-size="12.5" font-weight="800" fill="#0A4C56" text-anchor="middle">Odoo 19 Custom</text>
+    <text x="92" y="61" font-family="IBM Plex Mono,monospace" font-size="9" fill="#3A485C" text-anchor="middle">account.move</text>
+
+    <rect x="246" y="26" width="150" height="46" rx="9" fill="#E6EEFB" stroke="#2563C9" stroke-width="1.4"/>
+    <text x="321" y="45" font-family="Archivo,sans-serif" font-size="12.5" font-weight="800" fill="#1B4A9E" text-anchor="middle">Make</text>
+    <text x="321" y="61" font-family="IBM Plex Mono,monospace" font-size="9" fill="#3A485C" text-anchor="middle">orquestación</text>
+
+    <rect x="466" y="26" width="168" height="46" rx="9" fill="#EEF2F7" stroke="#5A6B82" stroke-width="1.4"/>
+    <text x="550" y="45" font-family="Archivo,sans-serif" font-size="12.5" font-weight="800" fill="#0E1626" text-anchor="middle">DIAN</text>
+    <text x="550" y="61" font-family="IBM Plex Mono,monospace" font-size="9" fill="#3A485C" text-anchor="middle">web services</text>
+
+    <line x1="180" y1="41" x2="240" y2="41" stroke="#0F6E7C" stroke-width="1.6" marker-end="url(#ar)"/>
+    <text x="210" y="33" font-family="IBM Plex Mono,monospace" font-size="8" fill="#0A4C56" text-anchor="middle">JSON-2</text>
+    <line x1="400" y1="41" x2="460" y2="41" stroke="#0F6E7C" stroke-width="1.6" marker-end="url(#ar)"/>
+    <text x="430" y="33" font-family="IBM Plex Mono,monospace" font-size="8" fill="#0A4C56" text-anchor="middle">SOAP</text>
+
+    <path d="M321,76 L321,104 L92,104 L92,78" fill="none" stroke="#0F6E7C" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#ar)"/>
+    <text x="207" y="117" font-family="IBM Plex Mono,monospace" font-size="8" fill="#0A4C56" text-anchor="middle">estado · CUFE · XML  →  JSON-2</text>
+  </svg>
+  </div>
+  <p style="font-size:8.6pt;margin:.2rem 0 0">Si Make no puede con alguna operación SOAP, se intercala un microservicio DIAN pequeño. <b>Eso se decide después del test</b>, no ahora.</p>
+
+  <div class="call warn avoid">
+    <div class="ct"><span class="ico">!</span> Contabilizar no es emitir</div>
+    <p><code>action_post</code> contabiliza el asiento en Odoo. <b>No emite</b> ante la DIAN: de eso ya se encarga la conexión existente.</p>
+  </div>
+
+  <div class="two">
+    <div class="card avoid">
+      <div class="ch"><h4>Servicios DIAN</h4><span>consulta</span></div>
+      <div class="cb">
+        <ul class="tight">
+          <li><code>GetStatus</code> — estado del documento</li>
+          <li><code>GetStatusZip</code> — estado de lote</li>
+          <li><code>GetXmlByDocumentKey</code> — XML por CUFE/CUDE</li>
+          <li><code>GetNumberingRange</code> — rangos y resoluciones</li>
+          <li><code>GetTaxPayer</code> — datos del contribuyente</li>
+        </ul>
+        <p style="font-size:8.2pt;color:var(--ink-2);margin:.45rem 0 0">Son <b>SOAP con WS-Security y certificado</b>, no REST con API key.</p>
+      </div>
+    </div>
+    <div class="card avoid">
+      <div class="ch"><h4>Los 8 módulos</h4><span>complejidad</span></div>
+      <div class="cb">
+        <ul class="tight" style="list-style:none;padding-left:0">
+          <li><span class="pill y">media</span> Estado DIAN de facturas</li>
+          <li><span class="pill y">media</span> Descarga de XML</li>
+          <li><span class="pill y">media</span> Control de resoluciones</li>
+          <li><span class="pill y">media</span> Sincronización de estados</li>
+          <li><span class="pill y">media</span> Monitor automático</li>
+          <li><span class="pill r">alta</span> Facturas de proveedor</li>
+          <li><span class="pill r">alta</span> Eventos electrónicos</li>
+          <li><span class="pill r">muy alta</span> RADIAN</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <p style="font-size:8.6pt;margin:.2rem 0 0">Los de complejidad media son el núcleo y se pueden abordar primero. <b>RADIAN es otro proyecto</b>: no se mezcla con el arranque.</p>
+
+  <footer>Odoo 19 Online Custom · integración DIAN · página 4 de 5</footer>
+</div>
+
+<!-- ==================== PAGINA 5 ==================== -->
+<div class="page">
+  <p class="eyebrow">Decisión</p>
+  <h2>Un test antes de construir nada</h2>
+
+  <div class="two">
+    <div class="card avoid">
+      <div class="ch"><h4>Test de viabilidad</h4><span>3 pasos</span></div>
+      <div class="cb">
+        <ol class="steps">
+          <li>Make <b>lee</b> una factura en Odoo por JSON-2</li>
+          <li>Make consulta <code>GetStatus</code> con un <b>CUFE real</b></li>
+          <li>La respuesta vuelve y <b>actualiza</b> esa factura en Odoo</li>
+        </ol>
+        <p style="font-size:8.6pt;color:var(--ink-2);margin:.5rem 0 0">Si los tres pasan, la arquitectura completa queda demostrada y el resto se construye por módulos.</p>
+      </div>
+    </div>
+    <div class="card avoid">
+      <div class="ch"><h4>Qué hace falta</h4><span>para correrlo</span></div>
+      <div class="cb">
+        <ul class="tight">
+          <li>Endpoint DIAN de producción que la empresa puede usar</li>
+          <li>Certificado y credenciales</li>
+          <li>Un CUFE real de una factura ya emitida</li>
+          <li>El campo de Odoo donde escribir el estado — confirmar en <code>/doc</code></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <h3><span class="n">09</span>Lo que todavía no se puede prometer</h3>
+  <div class="tw avoid">
+  <table>
+    <thead><tr><th style="width:230px">Punto abierto</th><th>Estado</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Make firmando WS-Security solo</td><td>Sin comprobar. Puede requerir una capa SOAP intermedia.</td></tr>
+      <tr><td class="k">Traer «todas las facturas recibidas»</td><td><b>No confirmado</b> que se obtengan en una llamada. Depende del alcance de las credenciales de la empresa.</td></tr>
+      <tr><td class="k">RADIAN</td><td>Fuera del arranque. Proyecto aparte.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3><span class="n">10</span>Estimación</h3>
+  <div class="tw avoid">
+  <table>
+    <thead><tr><th style="width:230px">Alcance</th><th>Rango</th></tr></thead>
+    <tbody>
+      <tr><td class="k">MVP — estado + XML + control de resoluciones</td><td><b>2–4 semanas</b></td></tr>
+      <tr><td class="k">Integración completa — proveedores, eventos, reconciliación</td><td><b>4–10+ semanas</b></td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p style="font-size:8.6pt;margin:.2rem 0 0">Ambos rangos <b>dependen del resultado del test</b>. Sin esa prueba, cualquier fecha más precisa sería inventada.</p>
+
+  <div class="call info avoid">
+    <div class="ct"><span class="ico">i</span> Lo que hay que decidir</div>
+    <p>¿Se autoriza el <b>test de viabilidad</b>? Es lo único que se pide ahora. Nada más se compromete hasta ver su resultado, y la facturación que ya funciona no se toca.</p>
+  </div>
+
+  <h3><span class="n">11</span>Fuentes</h3>
+  <div class="srcs avoid">
+    <div><b>Odoo 19</b> — API externa JSON-2: <a>odoo.com/documentation/19.0/developer/reference/external_api.html</a> · ORM: <a>/developer/reference/backend/orm.html</a> · Odoo Online: <a>/administration/odoo_online.html</a> · Facturas de cliente y de proveedor, diarios y términos de pago: <a>/applications/finance/accounting/…</a> · Localización Colombia: <a>/es_419/applications/finance/fiscal_localizations/colombia.html</a></div>
+    <div><b>Código fuente Odoo 19.0</b> — <a>github.com/odoo/odoo/blob/19.0/addons/account/models/account_move.py</a> · <a>/addons/l10n_latam_invoice_document/models/account_move.py</a></div>
+    <div><b>DIAN</b> — Resolución 000042 de 2020 y Anexo técnico de factura electrónica v1.9 · Resolución 83 de 2019 (normograma, servicios web) · Anexo técnico de la Resolución 000012 de 2021</div>
+    <div><b>Make</b> — documentación de HTTP y webhooks: <a>make.com/en/integrations/gateway/http</a></div>
+    <div style="margin-top:.5rem;color:var(--ink-2)"><b>Salvedad:</b> las fuentes DIAN citadas son de años distintos y <b>no se verificó cuál rige hoy</b> ni si existe un anexo posterior. Confirmar la versión vigente antes de construir. Para los campos de Odoo, <code>/doc</code> de la propia base manda sobre esta guía.</div>
+    <div style="color:var(--ink-3)">Investigaciones: 09-09-2026 · Documento: 10-09-2026</div>
+  </div>
+
+  <footer>
+    Este es un camino verificado, <b>no el único</b>. El orden de las claves JSON no altera el resultado; <code>/doc</code> de la base y la normativa vigente mandan sobre este documento. · página 5 de 5
+  </footer>
+</div>
+
+</body>
+</html>

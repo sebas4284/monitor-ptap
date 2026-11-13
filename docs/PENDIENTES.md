@@ -3,12 +3,126 @@
 > **Único tracker de pendientes.** Fusiona los tres que existían por separado (`PENDIENTES_VPN.md`,
 > `PENDIENTE_DESPLIEGUE.md`, `SEMANA1-4_PENDIENTES.md`) y que se contradecían entre sí.
 >
-> Última revisión: **2026-08-11**.
+> Última consolidación: **2026-11-02**, por solicitud del usuario de conservar los
+> pendientes de Aquora, incluida la mejora visual y los planes futuros.
+> El estado vigente está en la sección siguiente. Las secciones numeradas originales
+> conservan evidencia histórica: sus versiones, fechas, accesos y checkboxes requieren
+> contrastarse antes de ejecutar acciones o darlos por pendientes actuales.
 >
 > Incidente abierto aparte: [`INCIDENTE_CONEXION_PLC.md`](./INCIDENTE_CONEXION_PLC.md).
 > Checklist de endurecimiento: [`CHECKLIST_PRODUCCION.md`](./CHECKLIST_PRODUCCION.md).
 
 ---
+
+## Estado local verificado — 2026-11-12
+
+Esta sección describe la copia local y Docker, no el estado actual de una VM ni una publicación.
+Las secciones posteriores conservan planificación y evidencia histórica; no deben interpretarse
+como una lista de cambios que haya que repetir o marcar como completados sin pruebas.
+
+- [x] Integración local de la revisión por planta, filtros, exportación aislada de mapping a Git
+  y tipos compartidos; las suites del backend verifican su funcionamiento sin acceso al repositorio remoto ni PLC.
+- [x] Login, Tablero, Válvulas y Reportes adaptados a escritorio/móvil web; selector compartido
+  de plantas, animaciones y separación de tanques propios/lecturas externas.
+- [x] Registro de maniobras con identidad autenticada, rol, IP, resultado y trazabilidad;
+  endurecimiento del origen de IP, correlación de petición y límite específico de mandos.
+  Véase [SEGURIDAD_MANDOS.md](SEGURIDAD_MANDOS.md).
+- [x] Auditoría de dependencias sin vulnerabilidades conocidas en la ejecución local de esta revisión.
+  Esto no garantiza ausencia de vulnerabilidades desconocidas ni sustituye el mantenimiento.
+
+### Dependencias externas de este cierre técnico
+
+- **Integrador:** confirmar pertenencia, tags/índices, unidades, capacidad y cadencias aún inferidos;
+  especialmente los tanques identificados provisionalmente como San Antonio y El Quijote.
+  Véase [DATA_CATALOG.md](DATA_CATALOG.md), «Asociación sin confirmar».
+- **VM autorizada:** configurar secretos, certificados, red, permisos de BD/checkpoint y proxy;
+  verificar lectura real contra HMI antes de autorizar maniobras. La simulación no certifica el PLC.
+  Las comprobaciones de APK instalada, notificaciones reales y datos de campo requieren el entorno
+  y dispositivos correspondientes: una exportación o prueba web no las sustituye.
+
+Los planes futuros de producto y riesgos aceptados documentados (por ejemplo, la sesión web en
+[SEGURIDAD_FRONTEND.md](SEGURIDAD_FRONTEND.md)) siguen siendo decisiones explícitas, no defectos
+que esta revisión permita declarar inexistentes. No se anuncian releases ni despliegues desde este estado local.
+
+## Registro anterior de continuación — 2026-11-02
+
+Este documento sigue siendo el tracker único. Conservar el trabajo pendiente entre
+sesiones; no iniciar implementaciones, publicaciones ni vigilancia automática por
+el solo hecho de figurar aquí. Las fechas del roadmap de septiembre son planificación
+histórica, no nuevos compromisos. Trabajar una fase a la vez.
+
+### Completado y comprobado en esta sesión
+
+- [x] Revisión con las seis skills CSS/JavaScript y correcciones de preferencias,
+      movimiento reducido, foco, formularios y diálogo en ventanas pequeñas.
+- [x] 253 pruebas móviles aprobadas, typecheck, exportación web y lint sin errores.
+- [x] Publicación web en la VM el 2026-11-02 a las 18:29 de Bogotá; páginas HTTP 200 y
+      hashes HTTPS coincidentes. API, BD y OPC sanos, sin reiniciar la API.
+      [Evidencia y alcance](./CSS_JS_REVIEW_2026-11-02.md).
+
+La revisión técnica CSS/JS **no cierra el rediseño visual integral**, ni actualiza por
+sí sola la APK. No volver a poner el despliegue de esas correcciones web como pendiente.
+
+### Prioridad de continuación: mejora visual y accesibilidad
+
+- [ ] Recuperar y contrastar la dirección visual, tokens y guía previstos en el
+      [roadmap](./ROADMAP.md) y su referencia histórica a `estilos-1.4`, antes de
+      reemplazar estilos existentes. No asumir que esa rama está disponible o fusionada.
+- [ ] Unificar tipografía, espaciado, densidad, colores, tarjetas, jerarquía de datos,
+      navegación y estados de carga/vacío/error, conservando la claridad operativa.
+- [ ] Revisar el tablero autenticado y las pantallas de válvulas, notificaciones,
+      reportes y ajustes en tamaños estrechos, intermedios y amplios; incluir textos
+      largos, zoom, teclado y movimiento reducido. Las comprobaciones puntuales ya
+      hechas no equivalen a revisar todas las pantallas.
+- [ ] Retomar la auditoría Lighthouse cuando se solicite: medir `/login` y `/tablero`
+      oficiales, móvil y escritorio, y archivar evidencia revisada. Revalidar el
+      reporte de hidratación, el tamaño del icono de marca y el layout shift.
+      [Auditoría conservada](./LIGHTHOUSE_PENDIENTES_2026-10-31.md).
+- [ ] Definir aceptación visual y funcional de esa fase y publicar la web y, cuando
+      corresponda, una nueva APK con firma y comprobación en dispositivo real.
+
+### Planes futuros conservados
+
+| Frente | Trabajo por retomar o confirmar | Dependencia / criterio |
+| --- | --- | --- |
+| Revisión por planta | Informe de diagnóstico y frescura por señal, fase A de la consola. | Contrastar con diagnóstico y editor ya existentes; no reconstruir funciones entregadas. |
+| Filtros | Búsqueda/filtros del tablero y orden/filtros de bandeja, incluidos no vistos. | Inventariar lo existente antes de concretar el alcance faltante. |
+| Ayuda | Preguntas frecuentes y tutorial guiado híbrido, fases B1 y B2. | Recorridos acordes con las pantallas finales y permisos de cada rol. |
+| Alarmas | Configuración de límites y reglas operativas. | Resolver alcance de D3; distinguir alarmas existentes, preferencias personales y motor configurable. |
+| Historial | Series y tendencias persistidas de alcance acotado. | **D1 del cliente:** señales, resolución, retención y coste; no cambiar RAM-only sin esa decisión. |
+| Consola / Git | Llevar las correcciones de mapping a Git, fase C.4. | Acceso limitado al repositorio, revisión y trazabilidad; no confundir guardar en caliente con publicar en Git. |
+| Producto | Formalizar Expo web como entregable web. | Decisión documental D2 con cliente/dirección. |
+| Turbiedad | Protocolo de cierre acordado, aún sujeto a viabilidad de campo. | Topología, instrumentación, válvula adecuada y autorización operativa; no habilitar automatismos desde este backlog. |
+| Integración | Cabuyo, La Luisa, La Leonera y Gloria; calidad/frescura y heartbeat de sitios. | Trabajo y evidencia del integrador; revalidar incidencias antiguas antes de escalarlas. |
+
+Detalle histórico en [ROADMAP.md](./ROADMAP.md),
+[consola](./PLAN_CONSOLA_ADMIN_1.4.0.md) y
+[roadmap para el cliente](./roadmap/ROADMAP-AQUORA.html).
+Reprogramar fechas y versiones al elegir cada fase; no regenerar ni enviar el
+entregable del cliente sin revisar su estado.
+
+### Validaciones y mantenimiento abiertos
+
+- [ ] Contrastar la evidencia de notificaciones ya implementadas y desplegadas antes
+      de repetir pruebas. Conservar como aceptación pendiente lo no demostrado en
+      Android físico y en cada escenario de app/navegador cerrado; una respuesta del
+      proveedor no prueba recepción. [Plan](./superpowers/plans/2026-11-02-notificaciones-reales.md).
+- [ ] Validar autonomía de tanques con datos de campo, mínimos y calidad de señal;
+      no inventar asociaciones hidráulicas. Conservar la distinción entre estimación
+      por tendencia y garantía de servicio. [Diseño](./AUTONOMIA_TANQUES.md).
+- [ ] Revisar advertencias de lint, incluida `RegistroIntegridadCard.tsx`, y revalidar
+      deuda antigua: cobertura OPC, tipos de tests/scripts y portabilidad Windows/Linux.
+- [ ] Reconciliar documentación, fuentes y publicaciones con el árbol de trabajo
+      existente antes de un commit o merge; conservar cambios previos y evidencias.
+- [ ] Revalidar los pendientes históricos de TLS/renovación, NTP, exposición HMI,
+      firewall, binding local de API y credenciales/SMTP. No tratar la fecha antigua
+      de vencimiento ni las IP/puertos antiguos como descripción actual de la VM.
+- [ ] Contrastar D4 con la recarga de mapping ya presente y probada; cerrar la
+      decisión documental o delimitar lo que falta, en lugar de implementarla dos veces.
+
+---
+
+## Registro histórico — secciones originales por revalidar
 
 ## 1. Bloqueado por infraestructura (VPN + SSH a la VM)
 
@@ -219,6 +333,24 @@ notificaciones y el del socket. Nada de control de acceso quedó atascado detrá
 > 🔴 **El detector encontró 10 plantas con sensores congelados** en su primer barrido — cuatro más
 > de las que se habían visto revisando a mano. Ver §Sensores congelados abajo.
 
+### 🟡 Ícono de la app actualizado — pusheado a `yosh`, falta desplegar (2026-08-26)
+
+Commit `2c985e3` (`fix(apk): el icono de la app seguia con la marca vieja, antes del rebrand a
+Aquora`) ya está en `origin/yosh` (empujado desde acá; **no** se corrió nada en la VM — sin acceso
+SSH/VPN desde este entorno, así que este paso queda para quien sí lo tenga). Reemplaza
+`icon.png`/`android-icon-foreground.png`/`android-icon-monochrome.png`/`favicon.png` (que seguían
+con la marca "A" de antes del rebrand) por la "X" de Aquora, y saca `android-icon-background.png`
+(era la plantilla de guías de Expo sin editar, nunca un fondo real).
+
+- [ ] Desplegar por el procedimiento de arriba (`git fetch && reset --hard origin/yosh` en la VM +
+      `npm run build` + `pm2 restart`). Esto actualiza el **favicon de la web**, nada más — el
+      backend no toca el ícono de la APK.
+- [ ] **El ícono de la APK instalada NO cambia solo con desplegar.** Como con el resto de
+      `apps/mobile/`, hace falta recompilar y republicar el `.apk` (toolchain de
+      [`ANDROID_APK.md`](./ANDROID_APK.md), ver también la pendiente de recompilar sin el HMI, más
+      arriba en esta misma sección) — conviene agrupar ambos cambios en la misma recompilación en
+      vez de rehacer la toolchain (~6 GB, ~40 min) dos veces.
+
 Pendiente:
 
 - [ ] **NTP** — para que el KPI de latencia OPC sea fiable: `sudo timedatectl set-ntp true`
@@ -324,6 +456,14 @@ El DTO ya transporta los umbrales operativos (`opMin`/`opMax`) y el front deriva
 snapshot, pero **no hay motor de alarmas persistente** ni configuración de límites por usuario. El
 esquema de alertas en BD depende de la misma decisión que D1: conviene resolverlos juntos.
 
+### D4. Hot-reload del mapping — propuesta escrita, esperando OK
+
+La Fase 3 del PROMPT MAESTRO pedía **proponer** la recarga en caliente de `opc_mapping.json`, no
+implementarla. La propuesta ya existe: [`PROPUESTA_HOT_RELOAD_MAPPING.md`](./PROPUESTA_HOT_RELOAD_MAPPING.md)
+(2026-08-25). Recomienda **endpoint admin, no SIGHUP**, recarga solo de la capa de dominio (nunca de
+NodeIds/buffers) y **no implementarlo hasta que aparezca la necesidad operativa** — un reinicio
+cuesta ~3 s medidos y hoy los cambios de mapping son poco frecuentes. Falta tu decisión.
+
 ---
 
 ## 4. Deuda técnica interna (no bloquea a nadie externo)
@@ -364,7 +504,11 @@ esquema de alertas en BD depende de la misma decisión que D1: conviene resolver
       `test/**/*.ts`, pero ningún script ni el CI lo invoca. `scripts/` no está en ningún tsconfig.
 - [ ] **Los `test:*` de la API usan sintaxis de cmd.exe** (`set "VAR=…"&&`), que en Linux no hace
       nada. El CI lo esquiva pasando `TSX_TSCONFIG_PATH` por `env:` y corriendo los tests por glob.
-- [ ] **`soak-test.ts` y `opcua-writes-toggle.sh` no tienen script npm** — se invocan a mano.
+- [x] **`soak-test.ts` ya tiene script npm** (2026-08-25): `npm run validate:soak-report` para el
+      veredicto post-mortem y `npm run validate:coldstart` para el `kill -9`. El soak en sí se
+      sigue lanzando a mano a propósito: son 24 h, no algo que quepa en un `npm test`.
+      `opcua-writes-toggle.sh` sigue sin script npm (es deliberado: abrir la escritura al PLC no
+      debe ser un comando cómodo).
 - [ ] **~15 scripts de campo de un solo uso** en `apps/api/scripts/` sin script npm ni importador
       (`monitor-sirena-*.ts`, `read-sirena.ts`, `write-sirena-pulse.ts`, `fix-valve-state.ts`…).
       Decidir si se archivan o se borran.
@@ -414,8 +558,27 @@ Parámetros por variable de entorno, sin recompilar:
 ## 5. Vigilancia continua
 
 - [ ] Vigilar el `deadLetterCount` del puente OPC (`/opc/status`, requiere RBAC `system_config`).
-- [ ] Ejecutar el **soak test de 24–72 h** (`scripts/soak-test.ts`) — es el último entregable de la
-      Fase 6 sin correr. Ver [`OPERATIONAL_VALIDATION.md`](./OPERATIONAL_VALIDATION.md).
+- [x] **Soak test de 24–72 h — SALDADO** (veredicto leído el 2026-08-25 de la corrida del
+      2026-08-03): 24 h completas, crecimiento de RSS **0 %**, 0 fugas de handles, dead letter
+      acotado en 107, 48 ciclos de caos, cero `Faulted`. Con esto **la Fase 6 queda cerrada**.
+      La corrida SIEMPRE fue válida; lo que fallaba era el criterio del veredicto (medía dispersión
+      en vez de crecimiento) y que nadie abrió el JSONL. Ver §4 de OPERATIONAL_VALIDATION.md.
+      Texto anterior, conservado porque explica el error de diagnóstico:
+      ~~Relanzar el soak — único entregable de la Fase 6 sin cerrar.~~
+      La corrida del 2026-08-03 **no midió nada**: el arnés construía `PlantPipelineService` con 3
+      argumentos cuando ya pedía 4, y moría en el primer barrido de liveness. Corregido el
+      2026-08-25 (más `uncaughtException` volcado al JSONL y criterio de duración ≥ 24 h en el
+      veredicto, para que un ensayo corto no vuelva a imprimir un verde que se copie como válido).
+      En la VM, dentro de `apps/api`:
+
+      ```bash
+      SOAK_HOURS=24 nohup node --import tsx scripts/soak-test.ts > ~/soak.log 2>&1 &
+      # al terminar (o si se corta a mitad):
+      npm run validate:soak-report -- ~/soak-<inicio>.jsonl --markdown
+      ```
+
+      No toca producción: proceso aparte, sin MySQL, sin puertos, sin sudo. Con el veredicto se
+      cierra §4 de [`OPERATIONAL_VALIDATION.md`](./OPERATIONAL_VALIDATION.md).
 - [ ] Re-ejecutar el colector de eficiencia para tendencias:
       `EFF_SSH=ptap npm run -w @ptap/api audit:efficiency [-- --json]`.
 

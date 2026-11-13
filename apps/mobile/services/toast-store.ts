@@ -6,6 +6,11 @@
  * entera y obliga a un clic para seguir; para "informe generado" o "rol actualizado" es un peaje
  * absurdo.
  *
+ * ⚠️ **Lo que NO debe pasar por aquí: el veredicto de un comando de válvula.** Un toast se cierra
+ * solo y puede perderse, y ahí se está moviendo un actuador físico: ese resultado exige acuse de
+ * recibo explícito (ver `ValveResultDialog`). El tipo `ToastKind` no incluye nada de mando a
+ * propósito.
+ *
  * Store de módulo + `useSyncExternalStore`: así no hace falta otro Context envolviendo el árbol.
  */
 
@@ -58,19 +63,19 @@ export function dismissToast(id: string): void {
   emit();
 }
 
-function push(kind: ToastKind, title: string, message?: string): void {
+function push(kind: ToastKind, title: string, message?: string, durationMs = DURATION[kind]): void {
   const id = `toast-${++seq}`;
   toasts = [...toasts, { id, kind, title, message }].slice(-MAX_VISIBLE);
   timers.set(
     id,
-    setTimeout(() => dismissToast(id), DURATION[kind]),
+    setTimeout(() => dismissToast(id), durationMs),
   );
   emit();
 }
 
 export const toast = {
   success: (title: string, message?: string) => push('success', title, message),
-  error: (title: string, message?: string) => push('error', title, message),
+  error: (title: string, message?: string, durationMs?: number) => push('error', title, message, durationMs),
   info: (title: string, message?: string) => push('info', title, message),
 };
 

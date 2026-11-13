@@ -31,7 +31,7 @@ async function runCli(): Promise<void> {
     );
 
     const [rows] = await pool.query('SELECT filename FROM schema_migrations');
-    const applied = new Set((rows as Array<{ filename: string }>).map((r) => r.filename));
+    const applied = new Set((rows as { filename: string }[]).map((r) => r.filename));
 
     const files = readdirSync(MIGRATIONS_DIR)
       .filter((f) => f.endsWith('.sql'))

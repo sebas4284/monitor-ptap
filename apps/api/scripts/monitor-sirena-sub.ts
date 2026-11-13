@@ -9,11 +9,12 @@ import {
   OPCUAClient, MessageSecurityMode, SecurityPolicy, AttributeIds,
   ClientSubscription, ClientMonitoredItem, TimestampsToReturn,
 } from 'node-opcua';
+import { resolverEndpoint } from './opc-endpoint';
 
-const ENDPOINT = process.argv[2] ?? process.env.OPC_ENDPOINT ?? 'opc.tcp://181.204.165.66:59200';
+const ENDPOINT = resolverEndpoint(process.argv[2]);
 const SECONDS = Number(process.env.MONITOR_SECONDS ?? 120);
 // Todos los buffers de Sirena, por si el pulso aparece en otro canal:
-const TARGETS: Array<{ name: string; guid: string }> = [
+const TARGETS: { name: string; guid: string }[] = [
   { name: 'INT_OUT_SIRENA (comando)', guid: '4AB6ECB4-D019-D4F1-A8A8-6177C3FE3278' },
   { name: 'INT_IN_SIRENA  (estado) ', guid: '184E4071-DC15-213A-3DE8-442A4E0A354B' },
   { name: 'BIT_SIRENA              ', guid: '57F08F39-07AA-5C7C-6B7E-4ABE531EC93D' },
@@ -26,8 +27,7 @@ const bits = (n: number): string => {
   for (let b = 0; b < 16; b++) if (u & (1 << b)) s.push(b);
   return `{${s.join(',')}}`;
 };
-const nz = (arr: number[]): Array<[number, number]> => arr.map((v, i) => [i, Number(v)] as [number, number]).filter(([, v]) => v !== 0);
-const arrOf = (dv: { value?: { value?: unknown } }): number[] => Array.from((dv.value?.value ?? []) as ArrayLike<number>).map(Number);
+const nz = (arr: number[]): [number, number][] => arr.map((v, i) => [i, Number(v)] as [number, number]).filter(([, v]) => v !== 0);
 
 async function main(): Promise<void> {
   const client = OPCUAClient.create({
@@ -41,7 +41,7 @@ async function main(): Promise<void> {
   const session = await client.createSession();
   const t0 = Date.now();
   const ts = (): string => ((Date.now() - t0) / 1000).toFixed(2).padStart(6);
-  const captures: Array<{ t: string; out0: number; nz: Array<[number, number]> }> = [];
+  const captures: { t: string; out0: number; nz: [number, number][] }[] = [];
   const inStates = new Set<number>();
 
   try {

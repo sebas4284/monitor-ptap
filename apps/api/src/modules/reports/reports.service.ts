@@ -1,8 +1,11 @@
 import { ConflictException, Inject, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { ReportInfo, ReportMetric, ReportStatus } from '@ptap/shared';
 import { PlantCache } from '../../infrastructure/connectivity/pipeline/plant-cache';
 import { loadMapping } from '../../infrastructure/connectivity/mapping/opc-mapping.loader';
+
+export type { ReportInfo, ReportMetric, ReportStatus } from '@ptap/shared';
 
 /**
  * Motor de INFORMES por métrica. Un informe = recolección de UNA señal de UNA planta, muestreada
@@ -19,24 +22,6 @@ import { loadMapping } from '../../infrastructure/connectivity/mapping/opc-mappi
  * generación la dispara el admin (o, si se define `REPORTS_AUTO_PLANT`, se siembra al arrancar
  * para las métricas de esa planta).
  */
-
-export interface ReportMetric {
-  metric: string;
-  label: string;
-  unit: string | null;
-}
-export type ReportStatus = 'idle' | 'collecting' | 'ready';
-export interface ReportInfo extends ReportMetric {
-  status: ReportStatus;
-  /** Muestras tomadas / total mientras `collecting`; null en otro caso. */
-  progress: number | null;
-  total: number | null;
-  /** ISO de la última recolección COMPLETADA (archivo listo), o null. */
-  generatedAt: string | null;
-  rows: number | null;
-  /** ISO de la próxima regeneración automática, o null. */
-  nextAutoAt: string | null;
-}
 
 interface Sample {
   at: Date;
