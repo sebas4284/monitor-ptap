@@ -3,6 +3,34 @@
 Documento **único** de despliegue y operación: lo que está montado hoy (§1–§10) y cómo montarlo
 desde cero en un servidor nuevo (§11). Absorbe el antiguo `DEPLOY_VPS.md`.
 
+> **Acceso actualizado y verificado el 2026-10-30:** el dominio resuelve a
+> `181.204.165.66` y la VM acepta SSH por el puerto **7498**, sin VPN:
+> `ssh -p 7498 -i ~/.ssh/id_ed25519_centro_gestion xpertic_app@181.204.165.66`.
+> La IP pública `.125`, el puerto 22 y el perfil VPN descritos más abajo son históricos.
+> **TLS renovado e instalado el 2026-10-31:** `aquora.xpertic.co` sirve el certificado
+> válido hasta el **2027-01-29 11:59:47 UTC**. Web y `/api/health` comprobaron HTTP 200
+> desde Internet con verificación TLS activa. La renovación por DNS sigue siendo manual.
+> Por decisión del operador, se mantiene cerrado el puerto 80 de la VM y la renovación TLS
+> se valida mediante **DNS-01**, publicando el TXT en el DNS autoritativo de `xpertic.co`.
+> Abrir el puerto 80 del PC del operador no valida el dominio con esta topología.
+> Para instalar el certificado renovado sin reescribir nginx ni cambiar el firewall:
+> `sudo bash ~/deploy-scripts/ptap-install-renewed-tls.sh`.
+> Este instalador espera hasta 30 minutos la renovación, respalda el certificado anterior,
+> verifica que la llave corresponda y comprueba HTTPS después de recargar nginx, con
+> reintentos acotados mientras los workers terminan de adoptar el certificado nuevo.
+
+> **Aplicación actualizada y verificada el 2026-10-31:** versión de código `c68d78e`,
+> preparada desde un paquete Git verificado mientras la API anterior seguía activa.
+> API, MySQL y telemetría OPC comprobaron HTTP 200; la web publicada coincide con
+> el build. El registro v2 quedó activado con la aceptación expresa del histórico
+> sin firma: no modifica filas originales ni atribuye autenticidad retroactiva.
+> `OPCUA_WRITES_ENABLED=false` y `OPCUA_ALLOW_INSECURE_WRITES=false`: la lectura
+> continúa, las maniobras quedan bloqueadas y la migración de certificados OPC se
+> omitió por indicación del operador. Las instrucciones antiguas de reapertura de
+> escrituras que aparecen más abajo son históricas y el helper actual las rechaza.
+> Pendientes de integración: contraseña SMTP del buzón dedicado y Firebase/APK para
+> push Android. El push a GitHub requiere resolver el permiso de escritura del remoto.
+
 > ⚠️ **Este documento NO contiene secretos.** Contraseñas, tokens, `JWT_SECRET`, pepper y
 > credenciales viven SOLO en el `.env` de la VM y en la copia local `.env.production.local`
 > (gitignored). Aquí solo se referencia *dónde* están.
@@ -239,7 +267,7 @@ Procedimiento para una VM/VPS Linux limpia. Absorbe el antiguo `DEPLOY_VPS.md`.
 | Componente | Requisito | Por qué |
 |---|---|---|
 | **OS** | Linux 64-bit **glibc** (Ubuntu 22.04/24.04 LTS o Debian 12). **No Alpine/musl** | Los binarios *prebuilt* de `argon2` son para glibc |
-| **Node.js** | **22 LTS** | NestJS 11 exige `^20.11 \|\| >=22` |
+| **Node.js** | **26.12.1** | Versión exacta del proyecto en `.nvmrc` |
 | **npm** | 9+ (viene con Node) | El repo usa workspaces |
 | **git** | cualquiera | clonar el repo |
 | **build-essential + python3** | red de seguridad | por si `argon2` no encuentra su *prebuilt* y compila |
@@ -299,7 +327,9 @@ APP_PUBLIC_URL=https://aquora.xpertic.co
 CORS_ORIGINS=https://aquora.xpertic.co,http://192.168.30.50
 
 CONNECTIVITY_PROVIDER=opcua
-OPC_ENDPOINT=opc.tcp://181.204.165.66:59200   # 2026-08-19: antes 10.10.51.225:59100 (interna)
+OPC_ENDPOINT=opc.tcp://10.10.51.225:59100     # 2026-09-21: vuelta a la interna tras cerrar la planta
+                                              # el path público (181.204.165.66:59200, 08-19 → 09-21).
+                                              # Requiere ruta 192.168.30.x → 10.10.51.0/24.
 OPC_SECURITY_MODE=None
 OPC_SECURITY_POLICY=None
 OPC_IDENTITY=anonymous

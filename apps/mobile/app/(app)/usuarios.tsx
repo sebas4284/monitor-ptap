@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -10,7 +10,7 @@ import {
   RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '../../components/AppIcon';
 import { ROLES, ROLE_LABELS, type Role, type UserSummary } from '@ptap/shared';
 import { fetchUsers, setUserActive, updateUserRole } from '../../services/users';
 import { useAuth } from '../../context/AuthContext';
@@ -107,7 +107,9 @@ export default function UsuariosScreen() {
   // el estado haría que, tras cambiar de filtro, aprobar una cuenta recargara con los filtros
   // viejos.
   const filtersRef = useRef({ search, status, roleFilter });
-  filtersRef.current = { search, status, roleFilter };
+  useLayoutEffect(() => {
+    filtersRef.current = { search, status, roleFilter };
+  }, [search, status, roleFilter]);
 
   const onToggleExpand = useCallback(
     (id: string) => setExpandedId((current) => (current === id ? null : id)),
@@ -213,7 +215,9 @@ export default function UsuariosScreen() {
         }
         onEndReached={loadMore}
         onEndReachedThreshold={0.4}
-        ListFooterComponent={loadingMore ? <ActivityIndicator size="small" color={Colors.primary} style={styles.footerLoader} /> : null}
+        ListFooterComponent={
+          loadingMore ? <ActivityIndicator size="small" color={Colors.primary} style={styles.footerLoader} /> : undefined
+        }
         ListEmptyComponent={
           <Text style={styles.empty}>
             {status === 'pendientes' && !search && !roleFilter
@@ -309,7 +313,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surface, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10,
     borderWidth: 1, borderColor: Colors.divider,
   },
-  searchInput: { flex: 1, fontSize: 14, color: Colors.textPrimary, outlineStyle: 'none' as never },
+  searchInput: { flex: 1, minWidth: 0, fontSize: 14, color: Colors.textPrimary },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {
     paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999,

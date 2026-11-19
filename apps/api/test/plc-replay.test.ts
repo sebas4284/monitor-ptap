@@ -15,7 +15,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { loadMapping } from '../src/infrastructure/connectivity/mapping/opc-mapping.loader';
 import { PlantCache } from '../src/infrastructure/connectivity/pipeline/plant-cache';
 import { PlantPipelineService } from '../src/infrastructure/connectivity/pipeline/plant-pipeline.service';
 import { TankAutonomyStore } from '../src/infrastructure/connectivity/pipeline/tank-autonomy.store';
@@ -28,7 +27,7 @@ import type {
 import type { PlantSnapshotDto } from '../src/infrastructure/connectivity/pipeline/plant-snapshot.dto';
 
 interface Fixture {
-  _meta: { tramas: number; endpoint: string; capturadoEn: string; plantasVistas: Array<{ plantId: string; tramas: number }> };
+  _meta: { tramas: number; endpoint: string; capturadoEn: string; plantasVistas: { plantId: string; tramas: number }[] };
   frames: RawPlantFrame[];
 }
 

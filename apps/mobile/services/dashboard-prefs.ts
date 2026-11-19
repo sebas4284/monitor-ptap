@@ -25,6 +25,9 @@ const DEFAULTS: DashboardPrefs = { compact: false, collapsed: [] };
 // snapshot de `useSyncExternalStore` y no hace falta un contador de versión aparte.
 let prefs: DashboardPrefs = DEFAULTS;
 let hydrated = false;
+let compactEdited = false;
+let collapsedEdited = false;
+let writes: Promise<void> = Promise.resolve();
 const listeners = new Set<() => void>();
 
 function emit(): void {
@@ -50,14 +53,20 @@ async function loadPrefs(): Promise<void> {
   try {
     const raw = await AsyncStorage.getItem(KEY);
     if (!raw) return;
-    const parsed = JSON.parse(raw) as Partial<DashboardPrefs>;
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return;
+    const saved = parsed as Partial<DashboardPrefs>;
     const next: DashboardPrefs = {
-      compact: typeof parsed.compact === 'boolean' ? parsed.compact : DEFAULTS.compact,
-      collapsed: Array.isArray(parsed.collapsed) ? (parsed.collapsed as GroupId[]) : [],
+      compact: compactEdited ? prefs.compact : typeof saved.compact === 'boolean' ? saved.compact : DEFAULTS.compact,
+      collapsed: collapsedEdited ? prefs.collapsed : Array.isArray(saved.collapsed)
+        ? [...new Set(saved.collapsed.filter((id): id is GroupId => id === 'inlet' || id === 'outlet' || id === 'process'))]
+        : [],
     };
-    // Solo notificar si de verdad cambió algo respecto a los valores por defecto.
-    if (next.compact === prefs.compact && next.collapsed.length === 0) return;
+    if (next.compact === prefs.compact && next.collapsed.length === prefs.collapsed.length &&
+      next.collapsed.every((id, index) => id === prefs.collapsed[index])) return;
     prefs = next;
+    // Preserve untouched saved fields alongside edits made while the read was pending.
+    if (compactEdited || collapsedEdited) persist();
     emit();
   } catch {
     // Preferencia corrupta o storage no disponible: se sigue con los valores por defecto.
@@ -79,16 +88,19 @@ export function useDashboardPrefs(): DashboardPrefs {
 }
 
 function persist(): void {
-  void AsyncStorage.setItem(KEY, JSON.stringify(prefs)).catch(() => {});
+  const value = JSON.stringify(prefs);
+  writes = writes.then(() => AsyncStorage.setItem(KEY, value)).catch(() => {});
 }
 
 export function setCompact(compact: boolean): void {
+  compactEdited = true;
   prefs = { ...prefs, compact };
   persist();
   emit();
 }
 
 export function toggleGroup(id: GroupId): void {
+  collapsedEdited = true;
   const collapsed = prefs.collapsed.includes(id)
     ? prefs.collapsed.filter((g) => g !== id)
     : [...prefs.collapsed, id];

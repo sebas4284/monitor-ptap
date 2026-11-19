@@ -6,17 +6,28 @@
  * con la entrada abierta no se finja un vaciado que no ocurre, y que cuando falta un dato se diga en
  * vez de inventar un número.
  */
+import 'reflect-metadata';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { PlantSnapshotDto, SignalDto } from '@ptap/shared';
 import {
   analizarAutonomia,
+  aplicarTendencia,
   debeRecalcular,
   horasHasta,
   humanHoras,
   BANDA_MUERTA_LPS,
   type TemporizadorTanque,
+  type MuestraTanque,
 } from '../src/modules/notifications/tank-autonomy.analyzer';
+import { TankAutonomyDetector } from '../src/modules/notifications/tank-autonomy.detector';
+import { PlantCache } from '../src/infrastructure/connectivity/pipeline/plant-cache';
+import { TankAutonomyStore } from '../src/infrastructure/connectivity/pipeline/tank-autonomy.store';
+import type { PlantPipelineService } from '../src/infrastructure/connectivity/pipeline/plant-pipeline.service';
+import type { NotificationRepository } from '../src/modules/notifications/notification.repository';
+import type { FlowHourlyRepository } from '../src/modules/notifications/flow-hourly.repository';
 
 const UN_MINUTO = 60_000;
 
@@ -146,14 +157,13 @@ test('CLAVE: una deriva lenta acaba disparando el recálculo', () => {
 
 // ── Vaciado real vs proyección ───────────────────────────────────────────────────────────────
 
-test('con la entrada CERRADA es una cuenta atrás real con el caudal de salida', () => {
+test('entrada cerrada no demuestra conexión del caudal global al tanque', () => {
   const [t] = analizarAutonomia(voragine(), null);
-  assert.equal(t.origen, 'vaciado_real');
+  assert.equal(t.origen, 'proyeccion_actual');
   assert.equal(t.caudalLps, 2);
-  // área = 60/1,5 = 40 m². Hasta el 50 % (0,99 m): 40 × 0,51 = 20,4 m³ ÷ 7,2 m³/h = 2,83 h
-  assert.ok(Math.abs((t.horasHasta50 as number) - 2.833) < 0.01, `dio ${t.horasHasta50}`);
-  // Hasta vacío: 40 × 1,5 = 60 m³ ÷ 7,2 = 8,33 h
-  assert.ok(Math.abs((t.horasHasta0 as number) - 8.333) < 0.01, `dio ${t.horasHasta0}`);
+  assert.equal(t.horasHasta50, null);
+  assert.equal(t.horasHasta0, null);
+  assert.equal(t.limitacion, 'unmapped_flow');
 });
 
 // LO QUE MÁS IMPORTA DE ESTA RAMA: con la entrada abierta el tanque NO se está vaciando. Presentar
@@ -166,9 +176,11 @@ test('con la entrada ABIERTA es una proyección con el promedio de 24 h, no el c
   assert.equal(t.caudalLps, 1.5, 'usa el promedio de 24 h, no los 2 l/s instantáneos');
 });
 
-test('con la entrada abierta y SIN 24 h de historia no se proyecta nada', () => {
+test('sin historia se conserva stock y no se inventa una duración', () => {
   const abierta = voragine({ inletFlow1: sig(5, { unit: 'l/s' }) });
-  assert.deepEqual(analizarAutonomia(abierta, null), [], 'mejor callar que promediar dos muestras');
+  const [t] = analizarAutonomia(abierta, null);
+  assert.equal(t.horasHasta0, null);
+  assert.equal(t.origen, 'proyeccion_actual');
 });
 
 test('un nivel negativo no produce autonomía: es un sensor que miente', () => {
@@ -178,14 +190,18 @@ test('un nivel negativo no produce autonomía: es un sensor que miente', () => {
   assert.deepEqual(analizarAutonomia(roto, null), []);
 });
 
-test('sin máximo declarado no hay porcentaje ni objetivo del 50 %', () => {
+test('sin máximo se conserva nivel y reserva operativa, sin inventar porcentaje ni 50 %', () => {
   const sinMax = voragine({ tank1Level: sig(1.5, { opMin: 1 }) });
-  assert.deepEqual(analizarAutonomia(sinMax, null), []);
+  const [t] = analizarAutonomia(sinMax, null);
+  assert.equal(t.pct, null);
+  assert.equal(t.horasHasta50, null);
+  assert.equal(t.reservaM, 1);
+  assert.equal(t.reservaOrigen, 'op_min');
 });
 
 test('el porcentaje sale del máximo declarado (1,98 m en Vorágine)', () => {
   const [t] = analizarAutonomia(voragine(), null);
-  assert.ok(Math.abs(t.pct - 75.76) < 0.01, `dio ${t.pct} %`);
+  assert.ok(Math.abs(t.pct! - 75.76) < 0.01, `dio ${t.pct} %`);
   assert.equal(t.areaM2, 40);
 });
 
@@ -194,4 +210,161 @@ test('humanHoras habla como un operador', () => {
   assert.equal(humanHoras(3.333), '3 h 20 min');
   assert.equal(humanHoras(0.75), '45 min');
   assert.equal(humanHoras(0.001), '1 min', 'nunca «0 min»: si queda algo, es al menos un minuto');
+  assert.equal(humanHoras(0), '0 min');
+  assert.equal(humanHoras(1.999), '2 h');
+});
+
+const BASE_MS = Date.parse('2026-11-02T10:00:00Z');
+function descenso(volumen = true): MuestraTanque[] {
+  return Array.from({ length: 6 }, (_, i) => ({ tsMs: BASE_MS + i * UN_MINUTO, nivelM: 1.5 - i * 0.015, volumenM3: volumen ? 60 - i * 0.6 : null }));
+}
+
+test('descenso propio permite autonomía sin válvulas ni caudal conectado', () => {
+  const [stock] = analizarAutonomia(snap({ tank1Level: sig(1.425, { opMin: 1, opMax: 1.98 }), tank1Volume: sig(57) }), null);
+  const t = aplicarTendencia(stock, descenso(), BASE_MS + 5 * UN_MINUTO);
+  assert.equal(t.origen, 'tendencia_volumen');
+  assert.equal(t.limitacion, null);
+  assert.ok(Math.abs(t.caudalLps - 10) < 1e-9);
+  assert.ok(Math.abs(t.horasHasta0! - 57 / 36) < 1e-9);
+  assert.ok(Math.abs(t.horasHastaReserva! - 17 / 36) < 1e-9);
+});
+
+test('solo nivel: deriva propia hasta reserva sin inventar volumen ni l/s', () => {
+  const [stock] = analizarAutonomia(snap({ tank1Level: sig(1.425, { opMin: 1 }) }), null);
+  const t = aplicarTendencia(stock, descenso(false), BASE_MS + 5 * UN_MINUTO);
+  assert.equal(t.origen, 'tendencia_nivel');
+  assert.equal(t.caudalLps, 0);
+  assert.ok(Math.abs(t.horasHasta0! - 1.425 / 0.9) < 1e-9);
+  assert.ok(Math.abs(t.horasHastaReserva! - 0.425 / 0.9) < 1e-9);
+  assert.equal(t.horasHasta50, null);
+});
+
+test('opMin ausente usa 50 % como reserva identificada explícitamente', () => {
+  const [stock] = analizarAutonomia(voragine({ tank1Level: sig(1.425, { opMax: 2 }) }), null);
+  assert.equal(stock.reservaM, 1);
+  assert.equal(stock.reservaOrigen, '50_percent');
+});
+
+test('pocas muestras, huecos, ruido, llenado y datos viejos no prueban un vaciado', () => {
+  const [stock] = analizarAutonomia(voragine(), null);
+  const histories: MuestraTanque[][] = [
+    descenso().slice(0, 2),
+    descenso().map((m, i) => ({ ...m, tsMs: BASE_MS + i * 4 * UN_MINUTO })),
+    descenso().map((m, i) => ({ ...m, volumenM3: 60 + i })),
+    descenso().map((m, i) => ({ ...m, volumenM3: 60 - i * 0.01 })),
+    descenso().map((m, i) => ({ ...m, volumenM3: [60, 90, 10, 80, 20, 57][i] })),
+  ];
+  for (const history of histories) assert.equal(aplicarTendencia(stock, history, BASE_MS + 5 * UN_MINUTO).horasHasta0, null);
+  assert.equal(aplicarTendencia(stock, descenso(), BASE_MS + 8 * UN_MINUTO).horasHasta0, null);
+});
+
+test('dos tanques requieren y usan tendencias independientes', () => {
+  const stocks = analizarAutonomia(voragine({ tank2Level: sig(2, { opMin: 1 }), tank2Volume: sig(80) }), null);
+  assert.ok(stocks.every((t) => t.horasHasta0 === null && t.limitacion === 'multiple_tanks'));
+  const a = aplicarTendencia(stocks[0], descenso(), BASE_MS + 5 * UN_MINUTO);
+  const b = aplicarTendencia(stocks[1], descenso().map((m, i) => ({ ...m, nivelM: 2 - i * 0.005, volumenM3: 80 - i * 0.2 })), BASE_MS + 5 * UN_MINUTO);
+  assert.equal(a.limitacion, null);
+  assert.equal(b.limitacion, null);
+  assert.ok(b.horasHasta0! > a.horasHasta0! * 2);
+});
+
+test('calidad inválida y niveles/volúmenes imposibles no producen horas', () => {
+  for (const bad of [{ usable: false }, { quality: 'Bad' as const }, { outOfRange: true }, { value: NaN }]) {
+    assert.deepEqual(analizarAutonomia(voragine({ tank1Level: sig(1.5, bad) }), null), []);
+  }
+  const [t] = analizarAutonomia(voragine({ tank1Volume: sig(-60) }), null);
+  assert.equal(t.volumeM3, null);
+  const frozen = voragine(); frozen.liveness.state = 'frozen';
+  assert.deepEqual(analizarAutonomia(frozen, null), []);
+});
+
+test('reserva alcanzada y vacío congruente son hechos medidos aun sin historia', () => {
+  const [low] = analizarAutonomia(voragine({ tank1Level: sig(0.9, { opMin: 1, opMax: 2 }) }), null);
+  assert.equal(low.horasHastaReserva, 0);
+  assert.equal(low.horasHasta50, 0);
+  assert.equal(low.horasHasta0, null);
+  const [empty] = analizarAutonomia(voragine({ tank1Level: sig(0, { opMin: 1, opMax: 2 }), tank1Volume: sig(0) }), null);
+  assert.equal(empty.horasHasta0, 0);
+});
+
+test('estabilización/llenado reciente y nivel que contradice volumen invalidan tendencia', () => {
+  const [stock] = analizarAutonomia(voragine(), null);
+  const histories: MuestraTanque[][] = [
+    [60, 59, 58, 57, 57, 57],
+    [60, 59, 58, 57, 57.1, 57.2],
+  ].map((volumes) => descenso().map((m, i) => ({ ...m, volumenM3: volumes[i], nivelM: volumes[i] / 40 })));
+  histories.push(descenso().map((m) => ({ ...m, nivelM: 1.5 })));
+  histories.push(descenso().map((m, i) => ({ ...m, nivelM: 1.5 + i * 0.015 })));
+  for (const history of histories) assert.equal(aplicarTendencia(stock, history, BASE_MS + 5 * UN_MINUTO).horasHasta0, null);
+});
+
+test('mapping de las 16 plantas: cubre 16 tanques, incluidos externos, sin caudales ni válvulas', () => {
+  const mapping = JSON.parse(readFileSync(join(__dirname, '../config/opc_mapping.json'), 'utf8')) as {
+    plants: { plantId: string; signals: { domainKey: string; label?: string; opMin?: number; opMax?: number }[] }[];
+  };
+  assert.equal(mapping.plants.length, 16);
+  const discovered: string[] = [];
+  for (const plant of mapping.plants) {
+    const signals: Record<string, SignalDto> = {};
+    for (const s of plant.signals.filter((s) => /^(tank\d+|sanAntonioTank|quijoteTank)(Level|Volume)$/.test(s.domainKey))) {
+      signals[s.domainKey] = sig(s.domainKey.endsWith('Level') ? 1.425 : 57, { label: s.label ?? s.domainKey, opMin: s.opMin, opMax: s.opMax });
+    }
+    const snapshot = { ...snap(signals), plantId: plant.plantId };
+    for (const stock of analizarAutonomia(snapshot, null)) {
+      discovered.push(`${plant.plantId}/${stock.tankKey}`);
+      const t = aplicarTendencia(stock, descenso(), BASE_MS + 5 * UN_MINUTO);
+      assert.equal(t.origen, 'tendencia_volumen', `${plant.plantId}/${stock.tankKey}`);
+      assert.ok(t.horasHasta0 !== null && Number.isFinite(t.horasHasta0));
+    }
+  }
+  assert.equal(discovered.length, 16);
+  assert.ok(discovered.includes('soledad/sanAntonioTank'));
+  assert.ok(discovered.includes('soledad/quijoteTank'));
+});
+
+test('barridos actualizan stock dentro de banda y descartan muestras duplicadas o congeladas', async () => {
+  const cache = new PlantCache();
+  const store = new TankAutonomyStore();
+  const detector = new TankAutonomyDetector(
+    { listPlants: () => [{ plantId: 'voragine' }] } as unknown as PlantPipelineService,
+    cache,
+    { create: async () => true } as unknown as NotificationRepository,
+    { promedio: async () => ({ avgLps: 20, horas: 1 }), upsert: async () => undefined } as unknown as FlowHourlyRepository,
+    store,
+  );
+  const write = (i: number) => {
+    const ts = new Date(BASE_MS + i * UN_MINUTO).toISOString();
+    cache.write(voragine({ tank1Level: sig((60 - i * 0.6) / 40, { opMin: 1, opMax: 1.98, ts }), tank1Volume: sig(60 - i * 0.6, { ts }) }));
+  };
+  for (let i = 0; i <= 5; i++) { write(i); await detector.sweep(new Date(BASE_MS + i * UN_MINUTO)); }
+  const first = store.get('voragine')[0];
+  assert.equal(first.basis, 'tendencia_volumen');
+  assert.ok(Math.abs(first.flowLps - 10) < 1e-9);
+  write(6); await detector.sweep(new Date(BASE_MS + 6 * UN_MINUTO));
+  const next = store.get('voragine')[0];
+  assert.ok(next.hoursTo0! < first.hoursTo0!, 'caudal estable no congela stock');
+  await detector.sweep(new Date(BASE_MS + 6 * UN_MINUTO));
+  assert.equal(store.get('voragine')[0].hoursTo0, next.hoursTo0);
+  const frozen = cache.get('voragine')!; frozen.liveness.state = 'frozen';
+  await detector.sweep(new Date(BASE_MS + 7 * UN_MINUTO));
+  assert.deepEqual(store.get('voragine'), []);
+  write(8); await detector.sweep(new Date(BASE_MS + 8 * UN_MINUTO));
+  assert.equal(store.get('voragine')[0].hoursTo0, null, 'reconexión requiere ventana nueva');
+});
+
+test('nivel viejo bajo mínimo no se publica ni dispara aviso aunque siga usable', async () => {
+  const cache = new PlantCache();
+  const store = new TankAutonomyStore();
+  let avisos = 0;
+  const detector = new TankAutonomyDetector(
+    { listPlants: () => [{ plantId: 'voragine' }] } as unknown as PlantPipelineService,
+    cache,
+    { create: async () => { avisos++; return true; } } as unknown as NotificationRepository,
+    { promedio: async () => { throw new Error('la tendencia no consulta promedios'); } } as unknown as FlowHourlyRepository,
+    store,
+  );
+  cache.write(voragine({ tank1Level: sig(0.5, { opMin: 1, opMax: 2, ts: new Date(BASE_MS).toISOString() }) }));
+  await detector.sweep(new Date(BASE_MS + 3 * UN_MINUTO));
+  assert.deepEqual(store.get('voragine'), []);
+  assert.equal(avisos, 0);
 });

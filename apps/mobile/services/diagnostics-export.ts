@@ -6,7 +6,9 @@ import {
   type RouteCheckReport,
   type RouteHistoryResponse,
   type RouteProbe,
+  type PlantReport,
 } from './api';
+import { plantReportSections } from './plant-report';
 
 const CLASS_NOTE: Record<ReturnType<typeof classifyBridge>, string> = {
   ok: 'ok (sesión con el PLC establecida)',
@@ -25,6 +27,8 @@ const PROBE_LABEL: Record<RouteProbe['name'], string> = {
   internet: 'servidor → internet',
   ping: 'ping ICMP al host  ',
   plc: 'servidor → PLC     ',
+  // Puerto de control del mismo host: si CONTESTA, la ruta está bien y el problema es ese puerto.
+  control: 'puerto de control  ',
 };
 
 /** Línea técnica de una sonda para el .txt (con el matiz timeout vs rechazo, que acota la causa). */
@@ -36,7 +40,9 @@ function probeLine(p: RouteProbe): string {
     case 'timeout':
       return `    ${label} : ${p.target}  → TIMEOUT (${p.ms} ms) — ${p.name === 'ping' ? 'sin eco ICMP' : 'paquetes sin respuesta (firewall que descarta / equipo apagado / IP incorrecta)'}`;
     case 'refused':
-      return `    ${label} : ${p.target}  → RECHAZADA — host vivo, nada escucha en el puerto (servicio caído)`;
+      return p.name === 'control'
+        ? `    ${label} : ${p.target}  → RECHAZADA (${p.ms} ms) — el equipo RESPONDE: la ruta está BIEN`
+        : `    ${label} : ${p.target}  → RECHAZADA — host vivo, nada escucha en el puerto (servicio caído)`;
     case 'error':
       return `    ${label} : ${p.target}  → ERROR${p.detail ? ` ${p.detail}` : ''}`;
   }
@@ -159,6 +165,31 @@ export async function exportDiagnosticsReport(
 ): Promise<boolean> {
   const content = buildDiagnosticsReport(events, routeCheck, history);
   const filename = `diagnostico-conexion-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.txt`;
+
+  return exportText(content, filename);
+}
+
+export function buildPlantDiagnosticsReport(report: PlantReport): string {
+  return [
+    'INFORME DE ESTADO POR PLANTA — Monitor PTAP',
+    `Planta: ${report.displayName} (${report.plantId})`,
+    `Generado: ${report.at}`,
+    'Red y puente: evidencia global compartida por las plantas.',
+    'Las horas del PLC indican la fecha del dato; no prueban cuándo cambió el valor.',
+    ...plantReportSections(report).flatMap((section) => [
+      '', section.title.toUpperCase(),
+      ...(section.items.length ? section.items.map((item) =>
+        `[${item.state}] ${item.label}\n  Hora: ${item.at ?? 'sin hora disponible'}\n  ${item.detail}`,
+      ) : ['(sin registros)']),
+    ]),
+  ].join('\n');
+}
+
+export async function exportPlantDiagnosticsReport(report: PlantReport): Promise<boolean> {
+  return exportText(buildPlantDiagnosticsReport(report), `diagnostico-${report.plantId}-${report.at.slice(0, 19).replace(/[:T]/g, '-')}.txt`);
+}
+
+async function exportText(content: string, filename: string): Promise<boolean> {
 
   if (Platform.OS === 'web') {
     // Descarga estándar del navegador: Blob + enlace temporal.

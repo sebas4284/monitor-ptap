@@ -1,0 +1,115 @@
+{
+  "at": "2026-10-31T13:14:53.1496707Z",
+  "validation": {
+    "extendedCommandTests": 110,
+    "sqlWrites": "none",
+    "apiBuild": "pass",
+    "apiTypecheck": "pass",
+    "reviewRegressionTestsBeforeFix": {
+      "total": 2,
+      "failed": 2
+    },
+    "helperTests": 4,
+    "productionActivation": "not_performed",
+    "focusedTests": 55,
+    "reviewRegressionTestsAfterFix": {
+      "passed": 2,
+      "total": 2
+    },
+    "mobileTypecheck": "pass_unchanged_mobile_since_validation"
+  },
+  "reviewedBoundary": {
+    "total": 184,
+    "pending": 0,
+    "signed": 28,
+    "unsigned": 156
+  },
+  "files": [
+    {
+      "path": "apps/api/src/modules/commands/command-checkpoint.store.ts",
+      "sha256": "b338f806c30d700ef00e06f02d25e05e7a493efd086be8efa6cc2ea7670d0983",
+      "bytes": 3239
+    },
+    {
+      "path": "apps/api/src/modules/commands/command-legacy-boundary.ts",
+      "sha256": "5593a140e599be14f22e0beb250b7f106422e25c6033466d156c6e4fc75dac49",
+      "bytes": 5559
+    },
+    {
+      "path": "apps/api/src/modules/commands/command-signature.ts",
+      "sha256": "5809bafbb54a8bbf7f653d321940c7311c3b158aee39c9a901d5540558f3c631",
+      "bytes": 4921
+    },
+    {
+      "path": "apps/api/src/modules/commands/command-signature.service.ts",
+      "sha256": "37b44b5f25e08a772c3dde527ab282c551ef9c5f0a655a6fb697b7062a28ac06",
+      "bytes": 14967
+    },
+    {
+      "path": "apps/api/src/modules/commands/command-signature.controller.ts",
+      "sha256": "04c2615bd00ea1bf38f8db1b9e23008671769833262127a6db5721b5ca2d6ea0",
+      "bytes": 2875
+    },
+    {
+      "path": "apps/api/src/modules/commands/signature-integrity.detector.ts",
+      "sha256": "8880151e93ef6f1a85ac3a30204f81b3b1475278b05a4e73e4c4a907f5f97e9d",
+      "bytes": 6790
+    },
+    {
+      "path": "apps/api/src/modules/commands/write.service.ts",
+      "sha256": "9af45cf1839fa62b8503fbc9fe711c68fad1e19de51a93d2277fc505703d7b2a",
+      "bytes": 40525
+    },
+    {
+      "path": "apps/api/scripts/accept-command-legacy-boundary.ts",
+      "sha256": "add84c6b3de9b395b3fc1b1ac7202a21b2effce2faca57d37af91b642da4a3ca",
+      "bytes": 2806
+    },
+    {
+      "path": "apps/api/test/command-ledger.test.ts",
+      "sha256": "dd6a5e19d9348d3fa3d8014bbac3327565f5184538d9abe0133e6ad9740d20de",
+      "bytes": 22807
+    },
+    {
+      "path": "apps/api/test/write-service.test.ts",
+      "sha256": "cd439a2a5f563887d2b1a8921cdb77640c04795fc6c7b7b35c63dc2cf714f9f2",
+      "bytes": 62434
+    },
+    {
+      "path": "apps/api/test/commands-e2e.test.ts",
+      "sha256": "52864e6e0674be3ef3005817af4eae621e8e0457d9c2bdeb7411b7dc8b422c57",
+      "bytes": 7416
+    },
+    {
+      "path": "apps/api/test/sim-valvulas-e2e.test.ts",
+      "sha256": "a98b673349ca2fc2f72e6712930115e16de982f25d32cf6429e902e8291bebaf",
+      "bytes": 40796
+    },
+    {
+      "path": "apps/api/test/sim-plc.test.ts",
+      "sha256": "4f24595c4b919285c15bd88199ea04bdb0443ee97925541ab7d273795702d138",
+      "bytes": 28074
+    },
+    {
+      "path": "apps/mobile/services/command-signatures.ts",
+      "sha256": "d67d6d9e0309eaac7517720d8e53c341b9ea24cffb08ddc02f0ce90e8e07d8d8",
+      "bytes": 1380
+    },
+    {
+      "path": "apps/mobile/components/RegistroIntegridadCard.tsx",
+      "sha256": "7fdd18e2406827ed208df98ade9ed4f6731bd01c187334afeb9116749b44853e",
+      "bytes": 4792
+    },
+    {
+      "path": "tools/vm/ptap-ledger-review.cjs",
+      "sha256": "ff51f4c644457a4a1dbc83a01964ae1566730afe29266592970f4fa3339649c0",
+      "bytes": 11547
+    },
+    {
+      "path": "tools/vm/ptap-ledger-review.test.cjs",
+      "sha256": "e5ebda26f3879fc24e45ec463d20d6eeefc1ed8ece64479dc013b384b6aff101",
+      "bytes": 2447
+    }
+  ],
+  "publication": "Sanitized public copy; exact reviewed tip, dataset digests, destination and private evidence paths preserved outside repository"
+}

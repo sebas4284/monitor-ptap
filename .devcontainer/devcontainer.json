@@ -1,0 +1,18 @@
+{
+  "name": "Aquora Node 26",
+  "build": { "dockerfile": "Dockerfile" },
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
+  "workspaceFolder": "/workspace",
+  "forwardPorts": [4000, 8082],
+  "mounts": [
+    "source=aquora-root-node-modules,target=/workspace/node_modules,type=volume",
+    "source=aquora-api-node-modules,target=/workspace/apps/api/node_modules,type=volume",
+    "source=aquora-mobile-node-modules,target=/workspace/apps/mobile/node_modules,type=volume",
+    "source=aquora-plc-node-modules,target=/workspace/tools/plc-discovery/node_modules,type=volume"
+  ],
+  "remoteUser": "node",
+  "runArgs": ["--security-opt=no-new-privileges", "--cap-drop=ALL", "--sysctl=net.ipv4.ping_group_range=1000 1000", "--memory=3g", "--memory-swap=4g", "--cpus=2"],
+  "containerEnv": {
+    "npm_config_ignore_scripts": "true"
+  }
+}

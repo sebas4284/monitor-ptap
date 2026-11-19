@@ -1,4 +1,4 @@
-import { Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
 import type { SignalDto } from '@ptap/shared';
 import { AuditLogService } from '../../infrastructure/audit/audit-log.service';
 import { PlantCache } from '../../infrastructure/connectivity/pipeline/plant-cache';
@@ -68,11 +68,11 @@ export class ValveStateObserver implements OnModuleInit, OnModuleDestroy {
   private readonly estado = new Map<string, Observacion>();
 
   constructor(
-    private readonly pipeline: PlantPipelineService,
-    private readonly cache: PlantCache,
-    private readonly auditLog: AuditLogService,
-    private readonly avisos: NotificationRepository,
-    private readonly comandos: CommandLogRepository,
+    @Inject(PlantPipelineService) private readonly pipeline: PlantPipelineService,
+    @Inject(PlantCache) private readonly cache: PlantCache,
+    @Inject(AuditLogService) private readonly auditLog: AuditLogService,
+    @Inject(NotificationRepository) private readonly avisos: NotificationRepository,
+    @Inject(CommandLogRepository) private readonly comandos: CommandLogRepository,
   ) {}
 
   async onModuleInit(): Promise<void> {

@@ -1,3 +1,4 @@
+import { assessFreshness, INPUT_CHANNELS } from '../src/infrastructure/connectivity/opcua/freshness.service';
 /**
  * ¿Qué plantas están congeladas, desde cuándo, y de quién es la culpa?
  *
@@ -48,7 +49,7 @@ const UMBRAL_MIN = 60;
  * normal y lo deseable. Incluirlo daba falsos congelados (Campoalegre salía congelada por su
  * INT_OUT mientras su REAL_IN respondía).
  */
-const CANALES_DE_ENTRADA = new Set(['realIn', 'intIn']);
+const CANALES_DE_ENTRADA = INPUT_CHANNELS;
 
 interface BufferRef {
   plantId: string;
@@ -177,6 +178,11 @@ async function main(): Promise<void> {
 
     for (const m of medidas) {
       const l = await leer(session, m.nodeId);
+      m.ok = l.ok;
+      m.status = l.status;
+      m.sourceTimestamp = l.sourceTimestamp;
+      m.edadMin = assessFreshness(m.channel, l.ok, l.sourceTimestamp?.toISOString() ?? null, Date.now()).ageMs;
+      if (m.edadMin !== null) m.edadMin /= 60_000;
       m.valores2 = comoArray(l.valor);
       const a = primera.get(m.nodeId) ?? [];
       m.indicesQueCambian = m.valores2
@@ -195,6 +201,7 @@ async function main(): Promise<void> {
 
     const congeladas: string[] = [];
     const vivas: string[] = [];
+    const indeterminadas: string[] = [];
 
     console.log(`\nEndpoint: ${endpoint}`);
     console.log(`Intervalo entre lecturas: ${intervaloSeg} s   ·   umbral de congelado: ${UMBRAL_MIN} min\n`);
@@ -207,7 +214,8 @@ async function main(): Promise<void> {
       const edades = entradas.map((m) => m.edadMin).filter((e): e is number => e !== null);
       const masVieja = edades.length ? Math.max(...edades) : null;
       const algunCambio = entradas.some((m) => m.indicesQueCambian.length > 0);
-      if (masVieja !== null && masVieja > UMBRAL_MIN && !algunCambio) congeladas.push(plantId);
+      if (!entradas.length || entradas.some((m) => assessFreshness(m.channel, m.ok, m.sourceTimestamp?.toISOString() ?? null, Date.now()).veredicto === 'indeterminado')) indeterminadas.push(plantId);
+      else if (masVieja !== null && masVieja > UMBRAL_MIN && !algunCambio) congeladas.push(plantId);
       else vivas.push(plantId);
 
       for (const m of ms) {
@@ -217,6 +225,8 @@ async function main(): Promise<void> {
         const esComando = !CANALES_DE_ENTRADA.has(m.channel);
         const estado = !m.ok
           ? `⚠ ${m.status}`
+          : assessFreshness(m.channel, m.ok, m.sourceTimestamp?.toISOString() ?? null, Date.now()).veredicto === 'indeterminado'
+            ? 'indeterminado'
           : esComando
             ? 'comando (no cuenta)'
             : m.indicesQueCambian.length > 0
@@ -233,6 +243,7 @@ async function main(): Promise<void> {
     console.log('\n' + '─'.repeat(100));
     console.log(`CONGELADAS (${congeladas.length}): ${congeladas.join(', ') || '—'}`);
     console.log(`VIVAS      (${vivas.length}): ${vivas.join(', ') || '—'}`);
+    console.log(`INDETERMINADAS (${indeterminadas.length}): ${indeterminadas.join(', ') || '—'}`);
 
     // ── Veredicto de culpa, que es lo que decide a quién llamar ───────────
     const conTimestampViejo = medidas.filter(
@@ -254,7 +265,7 @@ async function main(): Promise<void> {
         console.log(`      ${m.plantId.padEnd(17)} ${m.browseName.padEnd(28)} ${(m.edadMin! / 1440).toFixed(1)} días`);
       }
     }
-    if (conTimestampViejo.length === 0 && conMalStatus.length === 0) {
+    if (conTimestampViejo.length === 0 && conMalStatus.length === 0 && indeterminadas.length === 0) {
       console.log('  → Todos los buffers responden Good y con timestamp fresco.');
       console.log('    Si aun así la aplicación muestra datos viejos, el problema es NUESTRO');
       console.log('    (Subscription muerta o buffer faulted): mirar /api/health/opc y reciclar sesión.');

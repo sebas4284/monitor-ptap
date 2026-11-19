@@ -50,7 +50,7 @@ export async function fetchUnseenCount(): Promise<number> {
   return unseen;
 }
 
-/** Marca vistos todos los avisos del historial. Se llama al ABRIR la bandeja. */
+/** Marca vistos todos los avisos del historial por acción explícita del usuario. */
 export async function markNotificationsSeen(): Promise<void> {
   await postJson('/api/notifications/seen', {});
 }
@@ -93,7 +93,7 @@ export function familiaDe(kind: NotificationKind): FamiliaAviso | null {
 }
 
 /**
- * Filtra la bandeja por familia y por texto.
+ * Filtra la bandeja por familia, texto y no vistos; ordena por fecha sin mutar la cache.
  *
  * En el cliente y no en el servidor: la bandeja son como mucho 200 filas ya descargadas, y filtrar
  * aquí responde al instante mientras se escribe. Pedirlo al servidor añadiría una espera a cada
@@ -103,9 +103,12 @@ export function filtrarAvisos(
   avisos: AppNotification[],
   familia: FamiliaAviso | null,
   texto: string,
+  soloNoVistos = false,
+  antiguosPrimero = false,
 ): AppNotification[] {
   const q = texto.trim().toLowerCase();
   return avisos.filter((n) => {
+    if (soloNoVistos && n.seen) return false;
     if (familia && familiaDe(n.kind) !== familia) return false;
     if (!q) return true;
     // Se busca también en el sujeto: es como se encuentra «valve1» o «tank1Level» cuando alguien
@@ -115,5 +118,12 @@ export function filtrarAvisos(
       n.message.toLowerCase().includes(q) ||
       (n.subject ?? '').toLowerCase().includes(q)
     );
+  }).sort((a, b) => {
+    const fechaA = Date.parse(a.createdAt);
+    const fechaB = Date.parse(b.createdAt);
+    // Las fechas inválidas quedan al final, sea cual sea el sentido del orden.
+    if (!Number.isFinite(fechaA)) return Number.isFinite(fechaB) ? 1 : 0;
+    if (!Number.isFinite(fechaB)) return -1;
+    return antiguosPrimero ? fechaA - fechaB : fechaB - fechaA;
   });
 }

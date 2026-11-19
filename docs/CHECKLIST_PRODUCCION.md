@@ -1,5 +1,12 @@
 # Checklist de producción — traslado al servidor real
 
+> La tabla de infraestructura y autorizaciones de este documento es histórica. Para la copia local
+> revisada, el primer ensayo en una VM autorizada debe ser de **solo lectura**:
+> `OPCUA_WRITES_ENABLED=false`. No copiar excepciones antiguas de cifrado ni activar escrituras
+> por una autorización mencionada aquí. Confirmar endpoint, certificados, secretos y permisos con
+> la empresa. Para la nueva atribución de IP y el límite de mando, configurar y verificar
+> [SEGURIDAD_MANDOS.md](SEGURIDAD_MANDOS.md) antes de exponer la API.
+
 Qué revisar/ajustar para pasar el backend del entorno de desarrollo (simulador, cuentas demo) al
 **servidor real** con el **PLC real**. La receta de instalación en el VPS está en
 [RUNBOOK_PRODUCCION.md §11](RUNBOOK_PRODUCCION.md); esto es el **endurecimiento** de configuración y datos.
@@ -24,7 +31,7 @@ Qué revisar/ajustar para pasar el backend del entorno de desarrollo (simulador,
 | Variable | Valor en producción | Por qué |
 |---|---|---|
 | `CONNECTIVITY_PROVIDER` | **`opcua`** | Usar el PLC real, no el simulador |
-| `OPC_ENDPOINT` | `opc.tcp://181.204.165.66:59200` | Endpoint del PLC. Desde el 2026-08-19 se llega por la IP **pública**; antes era la interna `10.10.51.225:59100` por VPN |
+| `OPC_ENDPOINT` | `opc.tcp://10.10.51.225:59100` | Endpoint del PLC por la IP **interna**, vía VPN/red OT. Desde el 2026-09-21: la planta cerró el path público `181.204.165.66:59200` (vigente 2026-08-19 → 2026-09-21) y no se pedirá reabrirlo — ver [SECURITY_FINDING_P0.md](SECURITY_FINDING_P0.md) |
 | `OPCUA_WRITES_ENABLED` | **`true`** (autorizado 2026-08-03) | Canal de escritura ABIERTO por decisión de Operación. Requiere también `OPCUA_ALLOW_INSECURE_WRITES=true` porque el PLC solo admite Anonymous+None (ver §3) |
 | `SOCKET_AUTH_REQUIRED` | **sin definir / ≠ false** | El gateway exige JWT. **Nunca** `false` en prod |
 | `LOG_LEVEL` | `info` | El log por snapshot ya está en `debug`; en `info` no aparece |
@@ -70,9 +77,10 @@ Qué revisar/ajustar para pasar el backend del entorno de desarrollo (simulador,
 
 ## 5. Red (el punto que decide si hay datos)
 
-- [ ] **La VM alcanza el PLC** por OPC UA (`nc -vz 181.204.165.66 59200`). Hoy el PLC está tras NAT/túnel
-      (ver [INCIDENTE_CONEXION_PLC.md](INCIDENTE_CONEXION_PLC.md)); resolver la ruta (VPN/túnel) es
-      requisito de red. Sin ella, la telemetría sale "sin datos" aunque todo lo demás esté OK.
+- [ ] **La VM alcanza el PLC** por OPC UA (`nc -vz 10.10.51.225 59100`). El acceso es por la red OT:
+      la VM (`192.168.30.x`) necesita ruta a `10.10.51.0/24` — verificar con `ip route get 10.10.51.225`.
+      El path público está cerrado desde el 2026-09-21 (ver [INCIDENTE_CONEXION_PLC.md](INCIDENTE_CONEXION_PLC.md)).
+      Sin esa ruta, la telemetría sale "sin datos" aunque todo lo demás esté OK.
 - [ ] Puertos entrantes 80/443; salientes a GitHub/npm/PLC.
 
 ---

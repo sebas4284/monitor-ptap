@@ -117,18 +117,13 @@ async function main(): Promise<void> {
   );
   const prom = metricsText ? parseProm(metricsText) : null;
 
-  // 2) /api/health/opc (público)
-  const healthRaw = ssh(`curl -s http://127.0.0.1:4000/api/health/opc`);
-  let health: Record<string, unknown> | null = null;
-  try { health = healthRaw ? (JSON.parse(healthRaw) as Record<string, unknown>) : null; } catch { /* 503 body u otro */ }
-
   // 3) pm2 jlist
   const pm2Raw = ssh(`pm2 jlist 2>/dev/null`);
   let pm2: { rssMB: number | null; cpu: number | null; restarts: number | null; uptimeH: number | null } = {
     rssMB: null, cpu: null, restarts: null, uptimeH: null,
   };
   try {
-    const arr = pm2Raw ? (JSON.parse(pm2Raw) as Array<Record<string, any>>) : [];
+    const arr = pm2Raw ? (JSON.parse(pm2Raw) as Record<string, any>[]) : [];
     const proc = arr.find((x) => x?.name === 'ptap-api') ?? arr[0];
     if (proc) {
       pm2 = {
@@ -220,7 +215,7 @@ async function main(): Promise<void> {
   );
 
   // ── score por zona (comparten proceso; se ponderan las sub-scores relevantes a cada zona) ──
-  const zones: Array<{ zona: string; score: number; nota: string }> = [
+  const zones: { zona: string; score: number; nota: string }[] = [
     { zona: "C′ Tiempo real (Socket.IO+pipeline)", score: clampScore(0.45 * s.realtime + 0.3 * s.cpuLag + 0.25 * s.latency), nota: `OPC p95 ${opcLatP95 ?? '—'}ms · lag ${lagP99Ms ?? '—'}ms` },
     { zona: 'C Plantas/Snapshot (REST)', score: clampScore(0.6 * s.latency + 0.4 * s.cpuLag), nota: `REST ~${restAvgMs ?? '—'}ms (cache RAM)` },
     { zona: 'A Auth/Login', score: clampScore(0.5 * s.latency + 0.3 * s.ram + 0.2 * s.db), nota: 'argon2 en threadpool, rate-limited' },

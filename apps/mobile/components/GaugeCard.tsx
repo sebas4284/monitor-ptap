@@ -1,11 +1,15 @@
 import { memo } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { View, Text, StyleSheet, Animated } from 'react-native';
+import Ionicons from './AppIcon';
 import Colors from '../constants/colors';
+import { Fonts } from '../constants/fonts';
 import type { SignalDto, UnusableReason } from '../services/api';
-import { directionFor } from '../services/signal-kind';
+import { directionLook, isAnomalous, signalState } from '../services/card-look';
+import { useStateFlash } from '../hooks/useStateFlash';
 import { sameSignalCard } from './memo-compare';
 import { BotonSilencio } from './BotonSilencio';
+
+const B = Colors.brand;
 
 const REASON_TEXT: Record<UnusableReason, string> = {
   BAD_QUALITY: 'calidad OPC no buena',
@@ -18,11 +22,13 @@ const fmt = (n: number, d = 2): string =>
   n.toLocaleString('es-CO', { minimumFractionDigits: d, maximumFractionDigits: d });
 
 /**
- * Tarjeta simple de una señal de dominio (presión, pH, turbidez, temperatura, oxígeno,
+ * Tarjeta simple de una señal de dominio (caudal, presión, pH, turbidez, temperatura, oxígeno,
  * conductividad, cloro, o una digital on/off). Política de datos (usuario, 2026-07-15): si hay
- * valor SE MUESTRA tal cual; "sin dato" solo cuando value es null (no fabricar números). Marca
- * `frozen` (planta sin conexión) y `outOfRange` (lectura fuera de límites) para no aparentar
- * frescura ni normalidad cuando no las hay.
+ * valor SE MUESTRA tal cual; "sin dato" solo cuando value es null (no fabricar números).
+ *
+ * - Fuera de rango (físico u OPERATIVO, `hasRangeAnomaly`) → borde y valor en rojo. Es el único rojo.
+ * - Entrada/salida → icono + etiqueta + su azul. Sin dirección → texto normal.
+ * - Congelada → atenuada y con etiqueta. El número nunca se anima: al cambiar, la tarjeta destella.
  */
 function GaugeCardBase({
   signal,
@@ -48,59 +54,81 @@ function GaugeCardBase({
   const isBool = typeof signal.value === 'boolean';
   const hasMin = typeof signal.opMin === 'number';
   const hasMax = typeof signal.opMax === 'number';
-  const outOfRange = Boolean(signal.outOfRange);
-  const direction = directionFor(name);
-  const accent =
-    direction === 'inlet' ? Colors.accentInlet : direction === 'outlet' ? Colors.accentOutlet : Colors.textPrimary;
+  const anomaly = isAnomalous(signal);
+  const dir = directionLook(name);
+  const accent = dir?.color ?? B.text;
+  const flash = useStateFlash(signalState(signal), frozen);
+  const label = signal.label ?? name;
 
   return (
-    <View style={[styles.card, frozen && styles.cardFrozen]}>
-      <View style={styles.cabecera}>
+    <View style={[styles.card, anomaly && styles.cardAnomaly, frozen && styles.cardFrozen]}>
+      <Animated.View pointerEvents="none" style={[styles.flash, { opacity: flash }]} />
+      <View style={styles.top}>
         <View style={styles.iconWrap}>
-          <Ionicons name={icon as never} size={20} color={Colors.primary} />
+          <Ionicons name={icon as never} size={18} color={accent} />
         </View>
-        {plantId ? <BotonSilencio plantId={plantId} subject={name} etiqueta={signal.label ?? name} /> : null}
+        <View style={styles.flex} />
+        {plantId ? <BotonSilencio plantId={plantId} subject={name} etiqueta={label} /> : null}
       </View>
-      <Text style={styles.name} numberOfLines={2}>
-        {signal.label ?? name}
-      </Text>
 
-      {(frozen || outOfRange) && (
-        <View style={styles.tagsRow}>
-          {frozen && (
-            <View style={styles.frozenTag}>
-              <Text style={styles.frozenTagText}>congelado</Text>
-            </View>
-          )}
-          {outOfRange && (
-            <View style={styles.rangeTag}>
-              <Text style={styles.rangeTagText}>fuera de rango</Text>
-            </View>
-          )}
+      <Text style={styles.name} numberOfLines={2}>
+        {label}
+      </Text>
+      {dir && (
+        <View style={styles.dirRow}>
+          <Ionicons name={dir.icon} size={12} color={dir.color} />
+          <Text style={[styles.dirText, { color: dir.color }]}>{dir.label}</Text>
         </View>
       )}
 
       {numeric ? (
-        <Text style={[styles.value, { color: outOfRange ? Colors.danger : accent }]} numberOfLines={1} adjustsFontSizeToFit>
+        <Text
+          style={[styles.value, { color: anomaly ? B.dangerText : accent }]}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+        >
           {fmt(signal.value as number)}
           <Text style={styles.unit}> {signal.unit ?? ''}</Text>
         </Text>
       ) : isBool ? (
-        <Text style={[styles.value, { color: (signal.value as boolean) ? Colors.success : Colors.textSecondary }]}>
+        <Text
+          style={[styles.value, { color: (signal.value as boolean) ? B.green : B.textSecondary }]}
+        >
           {(signal.value as boolean) ? 'Encendido' : 'Apagado'}
         </Text>
       ) : (
         <View style={styles.noData}>
           <Text style={styles.noDataValue}>sin dato</Text>
-          {signal.reason && <Text style={styles.noDataReason}>{REASON_TEXT[signal.reason] ?? 'sin dato utilizable'}</Text>}
+          {signal.reason && (
+            <Text style={styles.noDataReason}>
+              {REASON_TEXT[signal.reason] ?? 'sin dato utilizable'}
+            </Text>
+          )}
+        </View>
+      )}
+
+      {(frozen || anomaly) && (
+        <View style={styles.tagsRow}>
+          {anomaly && (
+            <View style={styles.tag}>
+              <Ionicons name="alert-circle" size={13} color={Colors.danger} />
+              <Text style={[styles.tagText, { color: B.dangerText }]}>Fuera de rango</Text>
+            </View>
+          )}
+          {frozen && (
+            <View style={styles.tag}>
+              <Ionicons name="time-outline" size={13} color={B.gray} />
+              <Text style={styles.tagText}>Congelado</Text>
+            </View>
+          )}
         </View>
       )}
 
       {!compact && (hasMin || hasMax) && (
-        <Text style={styles.rangeText}>
-          {hasMin ? `Mín: ${fmt(signal.opMin as number)}` : ''}
-          {hasMin && hasMax ? '   ' : ''}
-          {hasMax ? `Máx: ${fmt(signal.opMax as number)}` : ''}
+        <Text style={[styles.rangeText, anomaly && { color: B.dangerText }]}>
+          {hasMin ? `Mín ${fmt(signal.opMin as number)}` : ''}
+          {hasMin && hasMax ? '  ·  ' : ''}
+          {hasMax ? `Máx ${fmt(signal.opMax as number)}` : ''}
         </Text>
       )}
     </View>
@@ -114,52 +142,53 @@ function GaugeCardBase({
 export const GaugeCard = memo(GaugeCardBase, sameSignalCard);
 
 const styles = StyleSheet.create({
+  flex: { flex: 1 },
   card: {
     flex: 1,
     margin: 5,
-    padding: 14,
-    backgroundColor: Colors.bg,
+    padding: 16,
+    backgroundColor: B.card,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: Colors.divider,
-    alignItems: 'center',
+    borderColor: '#1B3044',
+    overflow: 'hidden',
   },
-  cardFrozen: { opacity: 0.55 },
-  // La cabecera empuja la campana a la derecha sin mover el icono de su sitio.
-  cabecera: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', alignSelf: 'stretch' },
+  cardAnomaly: { borderColor: Colors.danger, borderWidth: 1.5 },
+  cardFrozen: { borderStyle: 'dashed' },
+  flash: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: 'rgba(36,145,204,0.2)',
+  },
+  top: { flexDirection: 'row', alignItems: 'flex-start' },
   iconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: Colors.surface,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: B.panel,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 6,
+    marginBottom: 8,
   },
-  name: { fontSize: 12, fontWeight: '600', color: Colors.textSecondary, marginBottom: 8, textAlign: 'center' },
-  tagsRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 6, marginBottom: 8 },
-  rangeTag: {
-    backgroundColor: Colors.danger + '22',
-    borderColor: Colors.danger,
-    borderWidth: 1,
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
+  name: { fontFamily: Fonts.regular, fontSize: 13, lineHeight: 18, color: B.textSecondary },
+  dirRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
+  dirText: { fontFamily: Fonts.medium, fontSize: 12 },
+  value: {
+    fontFamily: Fonts.semibold,
+    fontSize: 30,
+    lineHeight: 38,
+    marginTop: 6,
+    fontVariant: ['tabular-nums'],
   },
-  rangeTagText: { fontSize: 11, fontWeight: '700', color: Colors.danger, letterSpacing: 0.5 },
-  frozenTag: {
-    backgroundColor: Colors.textSecondary + '22',
-    borderColor: Colors.textSecondary,
-    borderWidth: 1,
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  frozenTagText: { fontSize: 11, fontWeight: '700', color: Colors.textSecondary, letterSpacing: 0.5 },
-  value: { fontSize: 28, fontWeight: '800', marginBottom: 6, textAlign: 'center', fontVariant: ['tabular-nums'] },
-  unit: { fontSize: 14, fontWeight: '400', color: Colors.textSecondary },
-  rangeText: { fontSize: 11, fontWeight: '600', color: Colors.textSecondary },
-  noData: { marginBottom: 6, alignItems: 'center' },
-  noDataValue: { fontSize: 20, fontWeight: '700', color: Colors.neutral },
-  noDataReason: { fontSize: 11, color: Colors.textSecondary, marginTop: 2, textAlign: 'center' },
+  unit: { fontFamily: Fonts.regular, fontSize: 14, color: B.textSecondary },
+  tagsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 6 },
+  tag: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  tagText: { fontFamily: Fonts.medium, fontSize: 12, color: B.textSecondary },
+  rangeText: { fontFamily: Fonts.regular, fontSize: 12, color: B.textSecondary, marginTop: 6 },
+  noData: { marginTop: 6 },
+  noDataValue: { fontFamily: Fonts.semibold, fontSize: 20, color: B.textSecondary },
+  noDataReason: { fontFamily: Fonts.regular, fontSize: 12, color: B.textSecondary, marginTop: 2 },
 });

@@ -1,0 +1,16 @@
+User-agent: *
+Allow: /login
+Allow: /$
+Disallow: /tablero
+Disallow: /estado
+Disallow: /ajustes
+Disallow: /alertas
+Disallow: /reportes
+Disallow: /usuarios
+Disallow: /desarrollador
+Disallow: /electrovalvulas
+Disallow: /api/
+Disallow: /_sitemap
+Disallow: /register
+Disallow: /(app)/
+Disallow: /(auth)/

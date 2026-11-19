@@ -1,4 +1,4 @@
-import type { LoadedMapping, SignalMapping } from '../mapping/opc-mapping.loader';
+import type { LoadedMapping, SetpointSpec, SignalMapping } from '../mapping/opc-mapping.loader';
 import type { OpcQuality, RawBufferSample } from '../ports/connectivity-adapter.port';
 import type { DeadLetterBuffer } from './dead-letter.buffer';
 import { esFinDeSemanaOFestivo } from './dia-operativo';
@@ -11,14 +11,18 @@ export interface ExtractedSignal {
   max: number | null;
   opMin: number | null;
   opMax: number | null;
-  /** Convención literal de la palabra de estado de válvula, si el sitio no usa la de bits. */
-  stateEncoding?: { closed?: number; open?: number };
+  /** Conserva tanto la convención literal como las máscaras independientes verificadas. */
+  stateEncoding?: SignalMapping['stateEncoding'];
   /** Solo en válvulas: el caudal que corresponde a ESA válvula. */
   flowDomainKey?: string;
   /** Solo en palabras de estado: si es false no decide el veredicto. */
   stateTrusted?: boolean;
   /** ¿La señal tiene canal de comando? Viaja al front para no ofrecer un botón que no puede salir. */
   commandable: boolean;
+  /** Verbos que declara el mapping de esa válvula. Vacío si no es writable. Ver `SignalDto.commands`. */
+  commands: string[];
+  /** Solo en una válvula con consigna: sus límites. Ver `SignalDto.setpoint`. */
+  setpoint?: { min: number; max: number; unit: string | null };
   mappingStatus: 'mapped' | 'unmapped';
   confidence: 'confirmed' | 'inferred' | 'estimated';
   value: number | boolean | null; // crudo; puede ser no-finito (lo evalúa QualityService)
@@ -62,6 +66,11 @@ function rangoDelDia(sig: SignalMapping): { opMin: number | null; opMax: number 
  * igual tamaño (SOLEDAD: REAL_IN_SOLEDAD Float[50] y DATOS_IN_PTAP_SOLEDAD Int16[50]),
  * donde "el de más elementos" empataría y la elección sería no determinista.
  */
+/** Límites de una consigna para el snapshot (sin la tolerancia, que es del backend). */
+function limitesDeConsigna(sp: SetpointSpec | undefined): { setpoint?: { min: number; max: number; unit: string | null } } {
+  return sp ? { setpoint: { min: sp.min, max: sp.max, unit: sp.unit } } : {};
+}
+
 export class MappingEngine {
   private readonly signalsByPlant = new Map<string, SignalMapping[]>();
 
@@ -99,6 +108,11 @@ export class MappingEngine {
       flowDomainKey: sig.flowDomainKey,
       stateTrusted: sig.stateTrusted,
       commandable: sig.writable,
+      // Los verbos salen del mapping, nunca de una lista en el código (regla 2). Sin write spec
+      // queda vacío, y el builder solo lo publica en las señales de válvula.
+      commands: Object.keys(sig.write?.commands ?? {}),
+      // Encendida (write.setpoint) o APAGADA (consignaApagada): la app distingue las dos por `commandable`.
+      ...limitesDeConsigna(sig.write?.setpoint ?? sig.consignaApagada),
       mappingStatus: sig.mappingStatus,
       confidence: sig.confidence,
     };

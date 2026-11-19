@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from './AppIcon';
 import Colors from '../constants/colors';
 import { useAuth } from '../context/AuthContext';
 import { fetchVerificacionFirmas, type VerificacionFirmas } from '../services/command-signatures';
@@ -37,8 +37,19 @@ export function RegistroIntegridadCard() {
   }, []);
 
   useEffect(() => {
-    if (puede) comprobar();
-  }, [puede, comprobar]);
+    if (!puede) return;
+    let activo = true;
+    fetchVerificacionFirmas()
+      .then((resultado) => {
+        if (activo) setEstado(resultado);
+      })
+      .catch(() => {
+        if (activo) setError(true);
+      });
+    return () => {
+      activo = false;
+    };
+  }, [puede]);
 
   if (!puede) return null;
 
@@ -46,12 +57,13 @@ export function RegistroIntegridadCard() {
   // esperar medio segundo. Si la red falla tampoco se afirma nada — no saber no es estar íntegro.
   if (!estado && !error) return null;
 
-  const roto = estado ? !estado.integra && estado.verificable : false;
+  const roto = estado ? estado.rotos.length > 0 && estado.verificable : false;
   const sinFirmar = estado ? !estado.verificable : false;
-  const tono = error || sinFirmar ? Colors.warning : roto ? Colors.danger : Colors.success;
+  const legadoSinFirma = Boolean(estado?.legado?.sinFirma);
+  const tono = error || sinFirmar ? Colors.warning : roto ? Colors.danger : legadoSinFirma ? Colors.warning : Colors.success;
   const icono: keyof typeof Ionicons.glyphMap = error
     ? 'cloud-offline-outline'
-    : sinFirmar
+    : sinFirmar || legadoSinFirma && !roto
       ? 'alert-circle-outline'
       : roto
         ? 'warning'
@@ -65,9 +77,11 @@ export function RegistroIntegridadCard() {
           {error
             ? 'No se pudo comprobar el registro'
             : sinFirmar
-              ? 'Las maniobras no se están firmando'
+              ? 'No se pudo verificar la integridad del registro'
               : roto
                 ? 'El registro de maniobras fue alterado'
+                : legadoSinFirma
+                  ? 'Histórico sin firma; nuevas maniobras verificadas'
                 : 'Registro de maniobras íntegro'}
         </Text>
         <Text style={styles.detalle}>

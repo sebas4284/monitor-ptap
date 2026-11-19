@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '../../components/AppIcon';
 import { router } from 'expo-router';
 import {
   PERMISSIONS,
@@ -90,6 +90,22 @@ export default function AjustesScreen() {
               se vuelve parte del decorado y deja de leerse. */}
           <AppUpdateBanner modo="actualizacion" />
         </View>
+
+        <Text style={styles.sectionTitle}>Ayuda</Text>
+        <TouchableOpacity
+          style={[styles.card, styles.linkCard]}
+          onPress={() => router.push('/(app)/ayuda')}
+          activeOpacity={0.8}
+          accessibilityRole="button"
+          accessibilityLabel="Abrir Ayuda y problemas frecuentes"
+        >
+          <Ionicons name="help-circle-outline" size={22} color={Colors.primary} />
+          <View style={styles.flex}>
+            <Text style={styles.linkTitle}>Ayuda y problemas frecuentes</Text>
+            <Text style={styles.linkDesc}>Busca un código y conoce qué revisar o a quién avisar</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
+        </TouchableOpacity>
 
         {/* ── Avisos en el dispositivo ───────────────────────────── */}
         <Text style={styles.sectionTitle}>Notificaciones</Text>
@@ -183,6 +199,44 @@ export default function AjustesScreen() {
           <>
             <Text style={styles.sectionTitle}>Estado de conexión con el PLC</Text>
             <ConnectionDiagnostics />
+
+            <TouchableOpacity
+              style={[styles.card, styles.linkCard]}
+              onPress={() => router.push('/(app)/revision')}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Abrir revisión de estado por planta"
+            >
+              <Ionicons name="clipboard-outline" size={20} color={Colors.primary} />
+              <View style={styles.flex}>
+                <Text style={styles.linkTitle}>Revisión por planta</Text>
+                <Text style={styles.linkDesc}>Red, puente, buffers, señales y anomalías · exportable</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
+            </TouchableOpacity>
+
+            {/* Sección propia, y no un botón dentro del diagnóstico: esto no responde "¿está
+                conectado?" sino "¿de dónde sale este número?". Son dos preguntas distintas. */}
+            <Text style={styles.sectionTitle}>Modo desarrollador</Text>
+            <TouchableOpacity
+              style={[styles.card, styles.linkCard]}
+              onPress={() => router.push('/(app)/desarrollador')}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="terminal-outline" size={20} color={Colors.primary} />
+              <View style={styles.flex}>
+                <Text style={styles.linkTitle}>Buffers crudos del PLC</Text>
+                <Text style={styles.linkDesc}>
+                  Los arrays como los entrega la planta, y qué señal lee cada índice
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={Colors.textSecondary} />
+            </TouchableOpacity>
+            <Text style={styles.hint}>
+              Solo lectura, y no dispara ninguna lectura al PLC: sale de la última muestra que
+              ya había entrado. Sirve para averiguar de dónde viene un valor raro sin abrir el
+              mapeo a mano.
+            </Text>
           </>
         )}
 

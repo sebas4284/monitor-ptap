@@ -13,7 +13,7 @@ import { buildSnapshot } from '../src/infrastructure/connectivity/pipeline/snaps
 import type { LoadedMapping } from '../src/infrastructure/connectivity/mapping/opc-mapping.loader';
 import type { RawBufferSample, RawPlantFrame } from '../src/infrastructure/connectivity/ports/connectivity-adapter.port';
 
-function buf(browseName: string, channel: string, values: Array<number | boolean>, sourceTimestamp = new Date().toISOString()): RawBufferSample {
+function buf(browseName: string, channel: string, values: (number | boolean)[], sourceTimestamp = new Date().toISOString()): RawBufferSample {
   return { browseName, channel, values, quality: 'Good', statusCode: 'Good', sourceTimestamp, serverTimestamp: sourceTimestamp };
 }
 function frame(plantId: string, buffers: RawBufferSample[]): RawPlantFrame {
@@ -160,6 +160,43 @@ test('liveness: tras congelarse, un cambio nuevo lo devuelve a live de inmediato
   // La señal vuelve: debe alzarse en el acto, sin esperas ni histéresis.
   lt.ingest(frame('m', [buf('B', 'realIn', [3], new Date().toISOString())]));
   assert.equal(lt.get('m', true).state, 'live', 'apenas vuelve el dato, la planta vuelve a estar viva');
+});
+
+/**
+ * Planta dada de alta SIN un solo buffer de datos: Cabuyo, La Luisa, La Leonera y Gloria desde el
+ * 2026-10-19, que aún no están en el PLC maestro. El beneficio de la duda del arranque es para buffers
+ * que todavía no entregaron su segunda muestra; aquí no va a llegar ninguno. Concederlo pintaba
+ * ESTABLE —y «Sistema operativo, enviando datos» en la vista Civil— los primeros 5 min de cada
+ * arranque, de una planta que no está en el PLC.
+ */
+test('liveness: planta SIN buffers de datos → frozen desde el arranque, nunca stable', () => {
+  const lt = new LivenessTracker(10, 300);
+  const t0 = Date.now();
+  lt.configurePlant('cabuyo', null, false);
+  assert.equal(lt.get('cabuyo', true, t0).state, 'frozen', 'no hay ningún buffer cuya llegada esperar');
+  assert.equal(lt.get('cabuyo', true, t0 + 301_000).state, 'frozen');
+  assert.equal(lt.get('cabuyo', false, t0).state, 'frozen');
+  assert.equal(lt.get('cabuyo', true, t0).windowSec, 300, 'la ventana sigue siendo la de siempre');
+});
+
+test('liveness: con buffers (el default de configurePlant) se conserva el beneficio de la duda del arranque', () => {
+  const lt = new LivenessTracker(10, 300);
+  const t0 = Date.now();
+  lt.configurePlant('voragine', null);
+  lt.configurePlant('soledad', 120, true);
+  assert.equal(lt.get('voragine', true, t0).state, 'stable');
+  assert.equal(lt.get('soledad', true, t0).state, 'stable');
+  assert.equal(lt.get('soledad', true, t0).windowSec, 120);
+});
+
+test('liveness: si a una planta declarada sin buffers le llega un frame, manda la regla normal', () => {
+  // «Sin buffers» es lo que dice el mapping; un frame real dice otra cosa, y el dato gana.
+  const lt = new LivenessTracker(10, 300);
+  lt.configurePlant('leonera', null, false);
+  lt.ingest(frame('leonera', [buf('B', 'realIn', [1])]));
+  assert.equal(lt.get('leonera', true).state, 'stable', 'primera muestra: sin delta, beneficio de la duda');
+  lt.ingest(frame('leonera', [buf('B', 'realIn', [2])]));
+  assert.equal(lt.get('leonera', true).state, 'live');
 });
 
 // ── MappingEngine (PASO 3.4) ─────────────────────────────────────────────────
@@ -333,4 +370,96 @@ test('cache: sequence monótono por planta, independiente entre plantas', () => 
 test('cache: solo se lee lo que se escribió', () => {
   const cache = new PlantCache();
   assert.equal(cache.get('montebello'), null);
+});
+
+test('dead-letter: el ring respeta el tope, pero los CONTADORES no se pierden (regla 12)', () => {
+  const dl = new DeadLetterBuffer(3);
+  for (let i = 0; i < 10; i++) dl.record('INVALID_NUMBER', 'voragine', `k${i}`, `detalle ${i}`);
+
+  const snap = dl.snapshot();
+  // El detalle está acotado a 3 entradas...
+  assert.equal(snap.recent.length, 3);
+  // ...y son las 3 ÚLTIMAS (se descarta lo viejo, no lo nuevo).
+  assert.deepEqual(
+    snap.recent.map((e) => e.domainKey),
+    ['k7', 'k8', 'k9'],
+  );
+  // ...pero el contador vio las 10: acotar la memoria no puede falsear la cuenta.
+  assert.equal(snap.counts.INVALID_NUMBER, 10);
+  assert.equal(snap.total, 10);
+});
+
+test('dead-letter: capacidad inválida → lanza (nunca un ring que se traga todo en silencio)', () => {
+  assert.throws(() => new DeadLetterBuffer(0), /capacity/);
+  assert.throws(() => new DeadLetterBuffer(-1), /capacity/);
+});
+
+// ── FASE 1: los verbos de la válvula viajan al DTO ───────────────────────────────────────────
+//
+// `commands` es estático del mapping y solo sirve si llega ENTERO hasta el DTO, igual que
+// `stateEncoding`: el front decide con él si ofrece "cerrar". El fallo típico es calcularlo y
+// olvidar copiarlo, así que se prueba el recorrido completo (mapping → engine → snapshot).
+//
+// Lo que protege: hoy solo Vorágine y Sirena declaran `close`. En las otras ocho un "cerrar"
+// llegaría al backend para volver con UNKNOWN_COMMAND tras hacer confirmar la maniobra.
+
+/** WriteSpec mínimo válido; `commands` es lo único que varía entre los casos. */
+function writeSpec(commands: Record<string, number>) {
+  return {
+    target: { channel: 'intOut', sourceBuffer: 'INT_OUT_T', index: 0 },
+    commands,
+    mode: 'bitmask' as const,
+    pulse: { holdMs: 300 },
+    readBack: { channel: 'intIn', sourceBuffer: 'INT_IN_T', index: 0, confirmsWrittenValue: false, stateVerified: false },
+    timeoutMs: 5000,
+    rollbackValue: 0,
+    permission: 'control_valves',
+  };
+}
+
+function mappingConVerbos(plantId: string, commands: Record<string, number>): LoadedMapping {
+  return {
+    version: '0.3.0', protocolVersion: 'v2', dtoVersion: 'v1',
+    plants: [{ plantId, displayName: plantId, livenessWindowSec: null }],
+    targets: [],
+    signals: [
+      { plantId, buffer: 'intOut', sourceBuffer: 'INT_OUT_T', index: 0, domainKey: 'valve1', label: 'Válvula 1', unit: null, min: null, max: null, mappingStatus: 'mapped', confidence: 'confirmed', writable: true, write: writeSpec(commands) },
+      { plantId, buffer: 'realIn', index: 0, domainKey: 'outletFlow1', label: 'Caudal', unit: 'l/s', min: 0, max: 1000, mappingStatus: 'mapped', confidence: 'confirmed', writable: false },
+    ],
+    raw: {},
+  };
+}
+
+function snapshotDe(mapping: LoadedMapping, plantId: string) {
+  const dl = new DeadLetterBuffer();
+  const latest = new Map<string, RawBufferSample>();
+  latest.set('INT_OUT_T', buf('INT_OUT_T', 'intOut', [0, 0, 0]));
+  latest.set('REAL_IN_T', buf('REAL_IN_T', 'realIn', [12.5, 0, 0]));
+  const extracted = new MappingEngine(mapping).extract(plantId, latest, dl);
+  return {
+    extracted,
+    snapshot: buildSnapshot({
+      plantId, displayName: plantId, protocolVersion: 'v2', dtoVersion: 'v1',
+      sequence: 1, bridgeStatus: 'Connected',
+      liveness: { state: 'live', lastChangeAt: null, windowSec: 300 },
+      extracted, deadLetter: dl,
+    }),
+  };
+}
+
+test('valvulas: una planta con open y close publica AMBOS verbos en el DTO (Voragine/Sirena)', () => {
+  const { extracted, snapshot } = snapshotDe(mappingConVerbos('voragine', { open: 4096, close: 8192 }), 'voragine');
+  assert.deepEqual(extracted.find((e) => e.domainKey === 'valve1')?.commands, ['open', 'close'], 'el engine debe leerlos del write spec');
+  assert.deepEqual(snapshot.signals.valve1?.commands, ['open', 'close'], 'y el DTO también');
+});
+
+test('valvulas: una planta que solo declara open NO publica close (las otras ocho)', () => {
+  const { snapshot } = snapshotDe(mappingConVerbos('cascajal', { open: 4096 }), 'cascajal');
+  assert.deepEqual(snapshot.signals.valve1?.commands, ['open']);
+  assert.equal(snapshot.signals.valve1?.commands?.includes('close'), false, 'ofrecer cerrar aquí devolvería UNKNOWN_COMMAND');
+});
+
+test('valvulas: una señal que NO es válvula no lleva el campo commands', () => {
+  const { snapshot } = snapshotDe(mappingConVerbos('cascajal', { open: 4096 }), 'cascajal');
+  assert.equal('commands' in (snapshot.signals.outletFlow1 ?? {}), false, 'el DTO viaja en cada barrido: no se pagan bytes sin significado');
 });

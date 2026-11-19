@@ -1,0 +1,24 @@
+{
+  "schema": "telcobras-provenance/1",
+  "project": "monitor-ptap",
+  "intended_use_and_distribution": "Internal use and modification; retain MIT notice in any later distribution.",
+  "inventory_coverage_and_omissions": "Only the vendored deepmerge runtime, types and license; not a complete SBOM.",
+  "components": [{
+    "name": "deepmerge",
+    "version_or_commit": "4.3.1 upstream; 4.3.1-ptap.1 local patch",
+    "source_url_or_authorized_location": "Existing node_modules/deepmerge; upstream https://github.com/TehShrike/deepmerge/tree/v4.3.1",
+    "sha256": "Original dist/cjs.js: 2E5160F84A1141BD927264AFE4D15766F1E6CF07DAEF182B37FF53FEA121DE7D; original types/license hashes in README.md",
+    "rights_holder": "James Halliday, Josh Duff, and other contributors",
+    "license_expression": "MIT",
+    "license_text_and_permission_evidence": "license.txt copied verbatim; official v4.3.1 license reviewed 2026-10-31",
+    "required_notices": ["MIT copyright and permission notice in license.txt"],
+    "transitive_dependencies": [],
+    "modifications_and_own_contributions": "PTAP filters __proto__, constructor and prototype keys on target and source object copy paths; adds security regressions.",
+    "obligations_for_this_use": ["Preserve MIT copyright and permission notice with copies or substantial portions."],
+    "security_assessment_reference": "docs/security-audit/2026-10-30/remediation-decision.json; tools/security/deepmerge.test.cjs",
+    "decision": "allowed_scoped"
+  }],
+  "assets_models_data_and_fonts_coverage": "No additional assets, models, data or fonts in this component.",
+  "reviewer_jurisdiction_and_date": "Codex; internal project use; 2026-10-31 UTC",
+  "unresolved_rights_or_contract_questions": []
+}

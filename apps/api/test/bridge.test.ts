@@ -25,6 +25,7 @@ function fastConfig(overrides: Partial<OpcUaConfig> = {}): OpcUaConfig {
     securityMode: 'None',
     securityPolicy: 'None',
     identity: { type: 'anonymous' },
+    autoAcceptUnknownCertificate: false,
     publishingIntervalMs: 20,
     samplingIntervalMs: 10,
     subscriptionLifetimeCount: 100,
@@ -87,6 +88,11 @@ function sevenBufferMapping(): LoadedMapping {
 }
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+async function waitFor(ready: () => boolean, message: string): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (!ready() && Date.now() < deadline) await delay(5);
+  assert.ok(ready(), message);
+}
 
 // ── BridgeStateMachine ─────────────────────────────────────────────────────────
 
@@ -112,12 +118,13 @@ test('BridgeStateMachine: transición al mismo estado es no-op', () => {
 
 // ── SimulatorBridgeAdapter ──────────────────────────────────────────────────────
 
-test('simulador: start conecta y emite frames crudos de las plantas del mapping', async () => {
+test('simulador: start conecta y emite frames crudos de las plantas del mapping', async (t) => {
   const adapter = new SimulatorBridgeAdapter(fastConfig(), twoPlantMapping());
+  t.after(() => adapter.stop());
   const frames: RawPlantFrame[] = [];
   adapter.onFrame((f) => frames.push(f));
   await adapter.start();
-  await delay(80);
+  await waitFor(() => frames.some(f => f.plantId === 'voragine') && frames.some(f => f.plantId === 'soledad'), 'deben llegar frames de ambas plantas');
   await adapter.stop();
 
   assert.equal(adapter.getBridgeStatus(), 'Disconnected');
@@ -139,13 +146,14 @@ test('simulador: start conecta y emite frames crudos de las plantas del mapping'
  * reutiliza el coalescer y su start() no lo revivía —, así que solo un test sobre el adaptador
  * real, atravesando el ciclo completo, lo detecta.
  */
-test('simulador: tras stop()+start() los frames VUELVEN a fluir (regresión de reconexión)', async () => {
+test('simulador: tras stop()+start() los frames VUELVEN a fluir (regresión de reconexión)', async (t) => {
   const adapter = new SimulatorBridgeAdapter(fastConfig(), twoPlantMapping());
+  t.after(() => adapter.stop());
   const frames: RawPlantFrame[] = [];
   adapter.onFrame((f) => frames.push(f));
 
   await adapter.start();
-  await delay(80);
+  await waitFor(() => frames.length > 0, 'el primer arranque debe emitir frames');
   await adapter.stop();
   const antes = frames.length;
   assert.ok(antes > 0, 'el primer arranque debe emitir');
@@ -153,7 +161,7 @@ test('simulador: tras stop()+start() los frames VUELVEN a fluir (regresión de r
   // Segundo ciclo: es el camino de la reconexión real.
   frames.length = 0;
   await adapter.start();
-  await delay(80);
+  await waitFor(() => frames.length > 0, 'tras reconectar deben volver a llegar frames');
   const despues = frames.length;
   await adapter.stop();
 
@@ -164,12 +172,13 @@ test('simulador: tras stop()+start() los frames VUELVEN a fluir (regresión de r
   );
 });
 
-test('simulador: coalescing — una planta con 7 buffers emite 1 frame con 7 buffers (A2)', async () => {
+test('simulador: coalescing — una planta con 7 buffers emite 1 frame con 7 buffers (A2)', async (t) => {
   const adapter = new SimulatorBridgeAdapter(fastConfig(), sevenBufferMapping());
+  t.after(() => adapter.stop());
   const frames: RawPlantFrame[] = [];
   adapter.onFrame((f) => frames.push(f));
   await adapter.start();
-  await delay(90);
+  await waitFor(() => frames.length > 0, 'debe llegar un frame coalescido');
   await adapter.stop();
 
   assert.ok(frames.length > 0, 'debe haber emitido frames');
@@ -181,16 +190,16 @@ test('simulador: coalescing — una planta con 7 buffers emite 1 frame con 7 buf
   assert.equal(new Set(frames[0].buffers.map((b) => b.browseName)).size, 7);
 });
 
-test('simulador: freeze SIN unfreeze → Stale → recuperación AUTOMÁTICA por reciclaje', async () => {
+test('simulador: freeze SIN unfreeze → Stale → recuperación AUTOMÁTICA por reciclaje', async (t) => {
   const adapter = new SimulatorBridgeAdapter(fastConfig({ watchdogTimeoutMs: 50 }), twoPlantMapping());
+  t.after(() => adapter.stop());
   const states: string[] = [];
   adapter.onStatusChange((s) => states.push(s));
   await adapter.start();
-  await delay(40);
   assert.equal(adapter.getBridgeStatus(), 'Connected');
 
   adapter.freeze(); // subscription "muerta"; NO llamamos unfreeze()
-  await delay(220); // watchdog dispara, recicla la subscription emulada y reanuda emisión
+  await waitFor(() => states.includes('Stale') && states.lastIndexOf('Connected') > states.indexOf('Stale'), 'el watchdog debe detectar Stale y recuperar la conexión');
 
   assert.ok(states.includes('Stale'), `debió pasar por Stale. estados: ${states.join(',')}`);
   assert.equal(
@@ -202,16 +211,16 @@ test('simulador: freeze SIN unfreeze → Stale → recuperación AUTOMÁTICA por
   await adapter.stop();
 });
 
-test('simulador: reciclaje que falla escala a sesión y termina en Faulted', async () => {
+test('simulador: reciclaje que falla escala a sesión y termina en Faulted', async (t) => {
   const adapter = new SimulatorBridgeAdapter(
     fastConfig({ watchdogTimeoutMs: 30, subscriptionRecycleMaxAttempts: 1 }),
     twoPlantMapping(),
   );
+  t.after(() => adapter.stop());
   adapter.setRecycleOutcome('fail'); // ni subscription ni sesión se recuperan
   await adapter.start();
-  await delay(30);
   adapter.freeze();
-  await delay(260); // timeout 1: sub-recycle falla; timeout 2: escala a sesión → Faulted
+  await waitFor(() => adapter.getBridgeStatus() === 'Faulted', 'los reciclajes fallidos deben terminar en Faulted');
 
   assert.equal(adapter.getBridgeStatus(), 'Faulted');
   const reasons = adapter.getDiagnostics().recentTransitions.map((t) => t.reason);
@@ -219,16 +228,17 @@ test('simulador: reciclaje que falla escala a sesión y termina en Faulted', asy
   await adapter.stop();
 });
 
-test('simulador: heartbeat fallido consecutivo transiciona el bridge a Recovering (A3)', async () => {
+test('simulador: heartbeat fallido consecutivo transiciona el bridge a Recovering (A3)', async (t) => {
   const adapter = new SimulatorBridgeAdapter(
     fastConfig({ heartbeatIntervalMs: 15, heartbeatMaxFailures: 2 }),
     twoPlantMapping(),
   );
+  t.after(() => adapter.stop());
   const states: string[] = [];
   adapter.onStatusChange((s) => states.push(s));
   await adapter.start();
   adapter.setHeartbeatOutcome('fail'); // el servidor emulado deja de responder al heartbeat
-  await delay(130); // ~2 fallos consecutivos → threshold
+  await waitFor(() => states.includes('Recovering'), 'los fallos consecutivos de heartbeat deben provocar Recovering');
 
   assert.ok(states.includes('Recovering'), `debió transicionar a Recovering. estados: ${states.join(',')}`);
   const diag = adapter.getDiagnostics();
@@ -236,11 +246,11 @@ test('simulador: heartbeat fallido consecutivo transiciona el bridge a Recoverin
   await adapter.stop();
 });
 
-test('simulador: buffer faulted degrada solo ese buffer, no el bridge', async () => {
+test('simulador: buffer faulted degrada solo ese buffer, no el bridge', async (t) => {
   const adapter = new SimulatorBridgeAdapter(fastConfig(), twoPlantMapping());
+  t.after(() => adapter.stop());
   adapter.faultBuffer('voragine', 'INT_IN_VORAGINE');
   await adapter.start();
-  await delay(60);
   const diag = adapter.getDiagnostics();
   assert.equal(diag.bridgeStatus, 'Connected'); // el bridge sigue vivo
   assert.equal(diag.buffersFaulted, 1);
@@ -249,10 +259,11 @@ test('simulador: buffer faulted degrada solo ese buffer, no el bridge', async ()
   await adapter.stop();
 });
 
-test('simulador: diagnostics expone los campos esperados incluidos los de heartbeat', async () => {
+test('simulador: diagnostics expone los campos esperados incluidos los de heartbeat', async (t) => {
   const adapter = new SimulatorBridgeAdapter(fastConfig({ heartbeatIntervalMs: 20 }), twoPlantMapping());
+  t.after(() => adapter.stop());
   await adapter.start();
-  await delay(80);
+  await waitFor(() => adapter.getDiagnostics().notificationsTotal > 0 && adapter.getDiagnostics().lastHeartbeatAt !== null, 'deben aparecer diagnósticos de notificaciones y heartbeat');
   const diag = adapter.getDiagnostics();
   assert.equal(diag.provider, 'simulator');
   assert.equal(diag.perPlant.length, 2);

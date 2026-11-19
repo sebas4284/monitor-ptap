@@ -2,7 +2,7 @@ import { Controller, Get, Inject, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PermissionGuard } from '../auth/guards/permission.guard';
 import { RequirePermission } from '../auth/decorators/require-permission.decorator';
-import { CommandSignatureService } from './command-signature.service';
+import { CommandSignatureService, type CommandVerification } from './command-signature.service';
 import type { EslabonRoto } from './command-signature';
 
 /**
@@ -32,18 +32,25 @@ export class CommandSignatureController {
     integra: boolean;
     rotos: EslabonRoto[];
     mensaje: string;
+    legado?: CommandVerification['legado'];
+    desdeActivacion?: CommandVerification['desdeActivacion'];
   }> {
-    const { firmadas, rotos, verificable } = await this.firmas.verificar();
+    const { firmadas, rotos, verificable, motivo, legado, desdeActivacion } = await this.firmas.verificar();
     return {
       verificable,
       firmadas,
-      integra: verificable && rotos.length === 0,
+      integra: verificable && rotos.length === 0 && !legado?.sinFirma,
       rotos,
+      ...(legado ? { legado, desdeActivacion } : {}),
       mensaje: !verificable
-        ? 'No hay secreto de firma configurado: las maniobras no se están firmando.'
+        ? motivo === 'sin_secreto'
+          ? 'No hay secreto de firma configurado: las maniobras no se están firmando.'
+          : 'No se pudo verificar la evidencia del registro y su checkpoint externo. Se requiere revisión administrativa.'
+        : rotos.length === 0 && legado
+          ? `Frontera revisada conservada: ${legado.sinFirma} maniobras históricas siguen sin firma y su autenticidad no está demostrada. Las ${desdeActivacion?.firmadas ?? 0} maniobras firmadas desde la activación verifican contra el checkpoint externo.`
         : rotos.length === 0
           ? `Las ${firmadas} maniobras registradas conservan su firma original.`
-          : `${rotos.length} de ${firmadas} maniobras no cuadran: el registro fue alterado después de firmarse.`,
+          : `Se detectaron ${rotos.length} anomalías de firma o del checkpoint externo; el registro requiere revisión.`,
     };
   }
 }

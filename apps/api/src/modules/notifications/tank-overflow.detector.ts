@@ -1,4 +1,4 @@
-import { Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
 import { PlantCache } from '../../infrastructure/connectivity/pipeline/plant-cache';
 import { PlantPipelineService } from '../../infrastructure/connectivity/pipeline/plant-pipeline.service';
 import { dedupeDay } from './notification-day';
@@ -32,9 +32,9 @@ export class TankOverflowDetector implements OnModuleInit, OnModuleDestroy {
   private readonly maxObservado = new Map<string, Map<string, number>>();
 
   constructor(
-    private readonly pipeline: PlantPipelineService,
-    private readonly cache: PlantCache,
-    private readonly repo: NotificationRepository,
+    @Inject(PlantPipelineService) private readonly pipeline: PlantPipelineService,
+    @Inject(PlantCache) private readonly cache: PlantCache,
+    @Inject(NotificationRepository) private readonly repo: NotificationRepository,
   ) {}
 
   onModuleInit(): void {

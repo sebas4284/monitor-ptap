@@ -1,125 +1,54 @@
 import type { PlantSnapshotDto, SignalDto } from '@ptap/shared';
 
-/**
- * Cuánto aguanta el tanque: horas hasta el 50 % y hasta quedar vacío.
- *
- * El cliente lo pidió como «vida útil de la planta» (2026-08-20). Su propósito es que el operario
- * decida CON CRITERIO antes de cerrar la entrada, no enterarse cuando ya no hay agua.
- *
- * ── De dónde sale el volumen ──────────────────────────────────────────────────────────────────
- * El mapping NO tiene la capacidad del tanque: `tankNVolume.max` es una cota de plausibilidad
- * (10 000 m³), no una capacidad real. Pero sí llegan nivel y volumen en vivo, y su cociente da el
- * ÁREA de la sección:
- *
- *     área (m²) = volumen (m³) / nivel (m)
- *
- * Ese cociente ya se validó en campo: Soledad daba 59,6 m²/m y Sirena 59,5. Fue justamente esa
- * coherencia la que permitió concluir que el nivel negativo de Soledad era un signo invertido en el
- * PLC y no un volumen mal calculado.
- *
- * ── Por qué el número no debe bailar ──────────────────────────────────────────────────────────
- * Una autonomía recalculada con el caudal instantáneo salta de 5 h a 3 h y vuelve a 5 h en un
- * minuto, y un número así no se puede usar para decidir nada. El cliente pidió expresamente que se
- * comporte como un TEMPORIZADOR: se fija una vez y corre solo, y solo se vuelve a fijar cuando el
- * caudal cambia de verdad. Ver `debeRecalcular`.
- */
-
-/** Un litro por segundo son 3,6 m³ por hora. */
+/** Balance volumétrico: 1 l/s = 3,6 m³/h. Los bounds físicos no son capacidades. */
 const LPS_A_M3H = 3.6;
-
-/**
- * Banda muerta: mientras el caudal de salida no se aparte MÁS de esto del caudal de referencia con
- * el que se fijó el temporizador, el número no se vuelve a calcular (l/s).
- *
- * 0,3 l/s por decisión de operación (2026-08-22). Antes eran 0,2 y el temporizador se refijaba con
- * demasiada frecuencia: la autonomía es un número para decidir si cerrar la entrada, y uno que se
- * mueve cada minuto no sirve para decidir nada.
- *
- * Hubo aquí un segundo umbral (0,6 l/s) que forzaba recálculo «inmediato» sin esperar al minuto. Se
- * retiró porque era inalcanzable: `intervaloMinimoMs` ES el periodo del barrido
- * (`tank-autonomy.detector.ts`), así que en cada pasada el minuto ya venció y la rama del tick
- * decidía siempre lo mismo. Una constante que aparenta gobernar algo y no gobierna nada es peor que
- * no tenerla.
- */
 export const BANDA_MUERTA_LPS = 0.3;
-
-/** Caudal por debajo del cual se considera que la entrada está cerrada (l/s). */
 export const ENTRADA_CERRADA_LPS = 0.1;
-
-/**
- * Tolerancia para comparar caudales en los bordes exactos de las bandas.
- *
- * Sin esto, un caudal justo en el límite cae del lado equivocado por punto flotante: `2 + 0.2` da
- * `2.2000000000000002`, cuya diferencia con 2 es mayor que 0,2 y disparaba un recálculo que el
- * cliente había pedido evitar. Un caudalímetro no tiene precisión de picolitro; comparar sus
- * lecturas al bit es una precisión falsa.
- */
 const EPSILON_LPS = 1e-9;
-
-/** Fracción del máximo que el cliente considera el punto en que el tanque deja de ser funcional. */
 export const FRACCION_CRITICA = 0.5;
-
-/** Por debajo de esta autonomía el aviso es crítico, sea cual sea el porcentaje (horas). */
 export const AUTONOMIA_CRITICA_H = 1;
-
-/** Umbrales a los que se reemite el aviso al dispositivo (horas). */
 export const UMBRALES_AVISO_H = [6, 3, 1];
 
-/**
- * Cómo se obtuvo el caudal con el que se calculó la autonomía. Viaja al front porque cambia lo que
- * el número SIGNIFICA: uno es una cuenta atrás real y el otro un supuesto.
- */
-export type OrigenCaudal =
-  /** La entrada está cerrada: el tanque se vacía de verdad y esto es una cuenta atrás. */
-  | 'vaciado_real'
-  /** La entrada está abierta: proyección de «si cerraras ahora», con el promedio de 24 h. */
-  | 'proyeccion_24h';
+export type OrigenCaudal = 'vaciado_real' | 'proyeccion_24h' | 'proyeccion_actual' | 'tendencia_volumen' | 'tendencia_nivel';
+export type ReservaOrigen = 'op_min' | '50_percent';
+export type LimitacionAutonomia = 'multiple_tanks' | 'multiple_flows' | 'unmapped_flow';
 
 export interface AutonomiaTanque {
   tankN: number;
+  tankKey: string;
   label: string;
   levelM: number;
+  /** 0 cuando no hay máximo operativo; pct entonces es null. */
   maxM: number;
-  /** Porcentaje de llenado sobre el máximo declarado. */
-  pct: number;
-  /** Área de la sección deducida de volumen/nivel (m²). null si falta alguno de los dos. */
+  pct: number | null;
+  /** Aproximación prismática V/h; no reemplaza una curva de aforo. */
   areaM2: number | null;
   volumeM3: number | null;
-  /** Caudal usado para el cálculo (l/s) y de dónde salió. */
   caudalLps: number;
   origen: OrigenCaudal;
-  /** Horas hasta llegar al 50 %. 0 si ya está por debajo. null si no se puede calcular. */
   horasHasta50: number | null;
-  /** Horas hasta quedar vacío. null si no se puede calcular. */
   horasHasta0: number | null;
+  horasHastaReserva: number | null;
+  reservaM: number | null;
+  reservaOrigen: ReservaOrigen | null;
+  limitacion: LimitacionAutonomia | null;
 }
 
-/** Estado que sobrevive entre barridos: el temporizador vigente de un tanque. */
+/** Se estabiliza el caudal; el stock se vuelve a leer en cada barrido. */
 export interface TemporizadorTanque {
-  /** Caudal con el que se fijó este temporizador (l/s). La comparación se hace SIEMPRE contra él. */
   caudalFijadoLps: number;
-  /** Cuándo se fijó (epoch ms). */
   fijadoEnMs: number;
   horasHasta50: number | null;
   horasHasta0: number | null;
+  horasHastaReserva?: number | null;
   origen: OrigenCaudal;
 }
 
 function numeric(sig: SignalDto | undefined): number | null {
-  return sig && typeof sig.value === 'number' && Number.isFinite(sig.value) ? sig.value : null;
+  return sig?.usable && sig.quality === 'Good' && sig.mappingStatus === 'mapped' && !sig.outOfRange &&
+    typeof sig.value === 'number' && Number.isFinite(sig.value) ? sig.value : null;
 }
 
-/**
- * ¿Hay que volver a fijar el temporizador?
- *
- * Una sola regla, que es la que dio operación: **cada minuto se mira el caudal de salida y solo se
- * recalcula si se aparta más de 0,3 l/s del caudal de referencia** con el que se fijó el número.
- * Por debajo de eso el reloj sigue corriendo, que es lo que lo hace utilizable para decidir.
- *
- * La comparación va SIEMPRE contra el caudal con el que se fijó el temporizador, nunca contra el del
- * minuto anterior: si se comparase con el anterior, una deriva lenta de 0,2 l/s por minuto nunca
- * dispararía el recálculo y en media hora el número sería pura ficción.
- */
 export function debeRecalcular(
   previo: TemporizadorTanque | undefined,
   caudalActualLps: number,
@@ -127,114 +56,160 @@ export function debeRecalcular(
   intervaloMinimoMs: number,
 ): { recalcular: boolean; motivo: 'primera_vez' | 'tick' | 'banda_muerta' } {
   if (!previo) return { recalcular: true, motivo: 'primera_vez' };
-
   const delta = Math.abs(caudalActualLps - previo.caudalFijadoLps);
   if (delta <= BANDA_MUERTA_LPS + EPSILON_LPS) return { recalcular: false, motivo: 'banda_muerta' };
-
-  const vencido = ahoraMs - previo.fijadoEnMs >= intervaloMinimoMs;
-  return vencido ? { recalcular: true, motivo: 'tick' } : { recalcular: false, motivo: 'banda_muerta' };
+  return ahoraMs - previo.fijadoEnMs >= intervaloMinimoMs
+    ? { recalcular: true, motivo: 'tick' } : { recalcular: false, motivo: 'banda_muerta' };
 }
 
-/**
- * Caudal de salida de la planta, mirando las claves habituales en orden.
- * Mismo criterio que `inletFlow` en `tank-overflow.analyzer.ts`.
- */
+function flowKeys(signals: Record<string, SignalDto>, side: 'inlet' | 'outlet'): string[] {
+  return Object.keys(signals).filter((key) => new RegExp(`^${side}Flow\\d+$`).test(key));
+}
+
+/** Dos medidores sin topología declarada no se pueden sumar ni elegir arbitrariamente. */
+function singleFlow(signals: Record<string, SignalDto>, side: 'inlet' | 'outlet'): number | null {
+  const keys = flowKeys(signals, side);
+  if (keys.length !== 1) return null;
+  const value = numeric(signals[keys[0]]);
+  return value !== null && value >= 0 ? value : null;
+}
+
 export function outletFlow(signals: Record<string, SignalDto>): number | null {
-  for (const k of ['outletFlow1', 'outletFlow2']) {
-    const v = numeric(signals[k]);
-    if (v !== null) return v;
-  }
-  return null;
+  return singleFlow(signals, 'outlet');
 }
 
-/** Caudal de entrada, para saber si el tanque se está vaciando de verdad. */
 export function inletFlow(signals: Record<string, SignalDto>): number | null {
-  for (const k of ['inletFlow1', 'inletFlow2']) {
-    const v = numeric(signals[k]);
-    if (v !== null) return v;
-  }
-  return null;
+  return singleFlow(signals, 'inlet');
 }
 
-/**
- * Horas hasta que el nivel baje de `desdeM` a `hastaM` con un caudal dado.
- *
- * Devuelve 0 si ya se está por debajo del objetivo (no se inventan horas negativas) y `null` si no
- * hay con qué calcular: sin área o sin caudal la respuesta honesta es "no se sabe", no un número.
- */
-export function horasHasta(
-  areaM2: number | null,
-  desdeM: number,
-  hastaM: number,
-  caudalLps: number,
-): number | null {
-  if (areaM2 === null || areaM2 <= 0) return null;
-  if (caudalLps <= 0) return null;
+export function horasHasta(areaM2: number | null, desdeM: number, hastaM: number, caudalLps: number): number | null {
+  if (![desdeM, hastaM, caudalLps].every(Number.isFinite)) return null;
   if (desdeM <= hastaM) return 0;
-  const volumenUtilM3 = areaM2 * (desdeM - hastaM);
-  return volumenUtilM3 / (caudalLps * LPS_A_M3H);
+  if (areaM2 === null || !Number.isFinite(areaM2) || areaM2 <= 0 || caudalLps <= 0) return null;
+  return areaM2 * (desdeM - hastaM) / (caudalLps * LPS_A_M3H);
+}
+
+/** Reevalúa el stock con el caudal estabilizado, sin congelar nivel ni volumen. */
+export function actualizarCaudal(t: AutonomiaTanque, caudalLps: number): AutonomiaTanque {
+  if (t.limitacion) return {
+    ...t, caudalLps,
+    horasHasta0: t.levelM === 0 && t.volumeM3 === 0 ? 0 : null,
+    horasHasta50: t.maxM > 0 && t.levelM <= t.maxM * FRACCION_CRITICA ? 0 : null,
+    horasHastaReserva: t.reservaM !== null && t.levelM <= t.reservaM ? 0 : null,
+  };
+  const caudalValido = Number.isFinite(caudalLps) && caudalLps > 0;
+  return {
+    ...t, caudalLps,
+    // Para vaciado total basta el volumen medido, sin extrapolar geometría ni conocer opMax.
+    horasHasta0: caudalValido && t.volumeM3 !== null ? t.volumeM3 / (caudalLps * LPS_A_M3H) : null,
+    horasHasta50: t.maxM > 0 ? horasHasta(t.areaM2, t.levelM, t.maxM * FRACCION_CRITICA, caudalLps) : null,
+    horasHastaReserva: t.reservaM !== null ? horasHasta(t.areaM2, t.levelM, t.reservaM, caudalLps) : null,
+  };
 }
 
 /**
- * Calcula la autonomía de los tanques de una planta.
- *
- * `caudalProyeccionLps` es el promedio de salida de las últimas 24 h; se usa SOLO cuando la entrada
- * está abierta, para responder «¿cuánto aguantaría si cierro ahora?». Si aún no hay 24 h de
- * historia llega `null` y no se proyecta nada: es mejor no decir nada que dar un promedio de dos
- * muestras como si fuera el consumo del día.
+ * Reúne stock y reserva, sin atribuir al tanque el balance de caudales de la planta.
+ * El mapping no declara conexión hidráulica: solo una tendencia propia habilita duraciones.
+ * Para reserva se aproxima sección constante V/h; no hay curva de aforo.
  */
-export function analizarAutonomia(
-  snapshot: PlantSnapshotDto,
-  caudalProyeccionLps: number | null,
-): AutonomiaTanque[] {
-  const out: AutonomiaTanque[] = [];
-  const entrada = inletFlow(snapshot.signals);
-  const salidaActual = outletFlow(snapshot.signals);
-  const entradaCerrada = entrada === null || entrada <= ENTRADA_CERRADA_LPS;
+export function analizarAutonomia(snapshot: PlantSnapshotDto, caudalProyeccionLps: number | null): AutonomiaTanque[] {
+  if (snapshot.pending || snapshot.liveness.state === 'frozen' || snapshot.bridgeStatus !== 'Connected') return [];
+  const salida = outletFlow(snapshot.signals);
+  const promedioValido = caudalProyeccionLps !== null && Number.isFinite(caudalProyeccionLps) && caudalProyeccionLps > 0;
+  const origen: OrigenCaudal = promedioValido ? 'proyeccion_24h' : 'proyeccion_actual';
+  const caudalLps = promedioValido ? caudalProyeccionLps! : salida ?? 0;
+  const levels = Object.entries(snapshot.signals).filter(([key]) => /^(tank\d+|sanAntonioTank|quijoteTank)Level$/.test(key));
+  const multipleFlows = flowKeys(snapshot.signals, 'outlet').length > 1 || flowKeys(snapshot.signals, 'inlet').length > 1;
+  // El mapping no vincula ningún tanque a un caudal: ni un único tanque prueba esa conexión.
+  const limitacion: LimitacionAutonomia = levels.length > 1 ? 'multiple_tanks' : multipleFlows ? 'multiple_flows' : 'unmapped_flow';
 
-  // Con la entrada ABIERTA el tanque no se está vaciando: el volumen queda congelado y lo único
-  // honesto es una proyección con el consumo típico del día. Con la entrada CERRADA sí hay un
-  // vaciado real y manda el caudal de salida de ahora.
-  const caudalLps = entradaCerrada ? salidaActual : caudalProyeccionLps;
-  const origen: OrigenCaudal = entradaCerrada ? 'vaciado_real' : 'proyeccion_24h';
-  if (caudalLps === null || caudalLps <= 0) return out;
-
-  for (const [key, signal] of Object.entries(snapshot.signals)) {
-    const m = /^tank(\d+)Level$/.exec(key);
-    if (!m) continue;
-    const tankN = Number(m[1]);
+  return levels.flatMap(([key, signal]) => {
+    const tankKey = key.slice(0, -'Level'.length);
+    const tankN = Number(/^tank(\d+)Level$/.exec(key)?.[1] ?? 0);
     const levelM = numeric(signal);
-    const maxM = typeof signal.opMax === 'number' ? signal.opMax : null;
-    if (levelM === null || maxM === null || maxM <= 0) continue;
-    // Un nivel negativo es un sensor que miente (Soledad reporta −1,51 m con timestamp fresco). Lo
-    // trata el aviso de rango físico; aquí calcular una autonomía sería darle crédito.
-    if (levelM < 0) continue;
-
-    const volumeM3 = numeric(snapshot.signals[`tank${tankN}Volume`]);
+    if (levelM === null || levelM < 0) return [];
+    const maxM = typeof signal.opMax === 'number' && Number.isFinite(signal.opMax) && signal.opMax > 0 ? signal.opMax : 0;
+    const volume = numeric(snapshot.signals[`${tankKey}Volume`]);
+    const volumeM3 = volume !== null && volume >= 0 && (levelM > 0 || volume === 0) ? volume : null;
     const areaM2 = volumeM3 !== null && levelM > 0 ? volumeM3 / levelM : null;
-    const nivel50 = maxM * FRACCION_CRITICA;
-
-    out.push({
-      tankN,
-      label: signal.label ?? `Tanque ${tankN}`,
-      levelM,
-      maxM,
-      pct: (levelM / maxM) * 100,
-      areaM2,
-      volumeM3,
-      caudalLps,
-      origen,
-      horasHasta50: horasHasta(areaM2, levelM, nivel50, caudalLps),
-      horasHasta0: horasHasta(areaM2, levelM, 0, caudalLps),
-    });
-  }
-  return out;
+    const minM = typeof signal.opMin === 'number' && Number.isFinite(signal.opMin) && signal.opMin >= 0 &&
+      (maxM === 0 || signal.opMin < maxM) ? signal.opMin : null;
+    const reservaM = minM ?? (maxM > 0 ? maxM * FRACCION_CRITICA : null);
+    const reservaOrigen: ReservaOrigen | null = minM !== null ? 'op_min' : maxM > 0 ? '50_percent' : null;
+    return [actualizarCaudal({
+      tankN, tankKey, label: signal.label ?? (tankN ? `Tanque ${tankN}` : tankKey), levelM, maxM,
+      pct: maxM > 0 ? levelM / maxM * 100 : null, areaM2, volumeM3, caudalLps, origen,
+      horasHasta50: null, horasHasta0: null, horasHastaReserva: null, reservaM, reservaOrigen, limitacion,
+    }, caudalLps)];
+  });
 }
 
-/** Horas y minutos en lenguaje de operador: «3 h 20 min», «45 min». */
+export interface MuestraTanque {
+  tsMs: number;
+  nivelM: number;
+  volumenM3: number | null;
+}
+
+/** Ventana corta local: umbrales de estimación, pendientes de calibración en campo. */
+export const VENTANA_TENDENCIA_MS = 15 * 60_000;
+export const MIN_TENDENCIA_MS = 5 * 60_000;
+export const MAX_HUECO_TENDENCIA_MS = 3 * 60_000;
+export const FRESCURA_TENDENCIA_MS = 2 * 60_000;
+
+/** Ajuste por mínimos cuadrados con descenso >=1 % y R² >=0,8 para rechazar ruido. */
+function pendienteDescenso(muestras: MuestraTanque[], value: (m: MuestraTanque) => number): number | null {
+  const first = muestras[0];
+  const last = muestras[muestras.length - 1];
+  if (muestras.length < 3 || last.tsMs - first.tsMs < MIN_TENDENCIA_MS) return null;
+  const ys = muestras.map(value);
+  if (ys.some((y) => !Number.isFinite(y) || y < 0)) return null;
+  const totalDrop = ys[0] - ys[ys.length - 1];
+  if (totalDrop < Math.max(ys[0] * 0.01, 1e-6)) return null;
+  // Una ventana antigua no demuestra que el tanque siga bajando ahora.
+  const recent = ys.slice(-3);
+  if (recent[0] - recent[2] <= Math.max(totalDrop * 0.05, 1e-6)) return null;
+  if (recent.slice(1).some((y, i) => y - recent[i] > totalDrop * 0.05)) return null;
+  const xs = muestras.map((m) => (m.tsMs - first.tsMs) / 3_600_000);
+  const meanX = xs.reduce((a, x) => a + x, 0) / xs.length;
+  const meanY = ys.reduce((a, y) => a + y, 0) / ys.length;
+  const sxx = xs.reduce((a, x) => a + (x - meanX) ** 2, 0);
+  const syy = ys.reduce((a, y) => a + (y - meanY) ** 2, 0);
+  const sxy = xs.reduce((a, x, i) => a + (x - meanX) * (ys[i] - meanY), 0);
+  const slope = sxy / sxx;
+  if (!Number.isFinite(slope) || slope >= 0 || syy <= 0 || sxy ** 2 / (sxx * syy) < 0.8) return null;
+  return -slope;
+}
+
+/** La tendencia ya es neta: nunca se resta la entrada ni se atribuye una válvula al tanque. */
+export function aplicarTendencia(t: AutonomiaTanque, historial: MuestraTanque[], ahoraMs: number): AutonomiaTanque {
+  const muestras = historial.filter((m) => m.tsMs >= ahoraMs - VENTANA_TENDENCIA_MS && m.tsMs <= ahoraMs);
+  if (muestras.length < 3 || ahoraMs - muestras[muestras.length - 1].tsMs > FRESCURA_TENDENCIA_MS) return t;
+  for (let i = 1; i < muestras.length; i++) {
+    const gap = muestras[i].tsMs - muestras[i - 1].tsMs;
+    if (gap <= 0 || gap > MAX_HUECO_TENDENCIA_MS) return t;
+  }
+  const todasConVolumen = muestras.every((m) => m.volumenM3 !== null);
+  const descensoM3h = todasConVolumen ? pendienteDescenso(muestras, (m) => m.volumenM3!) : null;
+  const descensoMh = pendienteDescenso(muestras, (m) => m.nivelM);
+  if (descensoM3h !== null && t.volumeM3 !== null) {
+    if (descensoMh === null) return t;
+    return actualizarCaudal({ ...t, origen: 'tendencia_volumen', limitacion: null }, descensoM3h / LPS_A_M3H);
+  }
+  // Si hay volumen válido pero contradice el descenso del nivel, no elegir el dato conveniente.
+  if (todasConVolumen) return t;
+  if (descensoMh === null) return t;
+  const hasta = (objetivo: number) => Math.max(0, t.levelM - objetivo) / descensoMh;
+  return {
+    ...t, origen: 'tendencia_nivel', limitacion: null, caudalLps: 0,
+    horasHasta0: hasta(0), horasHasta50: t.maxM > 0 ? hasta(t.maxM * FRACCION_CRITICA) : null,
+    horasHastaReserva: t.reservaM !== null ? hasta(t.reservaM) : null,
+  };
+}
+
 export function humanHoras(horas: number): string {
-  if (horas < 1) return `${Math.max(1, Math.round(horas * 60))} min`;
-  const h = Math.floor(horas);
-  const min = Math.round((horas - h) * 60);
+  const minutos = Math.max(0, Math.round(horas * 60));
+  if (minutos < 60) return `${horas > 0 ? Math.max(1, minutos) : 0} min`;
+  const h = Math.floor(minutos / 60);
+  const min = minutos % 60;
   return min === 0 ? `${h} h` : `${h} h ${min} min`;
 }

@@ -25,7 +25,7 @@ const ESTADO_VERIFICADO = new Set(['sirena']);
 
 interface PlantDoc {
   plantId: string;
-  signals?: Array<{ domainKey?: string }>;
+  signals?: { domainKey?: string }[];
 }
 
 function main(): void {
@@ -68,7 +68,6 @@ function main(): void {
   }
 
   const nuevoTexto = lines.filter((_, idx) => !aBorrar.has(idx)).join(eol);
-  text.length; // (el original ya no se usa)
   const textoFinal = nuevoTexto;
 
   const after = JSON.parse(textoFinal) as { plants: PlantDoc[] };

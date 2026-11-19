@@ -1,5 +1,5 @@
 import { TouchableOpacity, StyleSheet } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from './AppIcon';
 import Colors from '../constants/colors';
 import { useItemSilenciado } from '../services/notification-prefs';
 
@@ -40,6 +40,7 @@ export function BotonSilencio({
       // Área táctil de 44 px sin agrandar el icono: la tarjeta es pequeña y el dato manda.
       hitSlop={14}
       accessibilityRole="switch"
+      aria-checked={!silenciado}
       accessibilityState={{ checked: !silenciado, disabled: guardando }}
       accessibilityLabel={
         silenciado

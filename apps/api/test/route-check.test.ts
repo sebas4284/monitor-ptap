@@ -66,6 +66,63 @@ test('route-check: ping OK + TCP timeout → PLC-12 (host VIVO, puerto FILTRADO 
   assert.match(v.message, /FILTRANDO/i);
 });
 
+test('route-check: ping OK + TCP con EHOSTUNREACH no se atribuye a un cortafuegos (2026-08-25)', () => {
+  // Un ICMP de inalcanzable NO es un puerto filtrado en silencio: alguien contestó. Con esa
+  // evidencia caben dos culpables (regla de rechazo en la planta, o ruta/NAT del propio
+  // servidor), asi que el veredicto no puede elegir uno. Produccion mostro el mensaje de
+  // "cortafuegos FILTRANDO" y mandaba a pedirle al administrador OT que abriera el puerto.
+  const plc: ProbeResult = { name: 'plc', target: 'x:1', outcome: 'error', ms: 2500, detail: 'EHOSTUNREACH' };
+  const v = buildVerdict(probe('internet', 'ok'), plc, probe('ping', 'ok'));
+  assert.equal(v.code, 'PLC-12');
+  assert.equal(v.where, 'ruta-o-planta');
+  assert.match(v.message, /EHOSTUNREACH/);
+  assert.match(v.message, /ruta o de NAT/);
+  assert.doesNotMatch(v.message, /está FILTRANDO/);
+});
+
+test('route-check: ping OK + TCP timeout SIGUE siendo cortafuegos filtrando (no se pierde el caso)', () => {
+  const v = buildVerdict(probe('internet', 'ok'), probe('plc', 'timeout'), probe('ping', 'ok'));
+  assert.equal(v.code, 'PLC-12');
+  assert.match(v.message, /está FILTRANDO/);
+});
+
+test('route-check: control responde + EHOSTUNREACH lento -> PLC-13, el equipo detras esta caido', () => {
+  // Firma medida en produccion el 2026-08-25: control RST en 18 ms, el puerto del OPC UA
+  // EHOSTUNREACH a los 3010 ms, tres veces seguidas. El router reenvia y no encuentra a nadie.
+  const plc: ProbeResult = { name: 'plc', target: 'h:59200', outcome: 'error', ms: 3010, detail: 'EHOSTUNREACH' };
+  const control: ProbeResult = { name: 'control', target: 'h:443', outcome: 'refused', ms: 18, detail: null };
+  const v = buildVerdict(probe('internet', 'ok'), plc, probe('ping', 'ok'), control);
+  assert.equal(v.code, 'PLC-13');
+  assert.equal(v.where, 'plc-servicio');
+  assert.match(v.message, /DESCARTADO/);
+  assert.match(v.message, /ENCENDIDO/);
+  assert.match(v.message, /no hay nada que abrir/);
+});
+
+test('route-check: la sonda de CONTROL descarta la ruta y señala el puerto (corte del 2026-08-25)', () => {
+  // Un puerto cualquiera del MISMO host contesta "cerrado" en 25 ms => los paquetes llegan al
+  // equipo y vuelven. Entonces ni la ruta, ni la VPN, ni la IP: lo unico bloqueado es el OPC UA.
+  const plc: ProbeResult = { name: 'plc', target: 'h:59200', outcome: 'timeout', ms: 5000, detail: null };
+  const control: ProbeResult = { name: 'control', target: 'h:443', outcome: 'refused', ms: 25, detail: null };
+  const v = buildVerdict(probe('internet', 'ok'), plc, probe('ping', 'ok'), control);
+  assert.equal(v.code, 'PLC-12');
+  assert.match(v.message, /ALCANZABLE/);
+  assert.match(v.message, /VPN|túnel/);
+  // Lo que NO debe decir: que reabran el puerto. Eso es el hallazgo P0 al reves.
+  assert.match(v.message, /NO pedir que reabran/);
+});
+
+test('route-check: si el puerto de control TAMBIEN falla, no se señala a nadie', () => {
+  // Sin respuesta en ningun puerto del host, la ruta vuelve a ser sospechosa y el veredicto
+  // tiene que mantener las dos causas abiertas.
+  const plc: ProbeResult = { name: 'plc', target: 'h:59200', outcome: 'error', ms: 961, detail: 'EHOSTUNREACH' };
+  const control: ProbeResult = { name: 'control', target: 'h:443', outcome: 'timeout', ms: 4000, detail: null };
+  const v = buildVerdict(probe('internet', 'ok'), plc, probe('ping', 'ok'), control);
+  assert.equal(v.code, 'PLC-12');
+  assert.match(v.message, /ruta o de NAT/);
+  assert.doesNotMatch(v.message, /ALCANZABLE/);
+});
+
 test('route-check: ping también muerto + TCP timeout → PLC-01 (host oscuro)', () => {
   const v = buildVerdict(probe('internet', 'ok'), probe('plc', 'timeout'), probe('ping', 'timeout'));
   assert.equal(v.code, 'PLC-01');

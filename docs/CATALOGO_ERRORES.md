@@ -45,6 +45,7 @@ La app SÍ alcanza el servidor, pero no llegan datos del PLC. Deriva del `bridge
 | **PLC-03** | Namespace OPC UA no resuelto | `Faulted` por `NamespaceNotFoundError` (el índice del servidor cambió y el mapping no resuelve) | Admin/técnico | [namespace-resolver.ts](../apps/api/src/infrastructure/connectivity/opcua/namespace-resolver.ts) |
 | **PLC-11** | Puerto del PLC rechaza la conexión | La sonda TCP recibe RST: el host está **vivo** pero nada escucha en el puerto → el servicio OPC del maestro está caído o cambió de puerto | Admin (prueba de ruta) | [route-check.service.ts](../apps/api/src/infrastructure/connectivity/route-check.service.ts) |
 | **PLC-12** | Puerto del PLC **filtrado** (host vivo) | El host responde **ping** pero el TCP al puerto muere en timeout: un cortafuegos descarta el TCP. NO es "planta sin internet" ni IP incorrecta — es un bloqueo (evidencia real del 2026-07-22: ping 21 ms OK, TCP 59100 muerto) | Admin (prueba de ruta) | ídem |
+| **PLC-13** | El equipo detrás del reenvío no contesta | La sonda de CONTROL (otro puerto del MISMO host) responde, y el puerto OPC UA muere con un ICMP de inalcanzable **tras varios segundos**: el router acepta y reenvía, pero la máquina interna no está. Descarta ruta/VPN/IP y también cortafuegos (un bloqueo no tarda segundos). **No hay nada que abrir**: hay que encender el PC del servidor OPC UA o corregir su IP interna. Evidencia real del 2026-08-25: control RST 18 ms, TCP 59200 EHOSTUNREACH a los 3010 ms, tres veces | Admin (prueba de ruta) | ídem |
 
 > Estados del puente (máquina de estados): [connectivity-adapter.port.ts](../apps/api/src/infrastructure/connectivity/ports/connectivity-adapter.port.ts) · [bridge-state-machine.ts](../apps/api/src/infrastructure/connectivity/bridge/bridge-state-machine.ts).
 > El historial de transiciones queda en `audit_log` (`opc.bridge_status_change`) y se exporta desde
@@ -56,6 +57,14 @@ La app SÍ alcanza el servidor, pero no llegan datos del PLC. Deriva del `bridge
 > veredicto por evidencia: sin internet en el servidor = **SRV-07** (proveedor del servidor);
 > ping OK + TCP muerto = **PLC-12** (host vivo, puerto filtrado); todo muerto = **PLC-01** (ruta o
 > planta); rechazo = **PLC-11** (host vivo, servicio caído).
+>
+> Desde el 2026-08-25 hay una cuarta sonda, la de **control**: un TCP a OTRO puerto del mismo host
+> del PLC. Es la evidencia más fuerte y por eso manda sobre las demás — si contesta (aunque sea
+> "cerrado"), los paquetes llegan al equipo y vuelven, así que la ruta, la VPN, el internet del
+> servidor y una IP equivocada quedan descartadas de golpe. Con el control respondiendo, un
+> **timeout** en el puerto OPC UA es **PLC-12** (filtrado) y un **error ICMP lento** es **PLC-13**
+> (el equipo detrás del reenvío está caído). Sin ella hubo que deducir a mano lo que ahora sale en
+> 25 ms.
 >
 > Además hay **registro interno**: una prueba automática OCULTA cada hora **en punto** (alineada
 > al reloj; una manual a las 5:30 no corre la de las 6:00), con catch-up al arrancar
@@ -174,7 +183,7 @@ Rechazos (`REJECT`) y fallos (`FAIL`) del `WriteService`. Todos quedan auditados
 |---|---|---|---|---|
 | **SRV-01** | API no responde | El backend está caído o no arrancó | El cliente lo ve como **NET-03** | [health.controller.ts](../apps/api/src/modules/health/health.controller.ts) |
 | **SRV-02** | Base de datos no disponible | MySQL caído o credencial mala | `GET /api/health/db` → 503 | [health.controller.ts](../apps/api/src/modules/health/health.controller.ts) |
-| **SRV-03** | Puerto en uso | Quedó otro proceso en `:4000`/`:8081` (`EADDRINUSE`) | Log de arranque | [main.ts](../apps/api/src/main.ts) |
+| **SRV-03** | Puerto en uso | Quedó otro proceso en `:4000`/`:8082` (`EADDRINUSE`) | Log de arranque | [main.ts](../apps/api/src/main.ts) |
 | **SRV-04** | ✅ **RESUELTO (2026-07-21)**: el gateway autentica el handshake con el JWT del login; sin token válido corta la conexión. Desactivable con `SOCKET_AUTH_REQUIRED=false` (solo el demo de telemetría) | — | [connectivity.gateway.ts](../apps/api/src/infrastructure/connectivity/connectivity.gateway.ts) · test `gateway-auth.test.ts` |
 | **SRV-05** | Token de métricas inválido | `/metrics` protegido por Bearer y el token no coincide (o falta) | 401 en el scrape | [metrics-auth.guard.ts](../apps/api/src/infrastructure/metrics/metrics-auth.guard.ts) |
 | **SRV-06** | Fallo de BD durante un comando | La BD no responde al reservar/finalizar en `command_log` (Fase 5) | Error del comando | [command-log.repository.ts](../apps/api/src/modules/commands/command-log.repository.ts) |
@@ -280,7 +289,7 @@ Errores de puesta en marcha; no pasan por la UI, se ven en el arranque. Detalle 
 | Código | Título | Síntoma | Solución | Ruta |
 |---|---|---|---|---|
 | **CFG-01** | Falta `.env` / `DB_PASSWORD` | "Falta la variable de entorno DB_PASSWORD" | Crear `.env` (§SETUP) | [config/load-env](../apps/api/src/config) · [database.config.ts](../apps/api/src/infrastructure/database/database.config.ts) |
-| **CFG-02** | CORS vacío | Login falla **solo en el navegador** (curl funciona) | `CORS_ORIGINS=http://localhost:8081` | [main.ts](../apps/api/src/main.ts) |
+| **CFG-02** | CORS vacío | Login falla **solo en el navegador** (curl funciona) | `CORS_ORIGINS=http://localhost:8082` | [main.ts](../apps/api/src/main.ts) |
 | **CFG-03** | Pepper inválido | El login truena tras sembrar usuarios | `PASSWORD_PEPPER_V1_BASE64` = 64 bytes | [password-hashing.service.ts](../apps/api/src/modules/auth/password-hashing.service.ts) |
 | **CFG-04** | PLC inalcanzable | Puente en `Connecting` indefinido (**PLC-01**) | Revisar red/VPN/IP al PLC | [.env.example](../.env.example) · [docs/INCIDENTE_CONEXION_PLC.md](INCIDENTE_CONEXION_PLC.md) |
 | **CFG-05** | Certificado del servidor no confiado | El puente no conecta seguro; el cert del PLC queda en `pki/rejected` | Moverlo a `pki/trusted` tras verificarlo | [docs/OPTIX_CLIENT_CERT_TRUST.md](OPTIX_CLIENT_CERT_TRUST.md) |

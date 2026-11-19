@@ -1,3 +1,4 @@
+import { PlantReportService } from '../src/infrastructure/connectivity/diagnostics/plant-report.service';
 /**
  * Diagnóstico de conexión (Parte D del corte de datos):
  *   1. `classifyBridge` — la regla que decide qué falla es "de ruta" (solo admin) vs "del PLC
@@ -45,7 +46,7 @@ test('classifyBridge: Connecting/Disconnected/Recovering/Faulted → route (no a
 const usersDouble = {
   findById: async (id: string): Promise<UserRecord | null> => {
     const role = id.replace(/^u-/, '');
-    return { id, email: `${role}@ptap.co`, name: role, role, plant: 'montebello', passwordHash: 'x', pepperVersion: 1, isActive: true };
+    return { id, email: `${role}@ptap.co`, name: role, role, plant: 'montebello', passwordHash: 'x', pepperVersion: 1, isActive: true, emailVerified: true };
   },
 } as unknown as UsersRepository;
 
@@ -61,6 +62,7 @@ const PROBE_ROWS: AuditEventRow[] = [
 
 const auditDouble = {
   listByEventType: async (eventType: string) => (eventType === 'opc.route_probe' ? PROBE_ROWS : EVENTS),
+  record: async () => {},
 } as unknown as AuditLogService;
 
 const ROUTE_REPORT: RouteCheckReport = {
@@ -91,6 +93,7 @@ async function buildApp(): Promise<{ app: INestApplication; jwt: JwtService }> {
       { provide: UsersRepository, useValue: usersDouble },
       { provide: AuditLogService, useValue: auditDouble },
       { provide: RouteProbeSampler, useValue: samplerDouble },
+      { provide: PlantReportService, useValue: { report: async (plantId: string, deep: boolean) => ({ plantId, deepProbe: deep }) } },
     ],
   }).compile();
   const app = moduleRef.createNestApplication();
@@ -179,4 +182,38 @@ test('diagnostics/route-history: civil → 403; admin → 200 con resumen del re
   } finally {
     await app.close();
   }
+});
+
+
+test('diagnostics/client-log: operador registra error interno sin enviar a terceros → 201 ok', async () => {
+  const { app, jwt } = await buildApp();
+  try {
+    const res = await request(app.getHttpServer())
+      .post('/api/diagnostics/client-log')
+      .set('Authorization', `Bearer ${tokenFor(jwt, 'operador')}`)
+      .send({
+        error: 'Conexión intermitente en PTAP La Vorágine',
+        plantId: 'voragine',
+        version: '1.4.0',
+        context: { screen: 'tablero' },
+      })
+      .expect(201);
+    assert.deepEqual(res.body, { ok: true });
+  } finally {
+    await app.close();
+  }
+});
+
+test('diagnostics/plant requires system_config and deep is explicit', async () => {
+  const {app, jwt} = await buildApp();
+  try {
+    await request(app.getHttpServer()).get('/api/diagnostics/plant/montebello').expect(401);
+    for (const role of ['civil', 'operador', 'jefe'] as Role[]) {
+      await request(app.getHttpServer()).get('/api/diagnostics/plant/montebello?probe=deep').set('Authorization', `Bearer ${tokenFor(jwt, role)}`).expect(403);
+    }
+    const plain = await request(app.getHttpServer()).get('/api/diagnostics/plant/montebello').set('Authorization', `Bearer ${tokenFor(jwt, 'admin')}`).expect(200);
+    assert.equal(plain.body.deepProbe, false);
+    const deep = await request(app.getHttpServer()).get('/api/diagnostics/plant/montebello?probe=deep').set('Authorization', `Bearer ${tokenFor(jwt, 'admin')}`).expect(200);
+    assert.equal(deep.body.deepProbe, true);
+  } finally { await app.close(); }
 });

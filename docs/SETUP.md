@@ -15,6 +15,26 @@ agente de IA: cada paso trae su **verificación**, y si una falla hay que resolv
 
 Monorepo npm workspaces: `apps/api` (backend NestJS), `apps/mobile` (Expo), `packages/shared`.
 
+### Entorno aislado en Docker para esta copia
+
+La configuración `.devcontainer/devcontainer.json` usa Node 26.12.1 fijado por digest,
+usuario sin privilegios y cuatro volúmenes para las dependencias del monorepo y la
+herramienta PLC. En VS Code, abrir la carpeta y ejecutar **Dev Containers: Reopen in
+Container**. Ejecutar los comandos npm en la terminal del contenedor, no en Windows:
+
+```bash
+npm ci --ignore-scripts
+npm run build -w @ptap/shared
+npm run typecheck
+npm audit --audit-level=low
+```
+
+El contenedor local ya preparado se llama `aquora-node26-dev`; también admite
+`docker exec -it aquora-node26-dev bash`. Los puertos 4000 y 8082 se publican solo en
+localhost. `.npmrc` deshabilita scripts de instalación por defecto. Esto no crea
+MySQL, una cuenta ni los secretos de la API: completar los pasos siguientes para
+iniciar sesión. No apuntar una prueba local al PLC de producción.
+
 **Hay DOS arranques distintos y confundirlos es la causa #1 de problemas:**
 
 | Arranque | Comando | ¿MySQL? | ¿Login? |
@@ -157,7 +177,7 @@ JWT_SECRET=<jwt secret generado>
 JWT_EXPIRES_IN=8h
 
 # ── CORS: OBLIGATORIO para la app web (NO lo omitas) ──
-CORS_ORIGINS=http://localhost:8081
+CORS_ORIGINS=http://localhost:8082
 
 # ── Usuarios de prueba (paso 6) ──
 # OBLIGATORIA para sembrar (ya no hay default). Valor de ejemplo, SOLO para entorno local.
@@ -173,7 +193,7 @@ Reglas de este archivo:
   **siembra** sea el mismo con el que luego se **verifica**.
 - Sin comillas raras ni espacios sueltos tras el `=`. Entre comillas dobles si la contraseña
   contiene `@` o `#`.
-- **`CORS_ORIGINS` no es opcional si vas a usar la web.** Expo corre en `:8081` y llama al backend
+- **`CORS_ORIGINS` no es opcional si vas a usar la web.** Expo corre en `:8082` y llama al backend
   en `:4000`: es cross-origin, y sin esta variable el **navegador** bloquea el login. El síntoma
   engaña — `curl` funciona perfecto (no aplica CORS), así que parece que el backend está bien y que
   las credenciales están mal. Si el backend arranca sin ella, deja este aviso en el log:
@@ -224,7 +244,7 @@ Dos procesos, en terminales distintas:
 
 ```bash
 npm run dev:api                  # backend COMPLETO. Espera "Nest application successfully started"
-npm run web -w @ptap/mobile      # app web (Expo) en http://localhost:8081
+npm run web -w @ptap/mobile      # app web (Expo) en http://localhost:8082
 ```
 
 Evidencia esperada en consola: `Conexión MySQL establecida (127.0.0.1:3306/monitor_ptap)` y
@@ -251,10 +271,10 @@ El montaje está bien **solo si estos 5 pasan**:
 ```bash
 npm run typecheck                      # 1. limpio en los 3 workspaces
 npm test -w @ptap/api                  # 2. 235/235 tests en verde
-npm run validate:mapping -w @ptap/api  # 3. "opc_mapping.json válido (12 plantas)"
+npm run validate:mapping -w @ptap/api  # 3. "opc_mapping.json válido (16 plantas)"
 ```
 4. `POST /api/auth/login` con `admin@ptap.co` devuelve un JWT (§7).
-5. En `http://localhost:8081`: entrar como `civil@ptap.co` cae en *Estado*; como `admin@ptap.co`
+5. En `http://localhost:8082`: entrar como `civil@ptap.co` cae en *Estado*; como `admin@ptap.co`
    aparece **Usuarios** en el menú ☰. Recargar la página mantiene la sesión.
 
 > El paso 5 hay que hacerlo **en el navegador**, no con `curl`: es el único que detecta que falta
@@ -335,10 +355,10 @@ a la aprobación.
 | `Access denied for user ...` | Credencial/puerto del `.env` ≠ MySQL real. **Ojo con dos instancias** | §1 y §4 |
 | Arranca pero el login da error de tabla | No se corrió `db:migrate` | §6 |
 | Login dice "Credenciales inválidas" | **Casi siempre el backend no está corriendo**, no la contraseña | `npm run dev:api` |
-| **El login falla SOLO en el navegador, pero `curl` funciona** | **Falta `CORS_ORIGINS`** → el navegador bloquea la petición. La consola del navegador dirá `blocked by CORS policy` | `CORS_ORIGINS=http://localhost:8081` y reinicia la API (§5) |
+| **El login falla SOLO en el navegador, pero `curl` funciona** | **Falta `CORS_ORIGINS`** → el navegador bloquea la petición. La consola del navegador dirá `blocked by CORS policy` | `CORS_ORIGINS=http://localhost:8082` y reinicia la API (§5) |
 | Login dice "pendiente de aprobación" (403) | No es un fallo: **toda cuenta registrada desde la app nace pendiente**. La contraseña era correcta | Entra como admin → Usuarios → Pendientes → Aprobar |
 | `ECONNREFUSED` / no conecta a MySQL | MySQL apagado, puerto o credenciales distintos | Encender MySQL; alinear `DB_PORT`/`DB_PASSWORD` |
-| `EADDRINUSE :4000` / `:8081` | Quedó un proceso node vivo | Mata el proceso que ocupa el puerto |
+| `EADDRINUSE :4000` / `:8082` | Quedó un proceso node vivo | Mata el proceso que ocupa el puerto |
 | `Cannot find module ...` | `node_modules` viejo o incompleto | `npm install` en la raíz |
 | El puente queda `Disconnected` reintentando | `CONNECTIVITY_PROVIDER=opcua` sin red al PLC | Pon `simulator` |
 | TS se queja de una ruta de `expo-router` | Los tipos de rutas se autogeneran | Arranca `npm run web` una vez (regenera `.expo/types`) |
@@ -350,8 +370,14 @@ a la aprobación.
 
 - **Todas las señales salen `confidence: inferred`.** Es correcto: falta el export L5X del PLC. Solo
   se marca `confirmed` con documentación oficial.
-- **`san-antonio` y `quijote` sin señales propias.** Sus tanques llegan retransmitidos vía Soledad;
-  pendiente de rectificar con el operador.
+- **`san-antonio` y `quijote` sin señales propias.** Sus buffers están declarados, pero faltan
+  los índices de nivel y volumen. Las cuatro lecturas de Soledad etiquetadas con esos nombres son
+  inferidas: la ficha no confirma su pertenencia ni la retransmisión. Véase el contraste de celdas
+  en [DATA_CATALOG.md](DATA_CATALOG.md), apartado «Asociación sin confirmar».
+- **`cabuyo`, `luisa`, `leonera` y `gloria` sin señales y siempre en `frozen`.** Están en
+  integración: dadas de alta en el mapping sin buffers hasta que el integrador las suba al PLC
+  maestro (ficha en `docs/plc/PLANTAS_NUEVAS_CABUYO_LUISA_LEONERA_GLORIA.md`). No les llega ningún
+  dato, y eso es lo que muestran.
 - **Con el simulador, los comandos de válvula responden contra un almacén en RAM**, no contra un
   PLC. Es el testbed permanente y así debe ser.
 - **`READBACK_UNCONFIRMED` en producción no es un fallo del canal**: hoy falta el actuador físico en

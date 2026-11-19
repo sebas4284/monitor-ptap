@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { claveDeItem, NOTIFICATION_PREFS_DEFAULT, type NotificationPrefsDto } from '@ptap/shared';
 import { getJson, putJson } from './api';
+import { isNotificationSession, notificationSession, type NotificationSession } from './notification-session';
 import type { NotificationKind } from './notifications';
 
 /**
@@ -58,8 +59,22 @@ export const NIVELES_DE_GRAVEDAD: { valor: NotificationPrefsDto['minSeverity']; 
   { valor: 'critical', titulo: 'Solo críticos', detalle: 'Únicamente lo que exige actuar ya.' },
 ];
 
-let prefs: NotificationPrefsDto = NOTIFICATION_PREFS_DEFAULT;
-let hidratado = false;
+interface PrefsState {
+  session: NotificationSession;
+  prefs: NotificationPrefsDto;
+  hydrated: boolean;
+  fetchedAt: number;
+  inFlight: Promise<NotificationPrefsDto> | null;
+}
+let state: PrefsState | null = null;
+function currentState(): PrefsState | null {
+  const session = notificationSession();
+  if (!session) { state = null; return null; }
+  if (!state || state.session.generation !== session.generation) {
+    state = { session, prefs: NOTIFICATION_PREFS_DEFAULT, hydrated: false, fetchedAt: 0, inFlight: null };
+  }
+  return state;
+}
 const listeners = new Set<() => void>();
 
 function emit(): void {
@@ -72,7 +87,7 @@ function subscribe(listener: () => void): () => void {
 }
 
 export function getNotificationPrefs(): NotificationPrefsDto {
-  return prefs;
+  return currentState()?.prefs ?? NOTIFICATION_PREFS_DEFAULT;
 }
 
 /** Normaliza lo que venga de la red o del disco: un campo corrupto no puede dejar a nadie sin avisos. */
@@ -88,73 +103,57 @@ function sanear(raw: Partial<NotificationPrefsDto> | null | undefined): Notifica
   };
 }
 
-function set(next: NotificationPrefsDto): void {
-  prefs = next;
-  void AsyncStorage.setItem(KEY, JSON.stringify(next)).catch(() => {});
+function set(owner: PrefsState, next: NotificationPrefsDto, persist = true): void {
+  if (!isNotificationSession(owner.session)) return;
+  owner.prefs = next;
+  // Legacy unscoped copies cannot be assigned to an identity safely and are never read.
+  if (persist) void AsyncStorage.setItem(`${KEY}:${owner.session.scope}`, JSON.stringify(next)).catch(() => {});
   emit();
 }
 
-/** Cuánto vale la copia recién traída antes de volver a preguntar al servidor. */
 const FRESCURA_MS = 60_000;
 
-let traidoEnMs = 0;
-/** Petición en vuelo, para que N llamadas a la vez compartan UNA sola. */
-let enVuelo: Promise<NotificationPrefsDto> | null = null;
-
-/**
- * Copia local primero, servidor después.
- *
- * En ese orden a propósito: la pantalla se pinta al instante con lo último conocido en vez de
- * parpadear con los valores por defecto, y cuando el servidor contesta se corrige si hace falta.
- *
- * **Deduplicada, y no por elegancia.** La campana de silencio vive en CADA tarjeta del tablero y
- * cada una llama aquí al montarse: en La Sirena son 23 señales más 4 tanques, o sea 27 peticiones
- * idénticas y simultáneas cada vez que se abre el tablero o se cambia de planta. Compartiendo la
- * petición en vuelo y respetando un minuto de frescura, queda en una.
- */
-export async function loadNotificationPrefs(force = false): Promise<NotificationPrefsDto> {
-  if (!hidratado) {
-    hidratado = true;
-    try {
-      const raw = await AsyncStorage.getItem(KEY);
-      if (raw) set(sanear(JSON.parse(raw) as Partial<NotificationPrefsDto>));
-    } catch {
-      /* copia corrupta: se sigue con el default, que es "todo suena" */
+/** Cache and pending requests belong to one auth generation; persistent copies belong to its user/role/plant. */
+export function loadNotificationPrefs(force = false): Promise<NotificationPrefsDto> {
+  const owner = currentState();
+  if (!owner) return Promise.resolve(NOTIFICATION_PREFS_DEFAULT);
+  if (owner.inFlight) return owner.inFlight;
+  if (!force && Date.now() - owner.fetchedAt < FRESCURA_MS) return Promise.resolve(owner.prefs);
+  owner.inFlight = (async () => {
+    if (!owner.hydrated) {
+      owner.hydrated = true;
+      try {
+        const raw = await AsyncStorage.getItem(`${KEY}:${owner.session.scope}`);
+        if (!isNotificationSession(owner.session)) return NOTIFICATION_PREFS_DEFAULT;
+        if (raw) set(owner, sanear(JSON.parse(raw) as Partial<NotificationPrefsDto>), false);
+      } catch { /* corrupt cache: retain defaults */ }
     }
-  }
-
-  if (enVuelo) return enVuelo;
-  if (!force && Date.now() - traidoEnMs < FRESCURA_MS) return prefs;
-
-  enVuelo = (async () => {
+    if (!isNotificationSession(owner.session)) return NOTIFICATION_PREFS_DEFAULT;
     try {
-      set(sanear(await getJson<NotificationPrefsDto>('/api/notifications/preferences')));
-      traidoEnMs = Date.now();
-    } catch {
-      // Sin red se usa la copia. Nunca se lanza: no poder leer las preferencias no puede impedir
-      // abrir Ajustes ni, mucho menos, que suenen los avisos. Tampoco se marca como fresca, para
-      // que el siguiente intento vuelva a preguntar en vez de esperar el minuto.
-    } finally {
-      enVuelo = null;
-    }
-    return prefs;
+      const next = await getJson<NotificationPrefsDto>('/api/notifications/preferences');
+      if (!isNotificationSession(owner.session)) return NOTIFICATION_PREFS_DEFAULT;
+      set(owner, sanear(next));
+      owner.fetchedAt = Date.now();
+    } catch { /* only this identity's cached preferences are available offline */ }
+    finally { owner.inFlight = null; }
+    return isNotificationSession(owner.session) ? owner.prefs : NOTIFICATION_PREFS_DEFAULT;
   })();
-  return enVuelo;
+  return owner.inFlight;
 }
 
-/**
- * Guarda en el servidor. Optimista: la pantalla responde al instante y, si el servidor rechaza, se
- * revierte y se avisa — dejar un interruptor mostrando algo que no se guardó sería peor que el
- * propio fallo.
- */
+/** Optimistic updates and rollbacks can only affect the session that initiated the save. */
 export async function saveNotificationPrefs(next: NotificationPrefsDto): Promise<void> {
-  const previo = prefs;
-  set(next);
+  const owner = currentState();
+  if (!owner) throw new Error('Sesión requerida');
+  const previous = owner.prefs;
+  set(owner, next);
   try {
-    set(sanear(await putJson<NotificationPrefsDto>('/api/notifications/preferences', next)));
-    traidoEnMs = Date.now();
+    const saved = await putJson<NotificationPrefsDto>('/api/notifications/preferences', next);
+    if (!isNotificationSession(owner.session)) return;
+    set(owner, sanear(saved));
+    owner.fetchedAt = Date.now();
   } catch (err) {
-    set(previo);
+    set(owner, previous);
     throw err;
   }
 }

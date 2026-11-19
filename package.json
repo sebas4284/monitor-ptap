@@ -2,6 +2,9 @@
   "name": "monitor-ptap",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": ">=26.12.1"
+  },
   "workspaces": [
     "apps/*",
     "packages/*"
@@ -10,18 +13,40 @@
     "start": "npm run dev:api",
     "dev:mobile": "npm run start -w @ptap/mobile",
     "dev:api": "npm run start:dev -w @ptap/api",
+    "dev:sim": "npm run dev:sim -w @ptap/api --",
     "build": "npm run build -w @ptap/shared && npm run build -w @ptap/api",
     "lint": "npm run lint --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present",
-    "web": "npm run web -w @ptap/mobile"
+    "test": "npm run test:security:deps && npm run test --workspaces --if-present",
+    "test:security:deps": "node --test tools/security/deepmerge.test.cjs",
+    "web": "npm run web -w @ptap/mobile",
+    "web:build": "npm run export:web -w @ptap/mobile",
+    "web:preview": "node tools/web/serve-production.cjs apps/mobile/dist-audit 8082",
+    "test:web-tools": "node --test tools/web/*.test.cjs"
   },
   "devDependencies": {
-    "@eslint/js": "^9.33.0",
-    "eslint": "^9.33.0",
-    "eslint-config-expo": "^10.0.0",
+    "deepmerge": "file:vendor/deepmerge",
+    "@eslint/js": "^9.39.5",
+    "@typescript-eslint/parser": "^8.72.1",
+    "eslint": "^9.39.5",
+    "eslint-config-expo": "^58.0.4",
     "eslint-config-prettier": "^10.1.8",
-    "prettier": "^3.6.2",
+    "prettier": "^3.9.10",
     "typescript": "~6.0.3"
+  },
+  "overrides": {
+    "deepmerge": "file:vendor/deepmerge",
+    "zod": "^4.6.7",
+    "glob": "14.0.2",
+    "minimatch": "11.0.1",
+    "multer": "2.5.0",
+    "shell-quote": "1.11.0"
+  },
+  "allowScripts": {
+    "argon2@0.45.1": true,
+    "esbuild@0.28.1": true,
+    "protobufjs@7.6.6": true,
+    "unrs-resolver@1.12.2": true,
+    "@firebase/util@1.15.3": true
   }
 }

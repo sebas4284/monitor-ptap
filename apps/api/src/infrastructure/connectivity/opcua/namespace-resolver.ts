@@ -27,10 +27,10 @@ export class NamespaceNotFoundError extends Error {
 }
 
 interface MappingLike {
-  plants?: Array<{
-    opcBuffers?: Record<string, Array<{ node?: { nsUri?: unknown } }>>;
+  plants?: {
+    opcBuffers?: Record<string, { node?: { nsUri?: unknown } }[]>;
     connection?: Record<string, unknown>;
-  }>;
+  }[];
 }
 
 /** Extrae los nsUri DISTINTOS usados por las referencias de nodo del mapping. */

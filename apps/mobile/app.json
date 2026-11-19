@@ -1,12 +1,11 @@
 {
   "expo": {
-    "name": "Monitor PTAP",
+    "name": "Aquora",
     "slug": "monitor-ptap",
-    "version": "1.2.4",
+    "version": "1.4.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
-    "newArchEnabled": true,
+    "userInterfaceStyle": "dark",
     "scheme": "monitor-ptap",
     "ios": {
       "supportsTablet": false,
@@ -16,20 +15,26 @@
       "adaptiveIcon": {
         "backgroundColor": "#1565C0",
         "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "package": "com.ptap.monitor",
-      "versionCode": 7
+      "versionCode": 10
     },
     "web": {
       "bundler": "metro",
+      "output": "single",
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      ["expo-router", { "asyncRoutes": "production" }],
+      [
+        "expo-router",
+        {
+          "asyncRoutes": "production"
+        }
+      ],
       "expo-status-bar",
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-font"
     ],
     "experiments": {
       "typedRoutes": true

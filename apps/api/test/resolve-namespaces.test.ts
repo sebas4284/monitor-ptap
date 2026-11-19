@@ -10,7 +10,7 @@ import { resolveNamespaces, collectNsUris, NamespaceNotFoundError } from '../scr
 
 const mapping = JSON.parse(
   readFileSync(join(__dirname, '..', 'config', 'opc_mapping.json'), 'utf8'),
-) as { generatedFrom: { namespaces: string[] }; plants: unknown[] };
+) as Parameters<typeof collectNsUris>[0] & { generatedFrom: { namespaces: string[] } };
 
 // NamespaceArray real capturado, guardado en el propio mapping como referencia.
 const REAL_NS = mapping.generatedFrom.namespaces;

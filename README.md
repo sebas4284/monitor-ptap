@@ -1,11 +1,25 @@
 # Monitor PTAP
 
-Sistema de **monitoreo en tiempo real de 12 Plantas de Tratamiento de Agua Potable (PTAP)**,
+Sistema de **monitoreo en tiempo real de 16 Plantas de Tratamiento de Agua Potable (PTAP)**,
 conectadas a través de un PLC maestro Allen-Bradley expuesto por un servidor **FactoryTalk
-Optix OPC UA**. El backend lee los buffers crudos del PLC, los procesa por un pipeline de
-capas y los publica a la app móvil/web por REST y Socket.IO.
+Optix OPC UA**. Doce están en operación. Cabuyo, La Luisa, La Leonera y Gloria están en
+integración: dadas de alta sin señales hasta que el integrador las suba al PLC maestro (ficha en
+[`docs/plc/PLANTAS_NUEVAS_CABUYO_LUISA_LEONERA_GLORIA.md`](docs/plc/PLANTAS_NUEVAS_CABUYO_LUISA_LEONERA_GLORIA.md)).
+El backend lee los buffers crudos del PLC, los procesa por un pipeline de capas y los publica a
+la app móvil/web por REST y Socket.IO.
 
-> **Estado real (2026-08-05):** el puente OPC UA está **vivo contra el PLC real** y la telemetría
+> **Estado verificado (2026-10-31):** la API y la web de la versión `c68d78e` están
+> desplegadas y responden HTTP 200 por HTTPS. La telemetría OPC continúa conectada.
+> Las maniobras están deshabilitadas mientras no exista una sesión OPC autenticada
+> y cifrada; `OPCUA_ALLOW_INSECURE_WRITES` ya no permite saltarse esa condición.
+> El registro firmado conserva el histórico revisado, identifica expresamente las
+> maniobras antiguas sin firma y protege las firmas futuras mediante un checkpoint
+> externo a MySQL. La validación local final aprobó 901 pruebas, tipos y builds.
+> SMTP requiere completar las credenciales del buzón dedicado. El push Android con
+> la app cerrada queda pendiente de configurar Firebase y publicar una APK nueva;
+> los avisos internos no prueban que el push esté funcionando.
+
+> **Referencia histórica (2026-08-05; no describe la configuración actual):** el puente OPC UA está **vivo contra el PLC real** y la telemetría
 > viaja de punta a punta (PLC → backend → móvil) en tiempo real. La telemetría vive **solo en RAM**
 > (nunca se persiste). **Las 6 fases están ejecutadas** (245/245 tests, typecheck limpio en todo el
 > monorepo, `validate:mapping` OK).
@@ -50,14 +64,14 @@ capas y los publica a la app móvil/web por REST y Socket.IO.
 
 | Fase | Alcance | Estado | Evidencia |
 |------|---------|--------|-----------|
-| **0** | Contratos (`opc_mapping.schema.json`/`.json`), hallazgo de seguridad P0 | ✅ Completa | `npm run validate:mapping` → 12 plantas OK; `docs/SECURITY_FINDING_P0.md`, `docs/plc/OBSERVACIONES_FASE0.md` |
+| **0** | Contratos (`opc_mapping.schema.json`/`.json`), hallazgo de seguridad P0 | ✅ Completa | `npm run validate:mapping` → 16 plantas OK (4 en integración, sin señales); `docs/SECURITY_FINDING_P0.md`, `docs/plc/OBSERVACIONES_FASE0.md` |
 | **1** | Adaptador OPC UA real, `BridgeStatus`, watchdog, heartbeat, reconexión, `/api/opc/status`\|`info`\|`buffers` | ✅ Completa | `bridge-state-machine.ts`, `watchdog.ts`, `heartbeat-monitor.ts`; tests de bridge en verde |
 | **2** | Parser + sequence + dead letter + cache RAM + Socket.IO con datos reales | ✅ Completa | `plant-pipeline.service.ts`, `/api/opc/dead-letter`; caudal de Montebello confirmado contra el PLC (`docs/plc/OBSERVACIONES_FASE0.md` §4). Replay contra tramas REALES: `test/plc-replay.test.ts` |
 | **3** | Mapping Engine + Quality Service + Snapshot Builder + `dtoVersion` | ✅ Completa | `mapping.engine.ts`, `quality.evaluator.ts`, `snapshot.builder.ts` |
 | **4** | JWT/RBAC, seguridad OPC (SignAndEncrypt+certificado), `/health/opc`, métricas Prometheus, audit log en MySQL, helmet/rate-limit | ✅ Completa | `AuthModule` (login, guards), `users`/`audit_log` en MySQL (`db:migrate`/`db:seed-admin`), `apps/api/test/opcua-security-switch.test.ts` (username **y** certificate probados contra un `OPCUAServer` local real), `GET /api/health/opc`, `GET /metrics`, `docs/OPTIX_CLIENT_CERT_TRUST.md` |
 | **5** | Canal de escritura (comandos) con interlocks, idempotencia y feature flag | ✅ Completa y **ABIERTA en producción** (autorizada 2026-08-03; 10 señales `valve1` writable en el mapping) | `write.service.ts`, `commands.controller.ts` (`POST /api/plants/:id/commands`), `command-log.repository.ts` (idempotencia MySQL); `test/write-service.test.ts` (24), `test/commands-e2e.test.ts`, `test/command-mapping.test.ts`. Prueba física real: `docs/archivo/PRUEBA_VALVULA_SIRENA.md` |
 | **7** | Bandeja de notificaciones + detector de sensores congelados | ✅ Completa (2026-08-06) | Migración `0009`, `modules/notifications/`, `stale-data.detector.ts`; `test/stale-data-detector.test.ts` (13). En el front: bandeja con historial de 72 h, campana por **no vistos**, y avisos en el panel del sistema (Android por notificación local, sin Firebase) |
-| **6** | Validación operacional: caos, carga, latencia, soak 24–72 h | 🟡 Ejecutada salvo el soak | `test/operational-resilience.test.ts` (6 escenarios de caos), `scripts/operational-validation.ts` (carga/latencia), `scripts/soak-test.ts` (**arnés listo, la corrida de 24–72 h sigue pendiente**), `docs/OPERATIONAL_VALIDATION.md` |
+| **6** | Validación operacional: caos, carga, latencia, soak 24–72 h | ✅ Completa | `test/operational-resilience.test.ts` (6 escenarios de caos), `scripts/operational-validation.ts` (carga/latencia), `scripts/soak-test.ts` + `scripts/soak-report.ts` (**24 h saldadas**: crecimiento de RSS 0 %, 0 fugas de handles, 48 ciclos de caos), `docs/OPERATIONAL_VALIDATION.md` |
 
 Verificado el 2026-08-05: `npm run typecheck` limpio en **todo el monorepo** (`@ptap/api`,
 `@ptap/mobile`, `@ptap/shared`), `npm test -w @ptap/api` → **245/245 tests OK** en 31 archivos
@@ -157,66 +171,47 @@ Dos adaptadores implementan el mismo puerto `ConnectivityAdapter` y se eligen co
 
 ## Índice del repositorio
 
-```txt
+El proyecto se organiza por aplicación y responsabilidad. El índice de guías y protocolos está en
+[docs/README.md](docs/README.md); los archivos de operación y los contratos conservan sus rutas para
+no romper los scripts de despliegue ni los enlaces existentes.
+
+```text
 monitor-ptap/
 ├── apps/
-│   ├── api/                         # Backend NestJS (bridge OPC UA + pipeline + REST + Socket.IO)
-│   │   ├── config/
-│   │   │   ├── opc_mapping.json          # Contrato de mapping (fuente de semántica; NO editar a mano)
-│   │   │   └── opc_mapping.schema.json   # JSON Schema del mapping
-│   │   ├── fixtures/plc-discovery/       # Evidencia congelada de topología (fuente del generador)
-│   │   ├── scripts/
-│   │   │   ├── generate-mapping.ts       # Genera opc_mapping.json (idempotente)
-│   │   │   ├── validate-mapping.ts       # Valida schema + reglas semánticas
-│   │   │   ├── resolve-namespaces.ts     # nsUri → índice de namespace
-│   │   │   ├── read-opcua-node.ts        # Lectura puntual de un nodo (debug)
-│   │   │   ├── migrate.ts                # Runner de migraciones SQL (users, audit_log)
-│   │   │   └── seed-admin-user.ts        # Siembra el primer usuario admin desde SEED_ADMIN_*
-│   │   ├── src/
-│   │   │   ├── main.ts                    # Arranque COMPLETO (requiere MySQL)
-│   │   │   ├── main.telemetry.ts          # Arranque de TELEMETRÍA (bridge+pipeline+REST+socket, sin BD)
-│   │   │   ├── config/load-env.ts         # Carga .env de la raíz del monorepo
-│   │   │   ├── infrastructure/
-│   │   │   │   ├── database/               # Pool MySQL + migrations/ (users, audit_log)
-│   │   │   │   ├── audit/                  # ★ Fase 4: AuditLogService, AuditMiddleware (accesos), eventos de conexión
-│   │   │   │   ├── metrics/                # ★ Fase 4: MetricsService, /metrics, subscriber de métricas
-│   │   │   │   ├── logging/                # ★ Fase 4: JsonLogger (pino), eventos estructurados
-│   │   │   │   ├── validation/             # ★ Fase 4: ZodValidationPipe, schema de plantId
-│   │   │   │   ├── http-hardening.config.ts # ★ Fase 4: CORS/rate-limit desde .env
-│   │   │   │   └── connectivity/           # ★ El corazón del sistema (Fases 1-3, sin BD)
-│   │   │   │       ├── adapters/opcua/     #   Adaptador OPC UA real (+ identidad certificate, Fase 4)
-│   │   │   │       ├── adapters/simulator/ #   Adaptador simulado (testbed)
-│   │   │   │       ├── bridge/             #   watchdog, heartbeat-monitor, frame-coalescer, state-machine
-│   │   │   │       ├── pipeline/           #   parser/liveness/mapping/quality/snapshot/cache/dead-letter
-│   │   │   │       ├── ports/              #   ConnectivityAdapter (contrato único del puente)
-│   │   │   │       ├── mapping/            #   Loader de opc_mapping.json
-│   │   │   │       ├── connectivity.config.ts    # TODA la config OPC/liveness desde .env
-│   │   │   │       ├── connectivity.module.ts    # Wiring DI (sin BD — usado por main.ts Y main.telemetry.ts)
-│   │   │   │       ├── opc-observability.module.ts # ★ Fase 4: OpcController + RBAC/audit/métricas (CON BD; solo main.ts)
-│   │   │   │       ├── connectivity.gateway.ts   # Socket.IO (opc:snapshot / opc:liveness) — JWT en el handshake
-│   │   │   │       ├── bridge-orchestrator.service.ts  # Ciclo de vida + retry del adaptador
-│   │   │   │       └── opc.controller.ts   # /api/opc/status|info|buffers|dead-letter (RBAC, Fase 4)
-│   │   │   └── modules/                    # Dominios HTTP: auth, users, plants, health (+/opc), commands, hmi, reports
-│   │   └── test/                          # Suite (node:test + tsx) — 245 tests en 31 archivos (ver §11)
-│   └── mobile/                       # App Expo (Android / iOS / Web)
-│       ├── app/                          # Rutas (expo-router): (auth)/login, (app)/tablero…
-│       ├── components/                   # GaugeCard, TankGaugeCard, ValveItem, LiveBadge, PlantSelector…
-│       ├── hooks/                        # useSnapshot (REST + Socket.IO), useAlerts, useValveSupervisor…
-│       ├── services/
-│       │   ├── api.ts                     # Cliente REST REAL (cero mocks en toda la app)
-│       │   ├── socket.ts                  # Cliente Socket.IO
-│       │   ├── valves.ts / reports.ts     # Válvulas y reportes contra el backend real
-│       │   └── auth.ts                    # Login JWT real contra /api/auth/login
-│       ├── context/                      # PlantContext (12 slugs canónicos), AuthContext
-│       └── constants/colors.ts
-├── packages/
-│   └── shared/                      # @ptap/shared: roles, permisos y tipos compartidos (única fuente)
+│   ├── api/                 # Backend NestJS: API, autenticación, OPC UA y simulador
+│   │   ├── config/          # Mapping de plantas y su esquema
+│   │   ├── fixtures/        # Escenarios de simulación y muestras de PLC
+│   │   ├── scripts/         # Validación, migraciones y herramientas operativas
+│   │   ├── src/             # Servicios, módulos, conectividad y pipeline
+│   │   └── test/            # Pruebas del backend
+│   └── mobile/              # App Expo para web y dispositivos
+│       ├── app/             # Rutas y pantallas Expo Router
+│       ├── components/       # Componentes visuales
+│       ├── context/         # Sesión y selección de planta
+│       ├── hooks/           # Suscripciones y estado de interfaz
+│       ├── services/        # API, notificaciones y lógica de presentación
+│       └── assets/          # Recursos gráficos
+├── packages/shared/         # Contratos, roles y permisos compartidos
 ├── tools/
-│   └── plc-discovery/               # Herramienta standalone de ingeniería inversa OPC UA (solo lectura)
-├── docs/                            # Documentación técnica, hallazgos y evidencia (ver §13)
-├── .env / .env.example             # Configuración local (el .env NO se commitea)
-└── package.json                    # Workspaces + scripts del monorepo
+│   ├── plc-discovery/       # Inspección OPC UA de solo lectura
+│   └── vm/                  # Scripts de despliegue y publicación en la VM
+├── docs/                    # Guías, protocolos, arquitectura y archivos históricos
+├── .github/                 # Automatización del repositorio
+├── .env.example             # Plantilla de configuración sin secretos
+├── package.json             # Workspaces y comandos principales
+└── README.md                # Entrada general al proyecto
 ```
+
+### Continuar en otro equipo
+
+1. Clona el repositorio y cambia a la rama `yosh`. Instala la versión de Node indicada en `.nvmrc` y ejecuta `npm install`.
+2. Prepara la configuración y MySQL siguiendo [docs/SETUP.md](docs/SETUP.md). Los archivos `.env`, las claves SSH, los certificados y los datos locales no viajan en Git: configúralos en el otro equipo por un canal seguro.
+3. Para probar la aplicación completa con el PLC simulado, ejecuta las migraciones indicadas en la guía y luego `npm run dev:sim -- produccion` y `npm run web` en terminales separadas. Consulta [las pruebas locales de válvulas](docs/PRUEBAS_LOCALES_VALVULAS.md).
+4. Antes de actualizar la VM, revisa [el runbook de producción](docs/RUNBOOK_PRODUCCION.md) y el acceso de red autorizado. Un push a GitHub no implica que la VM se haya actualizado.
+
+`node_modules/`, las compilaciones `dist/` y `apps/mobile/dist-audit/` son artefactos locales
+regenerables y no forman parte del repositorio. La carpeta `docs/archivo/` reúne material histórico;
+para orientación actual empieza por el índice de documentación.
 
 ---
 
@@ -226,14 +221,14 @@ monitor-ptap/
 |------|----------|--------|
 | **Monorepo** | npm workspaces (`apps/*`, `packages/*`) | Sin herramienta extra; comparte tipos vía `@ptap/shared`. |
 | **Lenguaje** | TypeScript estricto (sin `any` silencioso) | Errores tipados por capa; contrato explícito PLC↔dominio↔front. |
-| **Backend** | NestJS 11 + Express | DI e inyección por módulos encajan con la arquitectura de capas. |
+| **Backend** | NestJS 12 + Express | DI e inyección por módulos encajan con la arquitectura de capas. |
 | **OPC UA** | `node-opcua` | Cliente OPC UA maduro (Subscriptions, MonitoredItems, PKI, reconexión). |
 | **Tiempo real** | Socket.IO 4 (`@nestjs/platform-socket.io`) | Push por planta solo en cambios; el front no hace polling. |
 | **Base de datos** | MySQL (`mysql2`) | **Solo** auth/usuarios/auditoría/config. **Nunca** telemetría (regla 1). |
 | **Runtime dev** | `tsx` | Ejecuta TS sin build; `tsx watch` para hot-reload. |
 | **Tests** | Runner nativo `node:test` + `tsx` (no Jest) | Cero config; rápido; suficiente para lógica pura y de temporizadores. |
 | **Mapping** | JSON + JSON Schema (`ajv`) + generador idempotente | La semántica vive en datos versionados, no en el código (regla 2). |
-| **Móvil** | Expo ~56 + React Native 0.85 + expo-router | Un solo código para Android/iOS/Web. |
+| **Móvil** | Expo ~58 + React Native 0.88 + expo-router | Un solo código para Android/iOS/Web. |
 | **Estado datos móvil** | TanStack React Query 5 | Cache + estados de carga; el socket parchea la cache. |
 | **Estilos móvil** | NativeWind 4 (Tailwind) + estilos inline | Consistencia visual sin CSS aparte. |
 | **Formato config PLC** | `opc_mapping.json` con `{ nsUri, identifier }` sin índice de ns | El índice de namespace de Optix cambia entre reinicios → se resuelve en runtime. |
@@ -243,7 +238,7 @@ monitor-ptap/
 
 ## Requisitos previos
 
-- **Node.js ≥ 20** (probado en 24). Incluye `npm`.
+- **Node.js 26.12.1 o superior**. La versión exacta del proyecto está en `.nvmrc`; incluye `npm`.
 - **Git Bash** o PowerShell (Windows).
 - **MySQL** corriendo en `127.0.0.1:3306` — **solo** si vas a levantar el backend COMPLETO
   (`main.ts`). El arranque de **telemetría** no lo necesita. En Windows, si no tienes MySQL
@@ -273,8 +268,11 @@ monitor-ptap/
 Desde la raíz del monorepo (instala todos los workspaces):
 
 ```bash
-npm install
+npm ci
 ```
+
+> **SDK 58:** Expo Go para SDK 58 todavía no está publicado en las tiendas. Para probar en un
+> dispositivo, usa una development build o una APK compilada con `npm run build:android`.
 
 ---
 
@@ -303,7 +301,7 @@ Claves relevantes (todas documentadas en `.env.example`):
 | `JWT_SECRET` | *(vacío, obligatorio)* | Firma de tokens (Fase 4). El backend completo no arranca sin esto. |
 | `SEED_ADMIN_EMAIL`/`PASSWORD`/`NAME`/`PLANT` | *(vacío)* | Solo los lee `npm run db:seed-admin -w @ptap/api` (no el runtime). |
 | `OPC_AUTO_ACCEPT_UNKNOWN_CERTIFICATE` | `false` | `true` solo para bootstrap/desarrollo; nunca en producción contra la planta (ver `docs/OPTIX_CLIENT_CERT_TRUST.md`). |
-| `CORS_ORIGINS` | *(vacío)* | Orígenes permitidos, separados por coma; vacío = CORS deshabilitado en `main.ts` (y el arranque lo avisa en el log). **Para la web de Expo pon `http://localhost:8081`**: corre en otro puerto que el backend, así que sin esto el *navegador* bloquea el login. `curl` no lo detecta — no aplica CORS. Si además expones la web por un túnel de Cloudflare (§9), agrega también esa URL HTTPS aquí (coma-separada) — el gateway Socket.IO hereda esta misma allowlist. |
+| `CORS_ORIGINS` | *(vacío)* | Orígenes permitidos, separados por coma; vacío = CORS deshabilitado en `main.ts` (y el arranque lo avisa en el log). **Para la web de Expo pon `http://localhost:8082`**: corre en otro puerto que el backend, así que sin esto el *navegador* bloquea el login. `curl` no lo detecta — no aplica CORS. Si además expones la web por un túnel de Cloudflare (§9), agrega también esa URL HTTPS aquí (coma-separada) — el gateway Socket.IO hereda esta misma allowlist. |
 | `EMAIL_TRANSPORT` | `console` | `console` (default; escribe el link de verificación en el log, sin envío real — cómodo para dev) o `smtp` (envío real vía nodemailer con las `SMTP_*` de abajo). Con `smtp` pero sin `SMTP_HOST`/`USER`/`PASS` completos, cae a `console` con aviso. |
 | `SMTP_HOST`/`SMTP_PORT`/`SMTP_USER`/`SMTP_PASS`/`SMTP_SECURE` | *(vacío)* | Credenciales SMTP reales. **Para probar el flujo de verificación sin un proveedor real ni arriesgar credenciales**, apunta esto a un servidor local como Mailpit (`SMTP_HOST=127.0.0.1`, `SMTP_PORT=1025`, `SMTP_USER`/`SMTP_PASS` cualquier valor) — Mailpit acepta cualquier credencial y muestra los correos capturados en `http://localhost:8025`, sin enviarlos a ninguna bandeja real. |
 | `APP_PUBLIC_URL` | `http://localhost:PORT` | Base del enlace de verificación de correo (`GET /api/auth/verify-email?token=...`). Debe ser una URL que la persona que registra la cuenta pueda abrir: la IP LAN si prueban desde otro dispositivo en tu red, o la URL del túnel de Cloudflare (§9) si prueban desde fuera. |
@@ -374,7 +372,7 @@ sirve para algo que varias personas usen de forma estable.
 ```bash
 # Terminal aparte por cada servicio que quieras exponer
 cloudflared tunnel --url http://localhost:4000   # backend/API
-cloudflared tunnel --url http://localhost:8081   # web (opcional, si no vas a usar el .apk)
+cloudflared tunnel --url http://localhost:8082   # web (opcional, si no vas a usar el .apk)
 ```
 
 Cada uno imprime una URL `https://algo-al-azar.trycloudflare.com`. Luego:
@@ -411,7 +409,7 @@ ingress:
   - hostname: api.tudominio.com
     service: http://localhost:4000
   - hostname: app.tudominio.com
-    service: http://localhost:8081
+    service: http://localhost:8082
   - service: http_status:404
 ```
 
@@ -476,7 +474,7 @@ RBAC gatea por **permiso granular** (`@RequirePermission(...)`, sobre `hasPermis
 
 | Método · Ruta | Devuelve |
 |---------------|----------|
-| `GET /api/plants` | Lista de las 12 plantas con su `liveness` y `bridgeStatus`. |
+| `GET /api/plants` | Lista de las 16 plantas con su `liveness` y `bridgeStatus`. Las 4 en integración no tienen buffers: salen siempre `frozen`. |
 | `GET /api/plants/:plantId/snapshot` | `PlantSnapshotDto` desde cache RAM (<50 ms; nunca toca el PLC). |
 
 > **Divergencia conocida con la matriz oficial (decisión de producto pendiente):** la matriz dice
@@ -700,8 +698,9 @@ Reglas que **nunca** se rompen (resumen):
 12. **Nada se pierde en silencio**: lo anómalo va al DeadLetter (consultable por endpoint admin).
 
 **Identidad de planta:** el `plantId` (slug canónico) es la única identidad en todo el sistema
-(los 12 slugs: `voragine, soledad, montebello, cascajal, km18, alto-los-mangos, campoalegre,
-pichinde, carbonero, sirena, san-antonio, quijote`). Nada de `PTAP Norte` ni `ptap-1`.
+(los 16 slugs: `voragine, soledad, montebello, cascajal, km18, alto-los-mangos, campoalegre,
+pichinde, carbonero, sirena, san-antonio, quijote, cabuyo, luisa, leonera, gloria`; las 4 últimas
+están en integración, sin señales). Nada de `PTAP Norte` ni `ptap-1`.
 
 ---
 
@@ -745,7 +744,8 @@ pichinde, carbonero, sirena, san-antonio, quijote`). Nada de `PTAP Norte` ni `pt
 |-----------|-----------|
 | [`docs/PENDIENTES.md`](docs/PENDIENTES.md) | **Único tracker de pendientes**: bloqueado por infraestructura, pendiente de desplegar, decisiones del cliente y deuda técnica. |
 | [`docs/INCIDENTE_CONEXION_PLC.md`](docs/INCIDENTE_CONEXION_PLC.md) | Incidente **abierto**: pérdida de acceso al PLC maestro. |
-| [`docs/OPERATIONAL_VALIDATION.md`](docs/OPERATIONAL_VALIDATION.md) | Fase 6: caos, carga, latencia y replay. El soak de 24–72 h sigue sin correr. |
+| [`docs/OPERATIONAL_VALIDATION.md`](docs/OPERATIONAL_VALIDATION.md) | Fase 6 **completa**: caos, carga, latencia, replay y el soak de 24 h (crecimiento de RSS 0 %). |
+| [`docs/PLAN_CONSOLA_ADMIN_1.4.0.md`](docs/PLAN_CONSOLA_ADMIN_1.4.0.md) | **Plan de implementación de la 1.4.0**: revisión por planta, ayuda, tutorial, modo desarrollador y novedades. Cinco fases para ejecutar de una en una. |
 | [`docs/CATALOGO_ERRORES.md`](docs/CATALOGO_ERRORES.md) | Catálogo de códigos de error: código → archivo → causa → responsable. |
 | [`docs/archivo/`](docs/archivo/) | **Evidencia histórica congelada** (auditorías fechadas, pruebas de campo). No refleja el estado actual — leer su README. |
 

@@ -12,8 +12,48 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { tanksFromSnapshot, isTankSignal } from './tanks';
+import { tanksFromSnapshot, isTankSignal, groupTanks } from './tanks';
+import { autonomyDuration, tankAutonomyText } from './tank-autonomy';
 import type { PlantSnapshotDto, SignalDto } from './api';
+
+test('autonomía: prioriza mínimo operativo y distingue vacío y tendencia sin caudal conocido', () => {
+  const text = tankAutonomyText({ tankN: 1, hoursTo0: 5, hoursTo50: 2, hoursToReserve: 1,
+    reserveBasis: 'op_min', reserveLevelM: 1, flowLps: 0, basis: 'tendencia_nivel' });
+  assert.equal(text.texto, '1 h hasta mínimo');
+  assert.match(text.pie, /descenso medido de este tanque/);
+  assert.match(text.pie, /5 h hasta vacío/);
+  assert.doesNotMatch(text.pie, /0.0 l\/s|Entrada cerrada/);
+});
+
+test('autonomía: cero y minutos se muestran sin inventar margen ni 60 minutos', () => {
+  assert.equal(autonomyDuration(0), '0 min');
+  assert.equal(autonomyDuration(1.999), '2 h');
+  const text = tankAutonomyText({ tankN: 1, hoursTo0: 2, hoursTo50: 0,
+    hoursToReserve: 0, flowLps: 2, basis: 'tendencia_volumen' });
+  assert.equal(text.texto, 'Mínimo alcanzado');
+  assert.equal(tankAutonomyText(null).texto, 'Sin estimación');
+});
+
+test('autonomía: sin conexión mantiene la fila sin presentar una estimación antigua', () => {
+  const text = tankAutonomyText({ tankN: 1, hoursTo0: 5, hoursTo50: 2,
+    hoursToReserve: 1, flowLps: 0, basis: 'tendencia_nivel' }, true);
+  assert.equal(text.label, 'Autonomía');
+  assert.equal(text.texto, 'Sin estimación');
+  assert.match(text.pie, /Sin conexión/);
+  assert.doesNotMatch(text.pie, /5 h|1 h/);
+});
+
+test('autonomía: tanques externos mantienen su tendencia propia y no heredan la de Soledad', () => {
+  const snapshot = snap('soledad', {
+    tank1Level: sig(2), sanAntonioTankLevel: sig(1.8), quijoteTankLevel: sig(2.2),
+  });
+  snapshot.autonomy = [
+    { tankN: 1, tankKey: 'tank1', hoursTo0: 9, hoursTo50: null, flowLps: 1, basis: 'tendencia_volumen' },
+    { tankN: 0, tankKey: 'sanAntonioTank', hoursTo0: 3, hoursTo50: null, flowLps: 0, basis: 'tendencia_nivel' },
+    { tankN: 0, tankKey: 'quijoteTank', hoursTo0: 6, hoursTo50: null, flowLps: 0, basis: 'tendencia_nivel' },
+  ];
+  assert.deepEqual(tanksFromSnapshot(snapshot).map((tank) => tank.autonomy?.hoursTo0), [9, 3, 6]);
+});
 
 function sig(value: number | null, over: Partial<SignalDto> = {}): SignalDto {
   return {
@@ -41,6 +81,37 @@ function snap(plantId: string, signals: Record<string, SignalDto>): PlantSnapsho
     signals,
   } as PlantSnapshotDto;
 }
+
+test('distribución: Soledad conserva su tanque propio y separa las lecturas externas sin alterarlas', () => {
+  const snapshot = snap('soledad', {
+    tank1Level: sig(1.8, { opMax: 2.8 }), tank1Volume: sig(48, { unit: 'm³' }),
+    sanAntonioTankLevel: sig(1.3, { confidence: 'inferred' }),
+    quijoteTankLevel: sig(1.7, { confidence: 'inferred' }),
+  });
+  const tanks = tanksFromSnapshot(snapshot);
+  const before = JSON.stringify(snapshot);
+  const groups = groupTanks(Object.freeze(tanks));
+  assert.deepEqual(groups.own.map((tank) => tank.name), ['Tanque 1']);
+  assert.deepEqual(groups.external.map((tank) => tank.name), ['Tanque San Antonio', 'Tanque El Quijote']);
+  assert.equal(groups.own[0], tanks[0]);
+  assert.equal(groups.external[0], tanks[1]);
+  assert.equal(groups.external[1], tanks[2]);
+  assert.deepEqual(groups.external.map((tank) => tank.levelM), [1.3, 1.7]);
+  assert.equal(JSON.stringify(snapshot), before);
+});
+
+test('distribución: otras plantas no heredan los tanques de Soledad ni inventan los pendientes', () => {
+  for (const plant of ['sirena', 'san-antonio', 'quijote', 'luisa', 'leonera', 'gloria']) {
+    const groups = groupTanks(tanksFromSnapshot(snap(plant, {
+      sanAntonioTankLevel: sig(1.3), quijoteTankLevel: sig(1.7),
+    })));
+    assert.deepEqual(groups, { own: [], external: [] });
+  }
+  const groups = groupTanks(tanksFromSnapshot(snap('campoalegre', { tank2Level: sig(1), tank1Volume: sig(20, { unit: 'm³' }) })));
+  assert.deepEqual(groups.own.map((tank) => tank.id), ['tank-1', 'tank-2']);
+  assert.equal(groups.own[0].levelM, null);
+  assert.deepEqual(groups.external, []);
+});
 
 // El caso EXACTO de la captura del cliente: Sirena tanque 1, nivel 1.52, máximo 2.80.
 test('tanques: % = nivel / máximo — 1.52 sobre 2.80 es 54 %, no 29 %', () => {

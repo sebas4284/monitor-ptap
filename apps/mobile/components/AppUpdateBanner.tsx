@@ -62,6 +62,8 @@ export function AppUpdateBanner({ modo }: { modo: Modo }) {
       <Text style={styles.titulo}>{titulo}</Text>
       <Text style={styles.detalle}>{detalle}</Text>
       <TouchableOpacity
+        accessibilityRole="link"
+        accessibilityLabel={modo === 'descarga' ? 'Descargar la app para Android' : 'Actualizar la app'}
         style={styles.boton}
         onPress={() => void Linking.openURL(release.downloadUrl)}
         activeOpacity={0.85}

@@ -11,6 +11,7 @@
 /** Sitios remotos detectados en los nombres de los buffers. */
 export const SITES = [
   'ALTO_MANGOS',
+  'CABUYO',
   'CAMPOALEGRE',
   'CARBONERO',
   'CASCAJAL',

@@ -20,13 +20,14 @@ import {
   Variant,
   VariantArrayType,
 } from 'node-opcua';
-import type { UserIdentityInfo } from 'node-opcua';
+import type { OPCUAClientOptions, UserIdentityInfo } from 'node-opcua';
 import { coerceCertificate } from 'node-opcua-crypto';
 import { BridgeStateMachine } from '../../bridge/bridge-state-machine';
 import { FrameCoalescer } from '../../bridge/frame-coalescer';
 import { HeartbeatMonitor } from '../../bridge/heartbeat-monitor';
 import { Watchdog } from '../../bridge/watchdog';
-import type { OpcUaConfig } from '../../connectivity.config';
+import type { OpcIdentity, OpcUaConfig } from '../../connectivity.config';
+import { canWriteOnConnection } from '../../write-connection-policy';
 import type { LoadedMapping, MonitorTarget } from '../../mapping/opc-mapping.loader';
 import { NamespaceNotFoundError, resolveNamespaces } from '../../opcua/namespace-resolver';
 import type {
@@ -71,6 +72,114 @@ function toSecurityPolicy(name: string): SecurityPolicy {
 /** Severidad Good (bits 30-31 == 0) del StatusCode, sin depender de igualdad por referencia. */
 function isGoodStatus(sc: { value: number }): boolean {
   return ((sc.value >>> 30) & 0x3) === 0;
+}
+
+// ── Lo que una herramienta de campo tiene que hacer EXACTAMENTE igual que el backend ──────────
+//
+// Conexión, identidad, y lectura/escritura de UN elemento. Viven fuera de la clase y exportadas para
+// que scripts/test-valvulas-voragine.ts las use tal cual: una herramienta que escribe en el PLC con
+// otro DataType, otro IndexRange u otra identidad que el backend prueba OTRA cosa, y su resultado no
+// dice nada de lo que hará la app. La clase las usa igual que antes.
+
+/**
+ * Opciones del cliente OPC UA: aplicación, modo y política de seguridad, PKI y reconexión. `pkiRoot`
+ * tiene que existir (la clase lo crea en `createClient`).
+ */
+export function opcionesDeCliente(config: OpcUaConfig, pkiRoot: string): OPCUAClientOptions {
+  return {
+    applicationName: 'monitor-ptap-gateway',
+    endpointMustExist: config.endpointMustExist,
+    securityMode: SECURITY_MODES[config.securityMode] ?? MessageSecurityMode.None,
+    securityPolicy: toSecurityPolicy(config.securityPolicy),
+    connectionStrategy: {
+      initialDelay: config.reconnectInitialDelayMs,
+      maxDelay: config.reconnectMaxDelayMs,
+      maxRetry: config.reconnectMaxRetry,
+    },
+    keepSessionAlive: true,
+    clientCertificateManager: new OPCUACertificateManager({
+      rootFolder: pkiRoot,
+      // Fase 4 (regla 8): antes quemado en `true`; ahora sale de .env. En producción
+      // contra el servidor de la planta debe ser false (confiar certs a mano, ver
+      // docs/OPTIX_CLIENT_CERT_TRUST.md).
+      automaticallyAcceptUnknownCertificate: config.autoAcceptUnknownCertificate,
+    }),
+  };
+}
+
+/**
+ * Identidad de sesión. Para `certificate`, lee el certificado/llave que OPCUACertificateManager
+ * autogenera en disco al conectar el cliente: hay que llamarla DESPUÉS de `client.connect()`.
+ */
+export function identidadDeSesion(identity: OpcIdentity, pkiRoot: string): UserIdentityInfo {
+  if (identity.type === 'username') {
+    return {
+      type: UserTokenType.UserName,
+      userName: identity.userName,
+      password: identity.password,
+    };
+  }
+  if (identity.type === 'certificate') {
+    const certificateFile = join(pkiRoot, 'own', 'certs', 'client_certificate.pem');
+    const privateKeyFile = join(pkiRoot, 'own', 'private', 'private_key.pem');
+    if (!existsSync(certificateFile) || !existsSync(privateKeyFile)) {
+      throw new Error(
+        `OPC_IDENTITY=certificate pero no se encontró el certificado de cliente en ${certificateFile} ` +
+          `(¿createClient() no corrió antes de buildIdentity()?)`,
+      );
+    }
+    return {
+      type: UserTokenType.Certificate,
+      certificateData: coerceCertificate(readFileSync(certificateFile, 'utf8')),
+      privateKey: readFileSync(privateKeyFile, 'utf8'),
+    };
+  }
+  return { type: UserTokenType.Anonymous };
+}
+
+/** Escribe UN elemento del array (IndexRange), con el DataType del canal. Lanza si no es Good. */
+export async function escribirElemento(
+  session: ClientSession,
+  nodeId: string,
+  target: BufferElementTarget,
+  value: number | boolean,
+  dataType: DataType = channelDataType(target.channel),
+): Promise<void> {
+  const statusCode = await session.write({
+    nodeId: resolveNodeId(nodeId),
+    attributeId: AttributeIds.Value,
+    indexRange: new NumericRange(target.index), // escribe UN elemento del array (regla 6: nunca el array entero por gusto)
+    value: {
+      value: new Variant({
+        dataType,
+        arrayType: VariantArrayType.Array,
+        value: [value],
+      }),
+    },
+  });
+  if (statusCode.value !== StatusCodes.Good.value) {
+    throw new Error(`write OPC UA rechazado (${statusCode.toString()}) en ${target.sourceBuffer}[${target.index}]`);
+  }
+}
+
+/** Lee UN elemento del array (IndexRange). */
+export async function leerElemento(
+  session: ClientSession,
+  nodeId: string,
+  target: BufferElementTarget,
+): Promise<BufferElementRead> {
+  const dv = await session.read({
+    nodeId: resolveNodeId(nodeId),
+    attributeId: AttributeIds.Value,
+    indexRange: new NumericRange(target.index),
+  });
+  const raw = Array.isArray(dv.value?.value) ? dv.value.value[0] : dv.value?.value;
+  const value = typeof raw === 'boolean' ? raw : raw == null ? null : Number(raw);
+  return {
+    value,
+    quality: isGoodStatus(dv.statusCode) ? 'Good' : 'Bad',
+    sourceTimestamp: dv.sourceTimestamp ? new Date(dv.sourceTimestamp).toISOString() : null,
+  };
 }
 
 const SERVER_STATES = ['Running', 'Failed', 'NoConfiguration', 'Suspended', 'Shutdown', 'Test', 'CommunicationFault', 'Unknown'];
@@ -211,25 +320,7 @@ export class OpcUaConnectivityAdapter implements ConnectivityAdapter {
     // node-opcua no garantiza crearlo en un clon limpio y fallaría con un error críptico.
     // mkdir recursive es idempotente (no falla si ya existe).
     mkdirSync(this.pkiRoot, { recursive: true });
-    return OPCUAClient.create({
-      applicationName: 'monitor-ptap-gateway',
-      endpointMustExist: this.config.endpointMustExist,
-      securityMode: SECURITY_MODES[this.config.securityMode] ?? MessageSecurityMode.None,
-      securityPolicy: toSecurityPolicy(this.config.securityPolicy),
-      connectionStrategy: {
-        initialDelay: this.config.reconnectInitialDelayMs,
-        maxDelay: this.config.reconnectMaxDelayMs,
-        maxRetry: this.config.reconnectMaxRetry,
-      },
-      keepSessionAlive: true,
-      clientCertificateManager: new OPCUACertificateManager({
-        rootFolder: this.pkiRoot,
-        // Fase 4 (regla 8): antes quemado en `true`; ahora sale de .env. En producción
-        // contra el servidor de la planta debe ser false (confiar certs a mano, ver
-        // docs/OPTIX_CLIENT_CERT_TRUST.md).
-        automaticallyAcceptUnknownCertificate: this.config.autoAcceptUnknownCertificate,
-      }),
-    });
+    return OPCUAClient.create(opcionesDeCliente(this.config, this.pkiRoot));
   }
 
   /**
@@ -239,29 +330,7 @@ export class OpcUaConnectivityAdapter implements ConnectivityAdapter {
    * así que los archivos ya existen para cuando esto corre — sin condición de carrera.
    */
   private buildIdentity(): UserIdentityInfo {
-    if (this.config.identity.type === 'username') {
-      return {
-        type: UserTokenType.UserName,
-        userName: this.config.identity.userName,
-        password: this.config.identity.password,
-      };
-    }
-    if (this.config.identity.type === 'certificate') {
-      const certificateFile = join(this.pkiRoot, 'own', 'certs', 'client_certificate.pem');
-      const privateKeyFile = join(this.pkiRoot, 'own', 'private', 'private_key.pem');
-      if (!existsSync(certificateFile) || !existsSync(privateKeyFile)) {
-        throw new Error(
-          `OPC_IDENTITY=certificate pero no se encontró el certificado de cliente en ${certificateFile} ` +
-            `(¿createClient() no corrió antes de buildIdentity()?)`,
-        );
-      }
-      return {
-        type: UserTokenType.Certificate,
-        certificateData: coerceCertificate(readFileSync(certificateFile, 'utf8')),
-        privateKey: readFileSync(privateKeyFile, 'utf8'),
-      };
-    }
-    return { type: UserTokenType.Anonymous };
+    return identidadDeSesion(this.config.identity, this.pkiRoot);
   }
 
   private wireClientEvents(client: OPCUAClient): void {
@@ -435,7 +504,7 @@ export class OpcUaConnectivityAdapter implements ConnectivityAdapter {
     };
   }
 
-  private toValueArray(raw: unknown): Array<number | boolean> {
+  private toValueArray(raw: unknown): (number | boolean)[] {
     if (raw === null || raw === undefined) return [];
     // Un `null`/`undefined` POR ELEMENTO (canal con calidad mala representada como null en un
     // array mixto) NO puede volverse 0: `Number(null) === 0` sería una lectura falsa e
@@ -645,49 +714,37 @@ export class OpcUaConnectivityAdapter implements ConnectivityAdapter {
   // ANTES de llamar aquí. Estos métodos solo hacen el I/O OPC UA sobre un elemento.
 
   getWriteSecurity(): WriteSecurity {
-    // ⚠️ `allowInsecureWrites` es una excepción DELIBERADA y TEMPORAL a la regla 9 ("sin excepciones,
-    // ni para probar"), habilitada solo por OPCUA_ALLOW_INSECURE_WRITES=true — ver su doc en
-    // connectivity.config.ts. Debe estar en false salvo durante una prueba de campo auditada.
-    const secure = Boolean(
-      (this.config.securityMode === 'SignAndEncrypt' && this.config.identity.type !== 'anonymous') ||
-        this.config.allowInsecureWrites,
-    );
+    // Administrative exceptions never establish cryptographic security.
+    const secure = this.config.securityMode === 'SignAndEncrypt' && this.config.identity.type !== 'anonymous';
     return { secure, securityMode: this.config.securityMode, identity: this.config.identity.type };
   }
 
   async writeBufferElement(target: BufferElementTarget, value: number | boolean): Promise<void> {
-    const resolved = this.findResolvedElement(target);
-    const statusCode = await this.session!.write({
-      nodeId: resolveNodeId(resolved.nodeId),
-      attributeId: AttributeIds.Value,
-      indexRange: new NumericRange(target.index), // escribe UN elemento del array (regla 6: nunca el array entero por gusto)
-      value: {
-        value: new Variant({
-          dataType: channelDataType(target.channel),
-          arrayType: VariantArrayType.Array,
-          value: [value],
-        }),
-      },
-    });
-    if (statusCode.value !== StatusCodes.Good.value) {
-      throw new Error(`write OPC UA rechazado (${statusCode.toString()}) en ${target.sourceBuffer}[${target.index}]`);
+    if (!canWriteOnConnection(this.config, this.getWriteSecurity())) {
+      throw new Error('WRITES_DISABLED_INSECURE_SESSION: se requiere escritura habilitada y sesión cifrada o autorización de red para el endpoint autenticado');
     }
+    const resolved = this.findResolvedElement(target);
+    // El INT_OUT real es Int16: escribir con su tipo declarado evita depender de
+    // que Optix convierta un Int32 antes de propagarlo al controlador.
+    const dataType = resolved.dataType === 'Int16' ? DataType.Int16 : channelDataType(target.channel);
+    await escribirElemento(this.session!, resolved.nodeId, target, value, dataType);
+  }
+
+  async readBufferFreshness(plantId: string, browseName: string) {
+    if (!this.session) throw new Error('sin sesión OPC UA activa');
+    const target = this.targets.find((t) => t.plantId === plantId && t.browseName === browseName);
+    if (!target) throw new Error('buffer desconocido');
+    const value = await this.session.read({ nodeId: target.nodeId, attributeId: AttributeIds.Value });
+    return {
+      sourceTimestamp: value.sourceTimestamp?.toISOString() ?? null,
+      statusCode: value.statusCode.toString(),
+      good: isGoodStatus(value.statusCode),
+    };
   }
 
   async readBufferElement(target: BufferElementTarget): Promise<BufferElementRead> {
     const resolved = this.findResolvedElement(target);
-    const dv = await this.session!.read({
-      nodeId: resolveNodeId(resolved.nodeId),
-      attributeId: AttributeIds.Value,
-      indexRange: new NumericRange(target.index),
-    });
-    const raw = Array.isArray(dv.value?.value) ? dv.value.value[0] : dv.value?.value;
-    const value = typeof raw === 'boolean' ? raw : raw == null ? null : Number(raw);
-    return {
-      value,
-      quality: isGoodStatus(dv.statusCode) ? 'Good' : 'Bad',
-      sourceTimestamp: dv.sourceTimestamp ? new Date(dv.sourceTimestamp).toISOString() : null,
-    };
+    return leerElemento(this.session!, resolved.nodeId, target);
   }
 
   private findResolvedElement(target: BufferElementTarget): ResolvedTarget {

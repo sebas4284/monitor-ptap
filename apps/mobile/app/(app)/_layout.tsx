@@ -1,22 +1,103 @@
-import { useMemo, useState } from 'react';
-import { Tabs, Redirect, router } from 'expo-router';
+import { createElement, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Tabs, Redirect, router, useIsFocused, usePathname } from 'expo-router';
+import { NavigationTabButton } from '../../components/NavigationTabButton';
 import {
   View,
   Text,
   TouchableOpacity,
   Modal,
+  ScrollView,
   Pressable,
   StyleSheet,
   ActivityIndicator,
+  Animated,
+  Easing,
+  useWindowDimensions,
+  Platform,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '../../components/AppIcon';
 import Colors from '../../constants/colors';
+import { Fonts, usePoppins } from '../../constants/fonts';
 import { useAuth } from '../../context/AuthContext';
+import { usePlant } from '../../context/PlantContext';
 import { useUnseenNotifications } from '../../hooks/useNotifications';
+import { NavigationSearch, ProfileButton } from '../../components/NavigationSearch';
 import { NotificationOptIn } from '../../components/NotificationOptIn';
 import { usePendingUsers } from '../../hooks/usePendingUsers';
+import { useReducedMotion } from '../../hooks/useReducedMotion';
 import { useWebEscape } from '../../hooks/useWebEscape';
+import { navigationItems } from '../../services/navigation-menu';
 import { ROLE_LABELS, ROLE_COLORS, type AuthUser } from '@ptap/shared';
+
+const B = Colors.brand;
+/** Desde este ancho las pestañas pasan a una barra lateral (como el panel de plantas del tablero). */
+const SIDEBAR_MIN_WIDTH = 1024;
+
+function MainScene({ children }: { children: ReactNode }) {
+  const focused = useIsFocused();
+  // A stable tag preserves tab state when focus changes; inactive scenes cannot receive focus.
+  if (Platform.OS === 'web')
+    return createElement(
+      'div',
+      {
+        role: focused ? 'main' : undefined,
+        inert: !focused,
+        style: {
+          display: 'flex',
+          flexDirection: 'column',
+          flex: 1,
+          minWidth: 0,
+          minHeight: 0,
+          position: 'relative',
+        },
+      },
+      children,
+    );
+  return <View style={styles.layout}>{children}</View>;
+}
+
+const renderMainScene = ({ children }: { children: ReactNode }) => (
+  <MainScene>{children}</MainScene>
+);
+
+function HeaderFocusGroup({ children }: { children: ReactNode }) {
+  const focused = useIsFocused();
+  if (Platform.OS === 'web')
+    return createElement(
+      'div',
+      {
+        inert: !focused,
+        style: { display: 'contents' },
+      },
+      children,
+    );
+  return <>{children}</>;
+}
+
+/**
+ * Título de la cabecera: "Aquora · planta". Aislado para que el cambio de planta repinte solo este
+ * texto y no las opciones de las 7 pestañas. Sin el logo: a la altura de la cabecera sus letras son
+ * ilegibles y repetían "Aquora"; el logo va en el encabezado con agua del tablero.
+ */
+function HeaderTitle() {
+  const { selectedPlant } = usePlant();
+  const wide = useWindowDimensions().width >= 700;
+  return (
+    <View
+      style={styles.titleRow}
+      accessible
+      accessibilityRole="header"
+      accessibilityLabel={`Aquora, planta ${selectedPlant.name}`}
+    >
+      <Text style={styles.titleBrand}>Aquora</Text>
+      {wide && (
+        <Text style={styles.titlePlant} numberOfLines={1}>
+          · {selectedPlant.name}
+        </Text>
+      )}
+    </View>
+  );
+}
 
 /**
  * Campana de notificaciones AISLADA.
@@ -32,16 +113,18 @@ function AlertBell() {
   const unseen = useUnseenNotifications();
   return (
     <TouchableOpacity
-      style={{ marginRight: 16 }}
+      style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
       hitSlop={8}
       onPress={() => router.push('/(app)/alertas')}
       accessibilityRole="button"
       accessibilityLabel={
-        unseen > 0 ? `Notificaciones: ${unseen} sin ver` : 'Notificaciones: ninguna sin ver'
+        unseen > 0
+          ? `Notificaciones: ${unseen > 9 ? '9+' : unseen} sin ver`
+          : 'Notificaciones: ninguna sin ver'
       }
     >
       <View>
-        <Ionicons name="notifications-outline" size={24} color="#fff" />
+        <Ionicons name="notifications-outline" size={24} color={B.text} aria-hidden />
         {unseen > 0 && (
           <View style={styles.notifBadge}>
             <Text style={styles.notifText}>{unseen > 9 ? '9+' : unseen}</Text>
@@ -57,14 +140,20 @@ function MenuButton({ onPress }: { onPress: () => void }) {
   const { count } = usePendingUsers();
   return (
     <TouchableOpacity
-      style={{ marginLeft: 16 }}
+      style={{
+        marginLeft: 12,
+        width: 44,
+        height: 44,
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
       hitSlop={8}
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={count > 0 ? `Menú. ${count} cuentas pendientes de aprobar` : 'Menú'}
     >
       <View>
-        <Ionicons name="menu" size={24} color="#fff" />
+        <Ionicons name="menu" size={24} color={B.text} />
         {/* Punto de aviso: hay cuentas pendientes de aprobar (solo lo ve un admin). */}
         {count > 0 && (
           <View style={styles.menuDot}>
@@ -80,10 +169,12 @@ function MenuModal({
   visible,
   onClose,
   user,
+  mode,
 }: {
   visible: boolean;
   onClose: () => void;
   user: AuthUser | null;
+  mode: 'navigation' | 'account';
 }) {
   const { logout, hasPermission } = useAuth();
   const { count: pendingCount } = usePendingUsers();
@@ -94,29 +185,20 @@ function MenuModal({
     router.replace('/(auth)/login');
   }
 
-  function goToUsers() {
-    onClose();
-    router.push('/(app)/usuarios');
-  }
-
-  function goToSettings() {
-    onClose();
-    router.push('/(app)/ajustes');
-  }
-
-  function goToAlerts() {
-    onClose();
-    router.push('/(app)/alertas');
-  }
+  const pathname = usePathname();
+  useWebEscape(visible, onClose);
 
   const roleColor = user ? ROLE_COLORS[user.role] : Colors.primary;
 
-  // `onRequestClose` solo dispara en Android. En web, Escape no cerraba el menú: había que
-  // acertarle al fondo con el ratón.
-  useWebEscape(visible, onClose);
+  const reducedMotion = useReducedMotion();
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType={reducedMotion ? 'none' : 'fade'}
+      onRequestClose={onClose}
+    >
       <Pressable
         style={styles.overlay}
         onPress={onClose}
@@ -128,57 +210,97 @@ function MenuModal({
           onPress={() => {}}
           // Aísla el menú del resto del árbol para los lectores de pantalla mientras está abierto.
           accessibilityViewIsModal
-          accessibilityRole="menu"
+          role="dialog"
+          accessibilityLabel={mode === 'navigation' ? 'Menú principal' : 'Menú de usuario'}
         >
-          <View style={styles.drawerHeader}>
-            <View style={styles.drawerAvatar}>
-              <Ionicons name="person" size={28} color="#fff" />
+          <ScrollView keyboardShouldPersistTaps="handled">
+            <View style={styles.drawerHeader}>
+              <Pressable
+                onPress={onClose}
+                style={styles.drawerClose}
+                accessibilityRole="button"
+                accessibilityLabel="Cerrar menú"
+              >
+                <Ionicons name="close" size={22} color="#fff" />
+              </Pressable>
+              <View style={styles.drawerAvatar}>
+                <Ionicons name="person" size={28} color="#fff" />
+              </View>
+              <Text style={styles.drawerTitle}>{user?.name ?? 'Usuario'}</Text>
+              <View style={[styles.roleBadge, { backgroundColor: roleColor + '30' }]}>
+                <Text style={[styles.roleText, { color: '#fff' }]}>
+                  {user ? ROLE_LABELS[user.role] : '—'}
+                </Text>
+              </View>
+              <Text style={styles.drawerSubtitle}>{user?.plant ?? 'Sistema de Monitoreo'}</Text>
             </View>
-            <Text style={styles.drawerTitle}>{user?.name ?? 'Usuario'}</Text>
-            <View style={[styles.roleBadge, { backgroundColor: roleColor + '30' }]}>
-              <Text style={[styles.roleText, { color: '#fff' }]}>
-                {user ? ROLE_LABELS[user.role] : '—'}
-              </Text>
-            </View>
-            <Text style={styles.drawerSubtitle}>{user?.plant ?? 'Sistema de Monitoreo'}</Text>
-          </View>
 
-          {/* Solo Admin: la matriz oficial reserva la gestión de usuarios al Administrador.
-              Ocultarlo es comodidad de UI — el backend igual responde 403 a los demás. */}
-          {hasPermission('manage_users') && (
-            <TouchableOpacity style={styles.drawerItem} onPress={goToUsers}>
-              <Ionicons name="people-outline" size={20} color={Colors.textPrimary} />
-              <Text style={styles.drawerItemText}>Usuarios</Text>
-              {pendingCount > 0 && (
-                <View style={styles.pendingPill}>
-                  <Text style={styles.pendingPillText}>
-                    {pendingCount > 9 ? '9+' : pendingCount} pendiente{pendingCount === 1 ? '' : 's'}
+            <Text style={styles.drawerSection}>{mode === 'navigation' ? 'Navegación' : 'Cuenta'}</Text>
+            {mode === 'navigation' && navigationItems(hasPermission).map((item) => {
+              const selected = pathname === item.path.replace('/(app)', '');
+              return (
+                <Pressable
+                  key={item.path}
+                  accessibilityRole="button"
+                  accessibilityLabel={item.name}
+                  accessibilityState={{ selected }}
+                  aria-pressed={selected}
+                  onPress={() => {
+                    onClose();
+                    router.push(item.path);
+                  }}
+                  style={({ pressed }) => [
+                    styles.drawerItem,
+                    selected && styles.drawerItemSelected,
+                    pressed && { opacity: 0.75 },
+                  ]}
+                >
+                  <Ionicons
+                    name={item.icon}
+                    size={20}
+                    color={selected ? B.link : B.textSecondary}
+                  />
+                  <Text style={[styles.drawerItemText, selected && { color: B.link }]}>
+                    {item.name}
                   </Text>
-                </View>
-              )}
-            </TouchableOpacity>
-          )}
-
-          <TouchableOpacity style={styles.drawerItem} onPress={goToSettings}>
-            <Ionicons name="settings-outline" size={20} color={Colors.textPrimary} />
-            <Text style={styles.drawerItemText}>Ajustes</Text>
-          </TouchableOpacity>
-
-          {/* Alertas REALES (derivadas del snapshot): solo tienen sentido para roles que ven el
-              tablero. El Civil (solo estado básico) no recibe señales, así que no se le ofrece. */}
-          {hasPermission('view_dashboard') && (
-            <TouchableOpacity style={styles.drawerItem} onPress={goToAlerts}>
-              <Ionicons name="notifications-outline" size={20} color={Colors.textPrimary} />
-              <Text style={styles.drawerItemText}>Alertas</Text>
-            </TouchableOpacity>
-          )}
-
-          <View style={styles.drawerDivider} />
-
-          <TouchableOpacity style={styles.drawerLogout} onPress={handleLogout}>
-            <Ionicons name="log-out-outline" size={20} color={Colors.danger} />
-            <Text style={styles.drawerLogoutText}>Cerrar sesión</Text>
-          </TouchableOpacity>
+                  {item.path === '/(app)/usuarios' && pendingCount > 0 && (
+                    <View style={styles.pendingPill}>
+                      <Text style={styles.pendingPillText}>
+                        {pendingCount > 9 ? '9+' : pendingCount} pendiente
+                        {pendingCount === 1 ? '' : 's'}
+                      </Text>
+                    </View>
+                  )}
+                </Pressable>
+              );
+            })}
+            {mode === 'account' && (
+              <>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Ajustes de usuario"
+                  onPress={() => {
+                    onClose();
+                    router.push('/(app)/ajustes');
+                  }}
+                  style={({ pressed }) => [styles.drawerItem, pressed && { opacity: 0.75 }]}
+                >
+                  <Ionicons name="settings-outline" size={20} color={B.textSecondary} />
+                  <Text style={styles.drawerItemText}>Ajustes de usuario</Text>
+                </Pressable>
+                <View style={styles.drawerDivider} />
+                <TouchableOpacity
+                  style={styles.drawerLogout}
+                  onPress={handleLogout}
+                  accessibilityRole="button"
+                  accessibilityLabel="Cerrar sesión"
+                >
+                  <Ionicons name="log-out-outline" size={20} color={Colors.danger} />
+                  <Text style={styles.drawerLogoutText}>Cerrar sesión</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </ScrollView>
         </Pressable>
       </Pressable>
     </Modal>
@@ -186,21 +308,57 @@ function MenuModal({
 }
 
 export default function AppLayout() {
-  const [menuVisible, setMenuVisible] = useState(false);
+  const [menuMode, setMenuMode] = useState<'navigation' | 'account' | null>(null);
+  const [navigationCollapsed, setNavigationCollapsed] = useState(false);
+  const reducedMotion = useReducedMotion();
+  const [arrowProgress] = useState(() => new Animated.Value(1));
+  useEffect(() => {
+    const target = navigationCollapsed ? 0 : 1;
+    if (reducedMotion) {
+      arrowProgress.setValue(target);
+      return;
+    }
+    const animation = Animated.timing(arrowProgress, {
+      toValue: target,
+      duration: 200,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: Platform.OS !== 'web',
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [navigationCollapsed, reducedMotion, arrowProgress]);
   const { user, token, isLoading } = useAuth();
+  // Poppins para los componentes del tablero; si falla la carga se sigue con la fuente del sistema.
+  const [fontsLoaded, fontError] = usePoppins();
   const isCivil = user?.role === 'civil';
+  const sidebar = useWindowDimensions().width >= SIDEBAR_MIN_WIDTH;
 
-  // Opciones de cabecera ESTABLES: se esparcen en 7 `Tabs.Screen`, así que recrearlas en cada
-  // render obligaba a react-navigation a re-evaluar las 7. `setMenuVisible` es estable (useState),
-  // y los conteos viven ahora dentro de `<AlertBell/>` y `<MenuButton/>`, no aquí.
+  // Las opciones solo cambian al adaptar o contraer la navegación. `setMenuMode` es estable,
+  // y los conteos viven ahora dentro de `<AlertBell/>` y `<MenuButton/>`, no aquí. La planta vive
+  // dentro de `<HeaderTitle/>` por la misma razón. Las pantallas con título propio (Alertas,
+  // Usuarios…) lo sobrescriben con `headerTitle: 'texto'` y heredan el estilo.
   const HEADER_OPTS = useMemo(
     () => ({
-      headerStyle: { backgroundColor: Colors.primary },
-      headerTintColor: '#fff',
-      headerTitle: 'MONITOR / PTAP',
-      headerTitleStyle: { fontWeight: '800' as const, fontSize: 16, letterSpacing: 1 },
-      headerLeft: () => <MenuButton onPress={() => setMenuVisible(true)} />,
-      headerRight: () => <AlertBell />,
+      headerStyle: { backgroundColor: B.panel, borderBottomWidth: 1, borderBottomColor: B.divider },
+      headerShadowVisible: false,
+      headerTintColor: B.text,
+      headerTitleAlign: 'left' as const,
+      headerTitle: () => <HeaderTitle />,
+      headerTitleStyle: { fontFamily: Fonts.semibold, fontSize: 17, color: B.text },
+      headerLeft: () => (
+        <HeaderFocusGroup>
+          <MenuButton onPress={() => setMenuMode('navigation')} />
+        </HeaderFocusGroup>
+      ),
+      headerRight: () => (
+        <HeaderFocusGroup>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingRight: 12 }}>
+            <NavigationSearch />
+            <AlertBell />
+            <ProfileButton onPress={() => setMenuMode('account')} />
+          </View>
+        </HeaderFocusGroup>
+      ),
     }),
     [],
   );
@@ -211,17 +369,19 @@ export default function AppLayout() {
   //  2. El cierre AUTOMÁTICO a las 8 h (AuthContext vence el token y deja token=null).
   //  3. Un 401 del backend (token revocado/vencido): onUnauthorized hace logout y esto redirige.
   // Mientras se restaura la sesión persistida no se decide nada (evita el parpadeo al login).
-  if (isLoading) {
+  if (isLoading || (Platform.OS !== 'web' && !fontsLoaded && !fontError)) {
     return (
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.bg }}>
-        <ActivityIndicator size="large" color={Colors.primary} />
+      <View
+        style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: B.page }}
+      >
+        <ActivityIndicator size="large" color={B.blue} />
       </View>
     );
   }
   if (!token) return <Redirect href="/(auth)/login" />;
 
   return (
-    <>
+    <View style={styles.layout}>
       {/* La franja de permiso vive AQUÍ, no en Ajustes. El permiso del sistema no se puede pedir
           solo —los navegadores lo rechazan y Android lo cuenta como denegado para siempre—, así que
           hace falta un gesto del usuario; y hasta ahora ese gesto solo era posible si alguien
@@ -232,20 +392,50 @@ export default function AppLayout() {
       {/* Montado solo mientras está abierto: un `<Modal visible={false}>` monta igual su subárbol,
           y con él un segundo observador de `usePendingUsers` que re-renderizaba el cajón cerrado
           cada 60 s. El badge del botón de menú sigue vivo por su cuenta. */}
-      {menuVisible && <MenuModal visible onClose={() => setMenuVisible(false)} user={user} />}
+      {menuMode && <MenuModal visible onClose={() => setMenuMode(null)} user={user} mode={menuMode} />}
       <Tabs
+        screenLayout={renderMainScene}
         screenOptions={{
-          tabBarActiveTintColor: Colors.primary,
-          tabBarInactiveTintColor: Colors.textSecondary,
+          tabBarActiveTintColor: B.link,
+          tabBarInactiveTintColor: B.textSecondary,
+          // Escritorio: navegación agrupada bajo la cabecera. Celular: barra inferior.
+          tabBarPosition: sidebar ? 'left' : 'bottom',
+          tabBarVariant: 'uikit',
+          tabBarLabelPosition: sidebar ? 'beside-icon' : 'below-icon',
+          tabBarShowLabel: !sidebar || !navigationCollapsed,
+          tabBarActiveBackgroundColor: sidebar ? B.selected : undefined,
           tabBarStyle: isCivil
             ? { display: 'none' }
-            : {
-                backgroundColor: Colors.bg,
-                borderTopColor: Colors.divider,
-                elevation: 0,
-                shadowOpacity: 0,
-              },
-          tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
+            : sidebar
+              ? [styles.rail, navigationCollapsed && styles.railCollapsed]
+              : styles.bottomBar,
+          tabBarItemStyle: sidebar ? styles.railItem : styles.bottomItem,
+          tabBarBackground: sidebar
+            ? () => (
+                <View style={styles.railSurface} pointerEvents="none">
+                  <View style={styles.railHeading}>
+                    {!navigationCollapsed && <Text style={styles.railHeadingText}>Navegación</Text>}
+                  </View>
+                </View>
+              )
+            : undefined,
+          // Celular: raya azul de 2 px arriba de la pestaña activa (referencia TableroMovil). Es el
+          // mismo botón que pinta la barra por defecto; solo se le añade el borde según aria-selected.
+          tabBarButton: ({ style, ...props }) => (
+            <NavigationTabButton
+              {...props}
+              style={[
+                style,
+                !sidebar && styles.tabTop,
+                !sidebar && props['aria-selected'] && styles.tabTopActive,
+              ]}
+            />
+          ),
+          tabBarLabelStyle: {
+            fontFamily: Fonts.medium,
+            fontSize: sidebar ? 14 : 11,
+            lineHeight: sidebar ? 20 : 18,
+          },
         }}
       >
         <Tabs.Screen
@@ -253,18 +443,30 @@ export default function AppLayout() {
           options={{
             ...HEADER_OPTS,
             tabBarLabel: 'Tablero',
+            tabBarAccessibilityLabel: 'Tablero',
             tabBarIcon: ({ color, size, focused }) => (
-              <Ionicons name={focused ? 'grid' : 'grid-outline'} size={size} color={color} />
+              <Ionicons
+                name={focused ? 'grid' : 'grid-outline'}
+                size={size}
+                color={typeof color === 'string' ? color : Colors.primary}
+              />
             ),
           }}
         />
         <Tabs.Screen
           name="electrovalvulas"
+          // Mantener los efectos de supervisión activos mientras una maniobra está pendiente.
+          activityEnabled={false}
           options={{
             ...HEADER_OPTS,
             tabBarLabel: 'Válvulas',
+            tabBarAccessibilityLabel: 'Válvulas',
             tabBarIcon: ({ color, size, focused }) => (
-              <Ionicons name={focused ? 'toggle' : 'toggle-outline'} size={size} color={color} />
+              <Ionicons
+                name={focused ? 'toggle' : 'toggle-outline'}
+                size={size}
+                color={typeof color === 'string' ? color : Colors.primary}
+              />
             ),
           }}
         />
@@ -273,11 +475,12 @@ export default function AppLayout() {
           options={{
             ...HEADER_OPTS,
             tabBarLabel: 'Reportes',
+            tabBarAccessibilityLabel: 'Reportes',
             tabBarIcon: ({ color, size, focused }) => (
               <Ionicons
                 name={focused ? 'document-text' : 'document-text-outline'}
                 size={size}
-                color={color}
+                color={typeof color === 'string' ? color : Colors.primary}
               />
             ),
           }}
@@ -285,7 +488,8 @@ export default function AppLayout() {
         <Tabs.Screen
           name="estado"
           options={{
-            href: null,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' },
             ...HEADER_OPTS,
             headerTitle: 'Estado General',
           }}
@@ -294,7 +498,8 @@ export default function AppLayout() {
         <Tabs.Screen
           name="alertas"
           options={{
-            href: null,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' },
             ...HEADER_OPTS,
             headerTitle: 'Alertas',
           }}
@@ -303,7 +508,8 @@ export default function AppLayout() {
         <Tabs.Screen
           name="usuarios"
           options={{
-            href: null,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' },
             ...HEADER_OPTS,
             headerTitle: 'Usuarios',
           }}
@@ -312,17 +518,122 @@ export default function AppLayout() {
         <Tabs.Screen
           name="ajustes"
           options={{
-            href: null,
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' },
             ...HEADER_OPTS,
             headerTitle: 'Ajustes',
           }}
         />
+        <Tabs.Screen
+          name="ayuda"
+          options={{
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' },
+            ...HEADER_OPTS,
+            headerTitle: 'Ayuda',
+          }}
+        />
+        {/* Fuera del tab bar: se entra desde Ajustes, y el backend solo la sirve con
+            `system_config`. La pantalla vuelve a comprobarlo por su cuenta. */}
+        <Tabs.Screen
+          name="revision"
+          options={{
+            href: null,
+            ...HEADER_OPTS,
+            headerTitle: 'Revisión por planta',
+          }}
+        />
+        <Tabs.Screen
+          name="desarrollador"
+          options={{
+            tabBarButton: () => null,
+            tabBarItemStyle: { display: 'none' },
+            ...HEADER_OPTS,
+            headerTitle: 'Modo desarrollador',
+          }}
+        />
       </Tabs>
-    </>
+      {sidebar && !isCivil && (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={navigationCollapsed ? 'Expandir navegación' : 'Contraer navegación'}
+          aria-expanded={!navigationCollapsed}
+          onPress={() => setNavigationCollapsed((value) => !value)}
+          style={({ pressed }) => [
+            styles.navigationToggle,
+            { left: (navigationCollapsed ? 72 : 220) - 44 - 8 },
+            pressed && styles.navigationTogglePressed,
+          ]}
+        >
+          <Animated.View
+            style={{
+              transform: [
+                {
+                  rotate: arrowProgress.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: ['0deg', '180deg'],
+                  }),
+                },
+              ],
+            }}
+          >
+            <Ionicons name="chevron-forward" size={20} color={B.link} />
+          </Animated.View>
+        </Pressable>
+      )}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  layout: { flex: 1 },
+  navigationToggle: {
+    position: 'absolute',
+    top: '50%',
+    marginTop: -22,
+    zIndex: 30,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: B.panel,
+    borderWidth: 1,
+    borderColor: B.divider,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  navigationTogglePressed: { backgroundColor: B.selected },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 6, maxWidth: '100%' },
+  titleBrand: { fontFamily: Fonts.semibold, fontSize: 17, color: B.text },
+  titlePlant: { fontFamily: Fonts.regular, fontSize: 15, color: B.textSecondary, flexShrink: 1 },
+  // Etiquetas junto al icono en escritorio; navegación inferior en móvil.
+  rail: {
+    width: 220,
+    minWidth: 220,
+    maxWidth: 220,
+    backgroundColor: B.panel,
+    borderRightWidth: 0,
+    paddingTop: 80,
+    paddingHorizontal: 12,
+  },
+  railSurface: { flex: 1, backgroundColor: B.panel },
+  railCollapsed: { width: 72, minWidth: 72, maxWidth: 72 },
+  railHeading: { height: 64, justifyContent: 'center', paddingHorizontal: 24 },
+  railHeadingText: { fontFamily: Fonts.semibold, fontSize: 14, color: B.textSecondary },
+  railItem: { borderRadius: 10, marginVertical: 4, minHeight: 48, paddingHorizontal: 4 },
+  bottomItem: { height: 58 },
+  tabTop: { borderTopWidth: 2, borderTopColor: 'transparent' },
+  tabTopActive: { borderTopColor: B.blue },
+  // Poppins es más alta que la fuente del sistema: con el alto por defecto la etiqueta quedaba
+  // aplastada a 9 px y cortada abajo.
+  bottomBar: {
+    backgroundColor: B.panel,
+    borderTopColor: B.divider,
+    elevation: 0,
+    shadowOpacity: 0,
+    height: 66,
+    paddingTop: 4,
+    paddingBottom: 4,
+  },
   overlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.45)',
@@ -330,12 +641,13 @@ const styles = StyleSheet.create({
   },
   drawer: {
     width: 280,
-    backgroundColor: Colors.bg,
-    paddingBottom: 32,
+    maxWidth: '100%',
+    backgroundColor: B.panel,
+    paddingBottom: 16,
   },
   drawerHeader: {
-    backgroundColor: Colors.primary,
-    paddingTop: 52,
+    backgroundColor: B.selected,
+    paddingTop: 24,
     paddingBottom: 24,
     paddingHorizontal: 20,
     alignItems: 'flex-start',
@@ -352,7 +664,25 @@ const styles = StyleSheet.create({
   drawerTitle: {
     color: '#fff',
     fontSize: 17,
-    fontWeight: '700',
+    fontFamily: Fonts.semibold,
+    paddingRight: 20,
+  },
+  drawerClose: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  drawerSection: {
+    fontFamily: Fonts.medium,
+    color: B.textSecondary,
+    fontSize: 12,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 8,
   },
   roleBadge: {
     marginTop: 6,
@@ -376,11 +706,16 @@ const styles = StyleSheet.create({
     gap: 14,
     paddingHorizontal: 20,
     paddingVertical: 16,
+    minHeight: 52,
+    marginHorizontal: 8,
+    borderRadius: 10,
   },
+  drawerItemSelected: { backgroundColor: B.selected },
   drawerItemText: {
     fontSize: 15,
-    color: Colors.textPrimary,
-    fontWeight: '500',
+    color: B.text,
+    fontFamily: Fonts.medium,
+    flexShrink: 1,
   },
   drawerDivider: {
     height: 1,
@@ -404,7 +739,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: -4,
     right: -6,
-    backgroundColor: Colors.danger,
+    backgroundColor: '#B91C1C',
     borderRadius: 8,
     minWidth: 16,
     height: 16,

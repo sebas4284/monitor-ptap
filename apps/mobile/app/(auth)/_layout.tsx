@@ -1,4 +1,5 @@
-import { Stack, Redirect } from 'expo-router';
+import { Slot, Stack, Redirect } from 'expo-router';
+import { Platform } from 'react-native';
 import { useAuth } from '../../context/AuthContext';
 
 export default function AuthLayout() {
@@ -10,6 +11,8 @@ export default function AuthLayout() {
   if (!isLoading && token) {
     return <Redirect href={user?.role === 'civil' ? '/(app)/estado' : '/(app)/tablero'} />;
   }
+
+  if (Platform.OS === 'web') return <Slot />;
 
   return (
     <Stack screenOptions={{ headerShown: false }}>

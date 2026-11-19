@@ -1,4 +1,4 @@
-import { Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
 import { hasRangeAnomaly, isOutOfOperatingRange, type PlantSnapshotDto } from '@ptap/shared';
 import { PlantCache } from '../../infrastructure/connectivity/pipeline/plant-cache';
 import { PlantPipelineService } from '../../infrastructure/connectivity/pipeline/plant-pipeline.service';
@@ -43,9 +43,9 @@ export class StaleDataDetector implements OnModuleInit, OnModuleDestroy {
   private readonly retentionDays = Number(process.env.NOTIFY_RETENTION_DAYS ?? 30);
 
   constructor(
-    private readonly pipeline: PlantPipelineService,
-    private readonly cache: PlantCache,
-    private readonly repo: NotificationRepository,
+    @Inject(PlantPipelineService) private readonly pipeline: PlantPipelineService,
+    @Inject(PlantCache) private readonly cache: PlantCache,
+    @Inject(NotificationRepository) private readonly repo: NotificationRepository,
   ) {}
 
   onModuleInit(): void {

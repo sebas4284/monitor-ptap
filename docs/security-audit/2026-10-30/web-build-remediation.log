@@ -1,0 +1,68 @@
+Expo Autolinking module resolution enabled
+Starting Metro Bundler
+
+Static rendering is enabled. Learn more: https://docs.expo.dev/router/web/static-rendering/
+| (node:4284) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+| (Use `node --trace-warnings ...` to show where the warning was created)
+| (node:4284) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+| (Use `node --trace-warnings ...` to show where the warning was created)
+| (node:4284) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+| (Use `node --trace-warnings ...` to show where the warning was created)
+| (node:4284) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+| (Use `node --trace-warnings ...` to show where the warning was created)
+| (node:4284) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+| (Use `node --trace-warnings ...` to show where the warning was created)
+| (node:4284) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+| (Use `node --trace-warnings ...` to show where the warning was created)
+| (node:4284) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+| (Use `node --trace-warnings ...` to show where the warning was created)
+λ Bundled 18294ms node_modules\@expo\router-server\node\render.js (1181 modules)
+Web Bundled 18691ms apps\mobile\index.js (1117 modules)
+
+› web bundles (19):
+_expo/static/js/web/__common-2fc755f381578fde0c1acffe63c0c9b1.js (720KB)
+_expo/static/js/web/__expo-metro-runtime-97703ae02682710149335928b974f18d.js (10KB)
+_expo/static/js/web/_layout-2ae8806991c50dd35b14068da5fe54c7.js (523B)
+_expo/static/js/web/_layout-659ecae89476aed344416c43a580a9c8.js (11KB)
+_expo/static/js/web/_layout-db677417af4c10dd6cbe7c55fbf69a31.js (3.5KB)
+_expo/static/js/web/ajustes-36a1ddfe6b518fb429e1640e369d0ad8.js (34KB)
+_expo/static/js/web/alertas-dc2b05861e9d7b027d9ed6111f744e3f.js (17KB)
+_expo/static/js/web/BackgroundTask-5802a5216a6f048829e17f5aa85f694b.js (3.1KB)
+_expo/static/js/web/desarrollador-2640a8ac3e32bbb226cdec753c188c46.js (63KB)
+_expo/static/js/web/electrovalvulas-53ba48726bbbb201e82a29b63c820279.js (22KB)
+_expo/static/js/web/estado-79ab6cd100c67f60ddc000ba0276e49e.js (4.2KB)
+_expo/static/js/web/index-10c099c0900649eaf94241c3295e8586.js (63KB)
+_expo/static/js/web/index-2f5993681b8e2ed470d57b477abbb6a0.js (1.1MB)
+_expo/static/js/web/index-2f5d9178425d6ef76808f00a0f6d8ef6.js (703B)
+_expo/static/js/web/login-1f9b82eff50ec51268a40713c1fd14c8.js (4.9KB)
+_expo/static/js/web/register-9f044a6323b832a2b859d100addf2459.js (9.5KB)
+_expo/static/js/web/reportes-a075a2db42712c3987b3a790af61c1c7.js (7.6KB)
+_expo/static/js/web/tablero-7d1cc6cddf96a4cbad7a6decfc26ef22.js (29KB)
+_expo/static/js/web/usuarios-b39eaa6319a3a239ef02aab195d9d396.js (13KB)
+
+› Static routes (23):
+/ (index) (31KB)
+/login (34KB)
+/estado (31KB)
+/ajustes (31KB)
+/alertas (31KB)
+/tablero (31KB)
+/_sitemap (20KB)
+/reportes (31KB)
+/usuarios (31KB)
+/register (36KB)
+/+not-found (20KB)
+/(app)/estado (31KB)
+/(auth)/login (34KB)
+/(app)/ajustes (31KB)
+/(app)/alertas (31KB)
+/desarrollador (31KB)
+/(app)/tablero (31KB)
+/(app)/reportes (31KB)
+/(app)/usuarios (31KB)
+/electrovalvulas (31KB)
+/(auth)/register (36KB)
+/(app)/desarrollador (31KB)
+/(app)/electrovalvulas (31KB)
+
+Exported: dist

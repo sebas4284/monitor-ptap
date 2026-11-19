@@ -26,10 +26,8 @@ export interface TankView {
   /**
    * Cuánto aguanta el tanque, calculado por el backend. `null` mientras no llegue.
    *
-   * NO se calcula aquí a propósito, aunque los datos estarían a mano: el backend lo hace con un
-   * temporizador estable (banda muerta de 0,2 l/s, salto de régimen de 0,6 l/s) y con el promedio
-   * de salida de 24 h, y es el MISMO número que usan los avisos. Recalcularlo en el móvil daría dos
-   * verdades distintas — la tarjeta diciendo una cosa y la notificación otra.
+   * El backend estima el descenso propio del tanque y publica el mismo resultado que usan los
+   * avisos. La app solo presenta el mínimo operativo, el vaciado y el método empleado.
    */
   autonomy: TankAutonomyDto | null;
 }
@@ -47,15 +45,33 @@ interface ExternalTankDef {
 /**
  * Tanques de OTRAS plantas retransmitidos en el buffer de la planta portadora (Soledad
  * concentra los sitios mínimos; pendiente de rectificar con el operador — ver notas de
- * opc_mapping.json). Se muestran en el tablero de la portadora con nombre
- * explícito y NO participan del estado de agua de esa planta (external: true).
+ * opc_mapping.json). Se muestran SEPARADOS de los propios en el tablero de la portadora y
+ * NO participan del estado de agua de esa planta (external: true).
  */
 const EXTERNAL_TANKS: Record<string, ExternalTankDef[]> = {
   soledad: [
-    { levelKey: 'sanAntonioTankLevel', volumeKey: 'sanAntonioTankVolume', name: 'Tanque San Antonio', fullLevelM: 2.5 },
-    { levelKey: 'quijoteTankLevel', volumeKey: 'quijoteTankVolume', name: 'Tanque El Quijote', fullLevelM: 3 },
+    {
+      levelKey: 'sanAntonioTankLevel',
+      volumeKey: 'sanAntonioTankVolume',
+      name: 'Tanque San Antonio',
+      fullLevelM: 2.5,
+    },
+    {
+      levelKey: 'quijoteTankLevel',
+      volumeKey: 'quijoteTankVolume',
+      name: 'Tanque El Quijote',
+      fullLevelM: 3,
+    },
   ],
 };
+
+/** Agrupa la presentación sin reasignar plantas, recalcular lecturas ni mutar las tarjetas. */
+export function groupTanks(tanks: readonly TankView[]): { own: TankView[]; external: TankView[] } {
+  const own: TankView[] = [];
+  const external: TankView[] = [];
+  for (const tank of tanks) (tank.external ? external : own).push(tank);
+  return { own, external };
+}
 
 /**
  * true si el domainKey lo consume el tablero (tanque propio tank<N>Level/Volume
@@ -115,7 +131,7 @@ function percentageOf(levelM: number | null, fullLevelM: number | null): number 
 
 export function tanksFromSnapshot(snapshot: PlantSnapshotDto | undefined): TankView[] {
   if (!snapshot) return [];
-  const found: Array<{ n: number; tank: TankView }> = [];
+  const found: { n: number; tank: TankView }[] = [];
   // Un tanque existe si tiene Level Y/O Volume (antes solo se derivaba de Level → un tanque con
   // solo Volume mapeado desaparecía del tablero). Se recorre la UNIÓN de ambos keys.
   const nums = new Set<number>();
@@ -144,7 +160,10 @@ export function tanksFromSnapshot(snapshot: PlantSnapshotDto | undefined): TankV
         ts: meta?.ts ?? null,
         outOfRange: meta?.outOfRange ?? false,
         external: false,
-        autonomy: (snapshot.autonomy ?? []).find((a) => a.tankN === n) ?? null,
+        autonomy:
+          (snapshot.autonomy ?? []).find((a) =>
+            a.tankKey ? a.tankKey === `tank${n}` : a.tankN === n,
+          ) ?? null,
       },
     });
   }
@@ -165,9 +184,10 @@ export function tanksFromSnapshot(snapshot: PlantSnapshotDto | undefined): TankV
       ts: level.ts,
       outOfRange: level.outOfRange ?? false,
       external: true,
-      // Un tanque retransmitido pertenece a OTRA planta: su caudal de salida no está en este
-      // snapshot, así que no hay con qué calcular su autonomía y no se finge una.
-      autonomy: null,
+      // La tendencia propia permite estimarlo sin atribuirle el caudal de esta planta.
+      autonomy:
+        (snapshot.autonomy ?? []).find((a) => a.tankKey === ext.levelKey.replace(/Level$/, '')) ??
+        null,
     });
   }
   return tanks;

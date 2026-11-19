@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -11,7 +11,7 @@ import {
   StyleSheet,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from '../../components/AppIcon';
 import { router } from 'expo-router';
 import { apiRegister } from '../../services/auth';
 import { PLANTS } from '../../context/PlantContext';
@@ -58,6 +58,7 @@ export default function RegisterScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [showPlantPicker, setShowPlantPicker] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const submitting = useRef(false);
 
   const plantLabel = PLANTS.find((p) => p.id === plant)?.name ?? plant;
   const strength = passwordStrength(password);
@@ -83,11 +84,13 @@ export default function RegisterScreen() {
   }
 
   async function handleRegister() {
+    if (submitting.current) return;
     const error = validate();
     if (error) {
       toast.error('Revisa los datos', error);
       return;
     }
+    submitting.current = true;
     setIsLoading(true);
     try {
       // No hay token: la cuenta queda pendiente de aprobación → de vuelta al login.
@@ -101,11 +104,12 @@ export default function RegisterScreen() {
       });
       // El aviso vive en la raíz, así que sobrevive a la navegación: se puede volver al login de
       // inmediato en vez de retener al usuario tras un `window.alert` solo para que pulse OK.
-      toast.success('Cuenta creada', message);
+      toast.success('Solicitud recibida', message);
       router.replace('/(auth)/login');
     } catch (err) {
       toast.error('No se pudo crear la cuenta', err instanceof Error ? err.message : 'Intenta de nuevo.');
     } finally {
+      submitting.current = false;
       setIsLoading(false);
     }
   }
@@ -253,6 +257,8 @@ export default function RegisterScreen() {
             <TextInput
               style={[styles.input, styles.passwordInput]}
               value={passwordConfirm}
+              returnKeyType="go"
+              onSubmitEditing={handleRegister}
               onChangeText={setPasswordConfirm}
               placeholder="Escríbela de nuevo"
               placeholderTextColor={Colors.textSecondary}
@@ -275,6 +281,8 @@ export default function RegisterScreen() {
             autoCorrect={false}
             autoCapitalize="none"
             importantForAccessibility="no-hide-descendants"
+            accessible={false}
+            tabIndex={-1}
           />
 
           <TouchableOpacity

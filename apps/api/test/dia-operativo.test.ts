@@ -51,7 +51,7 @@ test('dedupeDay y diaLocal son la MISMA fecha, no dos calendarios', () => {
 
 test('mapping de PRODUCCIÓN: solo La Vorágine declara rango por día, y son 1–3 / 1–2', () => {
   const prod = loadJson(join(__dirname, '..', 'config', 'opc_mapping.json')) as {
-    plants: Array<{ plantId: string; signals?: Array<{ domainKey?: string; opRangeByDay?: unknown }> }>;
+    plants: { plantId: string; signals?: { domainKey?: string; opRangeByDay?: unknown }[] }[];
   };
   const conRango = prod.plants
     .flatMap((p) => (p.signals ?? []).filter((s) => s.opRangeByDay).map((s) => `${p.plantId}/${s.domainKey}`));
@@ -69,7 +69,7 @@ test('mapping de PRODUCCIÓN: el máximo del tanque de La Vorágine es 1,98 m', 
   // Corregido por el cliente el 2026-08-20 (era 1,97). Es el denominador del porcentaje que ve el
   // operario y el que define el 50 %, así que un test lo fija.
   const prod = loadJson(join(__dirname, '..', 'config', 'opc_mapping.json')) as {
-    plants: Array<{ plantId: string; signals?: Array<{ domainKey?: string; opMax?: number; opMin?: number }> }>;
+    plants: { plantId: string; signals?: { domainKey?: string; opMax?: number; opMin?: number }[] }[];
   };
   const nivel = (prod.plants.find((p) => p.plantId === 'voragine')?.signals ?? [])
     .find((s) => s.domainKey === 'tank1Level');

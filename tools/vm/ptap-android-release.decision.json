@@ -1,0 +1,52 @@
+{
+  "schema": "telcobras-decision/1",
+  "artifact_id": "Android release preflight and official VM toolchain preparation",
+  "source_and_version": "Locally authored preflight; installed Expo58.0.20/RN0.88.1/JDK17.0.20/sdkmanager12.0; official Gradle9.4.1 distribution and Google Android SDK37/build-tools37.0.0",
+  "sha256_or_commit": "f5e29b592b6f9ca76653aac88ad41f2f67b136bff18e3e55b82ef7be958e325b",
+  "data_classification": "internal",
+  "requested_operation": "Read-only release readiness; inspect own published APK with installed Android SDK; acquire checksummed official Gradle and Android SDK packages into private VM build area under existing accepted licenses",
+  "authorized_scope": "Root explicitly authorized toolchain installation. No production source mutation, native prebuild, build/release, app installation, daemon restart, corporate upload, secret output, signing key changes or new license acceptance.",
+  "environment_and_destination": "Private user-owned /home/xpertic_app/android-build and caches on production VM; HTTPS official services.gradle.org/downloads.gradle.org redirect sources and Google SDK repositories only",
+  "tools_versions_and_signature_dates": [
+    "Node26.12.1",
+    "TemurinJDK17.0.20",
+    "sdkmanager12.0",
+    "apksigner/aapt2 installed Android build-tools36.0.0"
+  ],
+  "observed_evidence": [
+    "Exact Expo58 docs and notifications read; installed RN catalog compile37/buildTools37.0.0/NDK27.1.12297006/AGP9.2.1",
+    "Official AGP9.2 docs require Gradle9.4.1 and JDK17",
+    "Current SDK platforms35/36 only, Gradle9.3.1 cache and wrapper, no Firebase config",
+    "Own published APK package com.ptap.monitor1.3.0 code8, SHA25676beb266bd6055e5194c69db7975e5dcf44ffbf9b25e9141e9b78d7d20b075bc",
+    "Published APK signing certificate fac61745dc0903786fb9ede62a962b399f7348f0bb6f899b8332667591033b9c matches existing debug keystore; no key material read",
+    "Synthetic preflight validation tests 2pass",
+    "Existing Android SDK licenses directory contains android-sdk-license and preview license; installer must receive n for any new prompts",
+    "Official Gradle9.4.1 archive SHA2562ab2958f2a1e51120c326cad6f385153bb11ee93b3c216c5fccebfdfbb7ec6cb matched before extraction/run; gradle --version passed on JDK17.0.20; Apache2 LICENSE retained",
+    "First SDK acquisition failed: incorrect old-style package name platforms;android-37 not found; no success claimed",
+    "Exact Google SDK IDs platforms;android-37.0 revision2 and build-tools;37.0.0 installed successfully; sdkmanager exit0, no new license prompt, stdin n",
+    "SDK platform package.xml SHA2565c3863d674d541fdaefcfa9e48f5257543662d6aca5eacf97440da44f7f06609; buildtools package.xml SHA256087e02f575103b3fd7f2df6f0b73138dd9b22bb70bd127548188f435d05784c1",
+    "Read-only VM preflight initially failed as expected on missing Firebase, SDK37, compile36 override, oldwrapper and stale native version; no app build executed",
+    "Preparing cache-only plain Gradle dependency resolution in private build area for AGP9.2.1 and ReactAndroid/Hermes0.88.1; one worker,512MiB heap, official Google/MavenCentral repositories",
+    "Final preflight synthetic tests3pass, including malformed JSON diagnostics never exposing synthetic private_key content",
+    "Independent Java-only cache prefetch failed1 because it requested JAR attributes for native Android AAR variants. First attempt also used obsolete Hermes group/version; corrected from installed RN source to com.facebook.hermes:hermes-android:260318099.0.5. No app build attempted and no claim fullcache-ready.",
+    "User latest steering: stop further APK acquisitions/builds until existing Firebase project verified. All running cache jobs have finished.",
+    "Final preflight hash f5e29b592b6f9ca76653aac88ad41f2f67b136bff18e3e55b82ef7be958e325b; tests hash ef5113fcbf4038063ee04b6e0f4e48b9a1b96007b23013e24d888081e1a75464"
+  ],
+  "limitations_and_unexamined_content": [
+    "No native release can start without matching validated google-services.json and confirmed Firebase project",
+    "No comprehensive license or transitive dependency SBOM; distribution notices must remain",
+    "REA local artifact readers cannot access remote VM path; existing SDK official static signature/manifest tools used as specifically requested without downloading APK",
+    "SDK original downloaded archive hashes not exposed by SDK manager; package metadata hashes recorded, vendor integrity checks relied upon"
+  ],
+  "rights_and_notices": "Internal build preparation; retain Gradle Apache2 and dependency notices; SDK terms only previously accepted licenses, never autoaccept new terms.",
+  "decision": "allowed_scoped",
+  "conditions_for_next_action": [
+    "Verify Gradle checksum before extraction/execution",
+    "Abort if SDK manager requires new license acceptance",
+    "Confirm Firebase project/package and preserve existing signing key before coordinated native build",
+    "Use one worker and bounded heap on2CPU/2.2GiB RAM",
+    "Do not start more Android artifact acquisition or native build until Firebase project verified, per latest user instruction"
+  ],
+  "reviewer_and_utc_time": "Codex smtp_production 2026-10-31T13:30:15.5920162Z",
+  "valid_only_for_identified_bytes_and_operation": true
+}

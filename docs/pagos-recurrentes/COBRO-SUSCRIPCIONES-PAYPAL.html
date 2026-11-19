@@ -1,0 +1,532 @@
+<!doctype html>
+<html lang="es">
+<!-- Manual operativo: cobro de suscripciones en Odoo 19 Online con PayPal.
+     Autocontenido: build.ps1 sustituye <!--FONTS--> por las 10 @font-face en base64. -->
+<head>
+<meta charset="utf-8">
+<title>Cobro de suscripciones · Odoo 19 + PayPal</title>
+<style>
+<!--FONTS-->
+</style>
+<style>
+:root{
+  --ground:#F6F8FB; --surface:#FFFFFF; --raised:#EEF2F7; --sunken:#E7ECF3;
+  --ink:#0E1626; --ink-2:#3A485C; --ink-3:#5A6B82; --hair:#D6DEE9; --hair-2:#E4EAF1;
+  --brand:#0F6E7C; --brand-2:#127C8A; --brand-ink:#0A4C56;
+  --live:#1F9D57; --live-bg:#E5F5EC;
+  --stable:#2563C9; --stable-bg:#E6EEFB;
+  --frozen:#DC2626; --frozen-bg:#FBE7E7;
+  --warn:#B4740A; --warn-bg:#FBF0DC;
+  --shadow-sm:0 1px 2px rgba(14,22,38,.07);
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:#fff;color:var(--ink);
+  font-family:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  font-size:9.8pt;line-height:1.44;-webkit-font-smoothing:antialiased;
+  -webkit-print-color-adjust:exact;print-color-adjust:exact}
+h1,h2,h3,h4{font-family:"Archivo","IBM Plex Sans",system-ui,sans-serif;line-height:1.14;letter-spacing:-.014em;margin:0}
+code,.mono{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace}
+code{background:var(--sunken);border:1px solid var(--hair-2);border-radius:4px;padding:.04em .32em;font-size:.87em}
+p{margin:.34rem 0}
+strong,b{font-weight:600}
+@page{size:A4;margin:11mm 13mm 9mm}
+.page{break-after:page;position:relative}
+.page:last-of-type{break-after:auto}
+.avoid{break-inside:avoid}
+
+.hdr{background:linear-gradient(122deg,#0A4C56 0%,#0F6E7C 55%,#127C8A 100%);color:#fff;
+  border-radius:12px;padding:.8rem 1rem .85rem;margin-bottom:.75rem;
+  display:flex;align-items:center;gap:.9rem}
+.hdr .mk{width:40px;height:40px;border-radius:12px;background:rgba(255,255,255,.16);
+  border:1px solid rgba(255,255,255,.3);display:grid;place-items:center;flex:none;
+  font-family:"Archivo";font-weight:800;font-size:19px}
+.hdr .lbl{font-size:7.4pt;letter-spacing:.19em;text-transform:uppercase;color:rgba(255,255,255,.72);font-weight:700}
+.hdr h1{font-size:19pt;font-weight:800;margin:.05rem 0 .1rem}
+.hdr .sub{font-family:"IBM Plex Mono";font-size:9.2pt;color:rgba(255,255,255,.9)}
+
+.eyebrow{font-size:7.4pt;letter-spacing:.19em;text-transform:uppercase;color:var(--brand-2);font-weight:700;margin:0 0 .3rem}
+h2{font-size:14pt;font-weight:800;margin:0 0 .4rem}
+h3{font-size:11pt;font-weight:700;margin:.75rem 0 .28rem}
+h3 .n{font-family:"IBM Plex Mono";font-size:9pt;color:var(--brand-2);font-weight:600;margin-right:.3rem}
+
+.cred{border:1px solid var(--brand);border-left-width:5px;border-radius:11px;background:#F2F8F9;
+  padding:.6rem .8rem;margin:.55rem 0}
+.cred .ct{font-size:7.4pt;letter-spacing:.16em;text-transform:uppercase;color:var(--brand-ink);font-weight:700;margin-bottom:.45rem}
+.cred dl{display:grid;grid-template-columns:auto 1fr;gap:.22rem .9rem;margin:0}
+.cred dt{font-size:8.6pt;color:var(--ink-3);font-weight:600;padding-top:.12rem}
+.cred dd{margin:0;font-family:"IBM Plex Mono";font-size:9.2pt;font-weight:600;color:var(--brand-ink);letter-spacing:-.01em}
+
+table{border-collapse:collapse;width:100%;font-size:8.6pt;background:var(--surface)}
+.tw{border:1px solid var(--hair);border-radius:10px;overflow:hidden;margin:.5rem 0;box-shadow:var(--shadow-sm)}
+th,td{text-align:left;padding:.28rem .55rem;border-bottom:1px solid var(--hair-2);vertical-align:top}
+thead th{background:var(--raised);font-family:"Archivo";font-weight:700;font-size:8.2pt;letter-spacing:.02em}
+tbody tr:last-child td{border-bottom:0}
+td.k{font-weight:600;color:var(--ink)}
+td .v{font-family:"IBM Plex Mono";font-size:8.8pt;color:var(--brand-ink);font-weight:600}
+
+.call{border:1px solid var(--hair);border-left-width:4px;border-radius:9px;padding:.48rem .7rem;margin:.5rem 0;background:var(--surface)}
+.call .ct{font-weight:700;font-size:9pt;display:flex;align-items:center;gap:.45rem;margin-bottom:.05rem}
+.call p{font-size:8.6pt;margin:.12rem 0 0;line-height:1.4}
+.call p:last-child{margin-bottom:0}
+.call .ico{font-family:"Archivo";font-weight:800;width:15px;height:15px;border-radius:4px;display:inline-grid;place-items:center;font-size:8pt;color:#fff;flex:none}
+.call.ok{border-left-color:var(--live);background:var(--live-bg)} .call.ok .ct{color:var(--live)} .call.ok .ico{background:var(--live)}
+.call.info{border-left-color:var(--stable);background:var(--stable-bg)} .call.info .ct{color:var(--stable)} .call.info .ico{background:var(--stable)}
+.call.warn{border-left-color:var(--warn);background:var(--warn-bg)} .call.warn .ct{color:var(--warn)} .call.warn .ico{background:var(--warn)}
+
+.two{display:grid;grid-template-columns:1fr 1fr;gap:.6rem;margin:.5rem 0}
+.card{border:1px solid var(--hair);border-radius:11px;background:var(--surface);box-shadow:var(--shadow-sm);overflow:hidden}
+.card .ch{background:var(--raised);border-bottom:1px solid var(--hair-2);padding:.38rem .7rem}
+.card .ch h4{font-size:11pt;font-weight:800}
+.card .ch span{font-size:7.6pt;color:var(--ink-3);font-family:"IBM Plex Mono"}
+.card .cb{padding:.5rem .7rem .55rem}
+ol.steps{margin:0;padding-left:1.1rem;font-size:8.7pt;line-height:1.38}
+ol.steps li{margin:.16rem 0}
+ol.steps li::marker{font-family:"IBM Plex Mono";font-size:8pt;color:var(--brand-2);font-weight:700}
+ul.tight{margin:.15rem 0 0;padding-left:1rem;font-size:8.6pt;line-height:1.38}
+ul.tight li{margin:.12rem 0}
+ul.check{list-style:none;margin:.2rem 0 0;padding-left:0;font-size:8.8pt;line-height:1.5}
+ul.check li{margin:.2rem 0;padding-left:1.15rem;position:relative}
+ul.check li:before{content:"";position:absolute;left:0;top:.28em;width:9px;height:9px;border:1.5px solid var(--brand);border-radius:3px}
+
+.pill{display:inline-flex;align-items:center;font-size:7.6pt;font-weight:700;padding:.11rem .48rem;border-radius:999px;background:var(--live-bg);color:var(--live)}
+.pill.y{background:var(--warn-bg);color:var(--warn)}
+.pill.b{background:var(--stable-bg);color:var(--stable)}
+.pill.r{background:var(--frozen-bg);color:var(--frozen)}
+footer{border-top:1px solid var(--hair);margin-top:.55rem;padding-top:.35rem;font-size:7.6pt;color:var(--ink-3)}
+.srcs{font-size:7.8pt;line-height:1.42;color:var(--ink-2)}
+.srcs b{color:var(--ink);font-size:8.6pt}
+.srcs div{margin:.3rem 0}
+.srcs a{color:var(--brand-ink);word-break:break-all;text-decoration:none}
+</style>
+</head>
+<body>
+
+<!-- ==================== PAGINA 1 ==================== -->
+<div class="page">
+  <div class="hdr">
+    <div class="mk">T</div>
+    <div>
+      <div class="lbl">Telcobras · Facturación</div>
+      <h1>Cobro de suscripciones</h1>
+      <div class="sub">Odoo 19 Online Custom · PayPal</div>
+    </div>
+  </div>
+
+  <div class="avoid" style="border:1px solid var(--hair);border-radius:11px;background:var(--surface);box-shadow:var(--shadow-sm);padding:.45rem .5rem;margin:.4rem 0;max-width:88%">
+  <svg viewBox="0 0 680 138" style="width:100%;height:auto" role="img" aria-label="Circuito: la suscripcion genera la factura, se envia al cliente, este paga con PayPal desde el portal, Odoo registra la transaccion y marca la factura In payment, y al conciliar con el banco queda Paid">
+    <defs>
+      <marker id="a1" markerWidth="9" markerHeight="9" refX="8" refY="3.2" orient="auto">
+        <path d="M0,0 L8,3.2 L0,6.4 z" fill="#0F6E7C"/>
+      </marker>
+    </defs>
+
+    <rect x="6" y="16" width="120" height="40" rx="8" fill="#F2F8F9" stroke="#0F6E7C" stroke-width="1.3"/>
+    <text x="66" y="33" font-family="Archivo,sans-serif" font-size="10.5" font-weight="800" fill="#0A4C56" text-anchor="middle">Suscripción</text>
+    <text x="66" y="47" font-family="IBM Plex Mono,monospace" font-size="7.6" fill="#3A485C" text-anchor="middle">plan recurrente</text>
+
+    <rect x="152" y="16" width="120" height="40" rx="8" fill="#F2F8F9" stroke="#0F6E7C" stroke-width="1.3"/>
+    <text x="212" y="33" font-family="Archivo,sans-serif" font-size="10.5" font-weight="800" fill="#0A4C56" text-anchor="middle">Factura</text>
+    <text x="212" y="47" font-family="IBM Plex Mono,monospace" font-size="7.6" fill="#3A485C" text-anchor="middle">Odoo la genera</text>
+
+    <rect x="298" y="16" width="120" height="40" rx="8" fill="#EEF2F7" stroke="#5A6B82" stroke-width="1.3"/>
+    <text x="358" y="33" font-family="Archivo,sans-serif" font-size="10.5" font-weight="800" fill="#0E1626" text-anchor="middle">Portal</text>
+    <text x="358" y="47" font-family="IBM Plex Mono,monospace" font-size="7.6" fill="#3A485C" text-anchor="middle">botón Pay Now</text>
+
+    <rect x="444" y="16" width="120" height="40" rx="8" fill="#E6EEFB" stroke="#2563C9" stroke-width="1.3"/>
+    <text x="504" y="33" font-family="Archivo,sans-serif" font-size="10.5" font-weight="800" fill="#1B4A9E" text-anchor="middle">PayPal</text>
+    <text x="504" y="47" font-family="IBM Plex Mono,monospace" font-size="7.6" fill="#3A485C" text-anchor="middle">el cliente paga</text>
+
+    <line x1="130" y1="36" x2="148" y2="36" stroke="#0F6E7C" stroke-width="1.5" marker-end="url(#a1)"/>
+    <line x1="276" y1="36" x2="294" y2="36" stroke="#0F6E7C" stroke-width="1.5" marker-end="url(#a1)"/>
+    <line x1="422" y1="36" x2="440" y2="36" stroke="#0F6E7C" stroke-width="1.5" marker-end="url(#a1)"/>
+    <text x="285" y="11" font-family="IBM Plex Mono,monospace" font-size="7.2" fill="#0A4C56" text-anchor="middle">Send</text>
+
+    <path d="M504,60 L504,78 L212,78 L212,96" fill="none" stroke="#0F6E7C" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#a1)"/>
+    <text x="358" y="74" font-family="IBM Plex Mono,monospace" font-size="7.4" fill="#0A4C56" text-anchor="middle">Odoo registra la transacción</text>
+
+    <rect x="128" y="98" width="168" height="32" rx="8" fill="#FBF0DC" stroke="#B4740A" stroke-width="1.3"/>
+    <text x="212" y="118" font-family="Archivo,sans-serif" font-size="10" font-weight="800" fill="#B4740A" text-anchor="middle">In payment</text>
+
+    <line x1="300" y1="114" x2="330" y2="114" stroke="#0F6E7C" stroke-width="1.5" marker-end="url(#a1)"/>
+    <text x="392" y="106" font-family="IBM Plex Mono,monospace" font-size="7.4" fill="#0A4C56" text-anchor="middle">conciliar extracto</text>
+
+    <rect x="454" y="98" width="168" height="32" rx="8" fill="#E5F5EC" stroke="#1F9D57" stroke-width="1.3"/>
+    <text x="538" y="118" font-family="Archivo,sans-serif" font-size="10" font-weight="800" fill="#1F9D57" text-anchor="middle">Paid</text>
+    <line x1="446" y1="114" x2="450" y2="114" stroke="#0F6E7C" stroke-width="1.5" marker-end="url(#a1)"/>
+  </svg>
+  </div>
+
+  <h3><span class="n">01</span>Preparación — se hace una sola vez, en este orden</h3>
+  <div class="tw avoid">
+  <table>
+    <thead><tr><th style="width:22px">#</th><th style="width:105px">Bloque</th><th style="width:215px">Dónde</th><th>Qué se hace</th></tr></thead>
+    <tbody>
+      <tr><td class="k">1</td><td>Base</td><td><span class="v">Apps</span></td><td>Instalar <b>Invoicing</b> (o <b>Accounting</b>) y <b>Subscriptions</b>. Sin la segunda no hay planes recurrentes.</td></tr>
+      <tr><td class="k">2</td><td>Base</td><td><span class="v">Settings → Developer Tools</span></td><td><b>Activate the developer mode</b>. Hace falta para ver las transacciones de pago (pág. 3). También sirve <code>?debug=1</code> en la URL.</td></tr>
+      <tr><td class="k">3</td><td>Moneda</td><td><span class="v">Accounting → Configuration<br>→ Currencies</span></td><td>Comprobar que la <b>moneda de facturación está activa</b> y que PayPal la soporta. <b>Es el primer filtro</b>: si no la soporta, PayPal no se ofrecerá al cliente.</td></tr>
+      <tr><td class="k">4</td><td>Factura</td><td><span class="v">Accounting → Configuration → Settings</span></td><td>En <b>Customer Payments</b>, activar <b>Invoice Online Payment</b> y pulsar <b>Save</b>. Es lo que añade el botón <b>Pay Now</b> al portal.</td></tr>
+      <tr><td class="k">5</td><td>PayPal</td><td><span class="v">PayPal Developer Dashboard</span></td><td>En <b>Apps &amp; Credentials</b>, crear una aplicación y guardar el <b>Client ID</b> y el <b>Secret</b>.</td></tr>
+      <tr><td class="k">6</td><td>PayPal</td><td><span class="v">Accounting → Configuration<br>→ Payment Providers → PayPal</span></td><td>Pestaña <b>Credentials</b>: <b>Email</b> de la cuenta PayPal, <b>Client ID</b> y <b>Client Secret</b>. Después, <b>Generate your webhook</b>.</td></tr>
+      <tr><td class="k">7</td><td>PayPal</td><td>en la misma pantalla</td><td>Dejar <b>State</b> en <b>Test Mode</b> para probar. Solo tras el cobro de prueba, pasarlo a <b>Enabled</b> y publicar.</td></tr>
+      <tr><td class="k">8</td><td>Contable</td><td><span class="v">Accounting → Configuration<br>→ Journals →</span> diario bancario</td><td>Pestaña <b>Incoming Payments</b>: fijar la cuenta <b>Outstanding Receipts</b>. <b>Si se deja vacía, registrar un pago no crea ningún asiento contable.</b></td></tr>
+      <tr><td class="k">9</td><td>Cliente</td><td><span class="v">Contactos →</span> el cliente</td><td><b>Action → Grant portal access</b>. Recibe un correo de invitación para fijar su contraseña. Sin esto no puede abrir ni pagar la factura.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="two">
+    <div class="call warn avoid" style="margin:0">
+      <div class="ct"><span class="ico">!</span> Moneda y país filtran antes que nada</div>
+      <p>Cada proveedor tiene su lista de monedas y países admitidos, y actúa <b>como primer filtro</b>: si la moneda del cliente no está soportada, PayPal <b>ni siquiera aparece</b> como método de pago. Verificarlo con la moneda real de facturación antes de seguir.</p>
+    </div>
+    <div class="call warn avoid" style="margin:0">
+      <div class="ct"><span class="ico">!</span> Tildes y «ñ»: configurar UTF-8</div>
+      <p>Si los datos del cliente llevan caracteres acentuados y PayPal no está en <b>UTF-8</b>, las transacciones <b>fallan sin avisar</b>. Se ajusta en las opciones de codificación de la cuenta PayPal.</p>
+    </div>
+  </div>
+
+  <div class="two">
+    <div class="call info avoid" style="margin:0">
+      <div class="ct"><span class="ico">i</span> El correo ya funciona</div>
+      <p>En <b>Odoo Online</b> el envío funciona de serie, desde <code>notifications@…odoo.com</code>. Un dominio propio es opcional y requiere DNS (SPF, DKIM).</p>
+    </div>
+    <div class="call info avoid" style="margin:0">
+      <div class="ct"><span class="ico">i</span> Solo Wire Transfer viene activo</div>
+      <p>Por defecto Odoo trae habilitada únicamente la transferencia. PayPal hay que configurarlo y publicarlo como se indica arriba.</p>
+    </div>
+  </div>
+
+  <footer>Cobro de suscripciones · Odoo 19 Online Custom + PayPal · página 1 de 6</footer>
+</div>
+
+<!-- ==================== PAGINA 2 ==================== -->
+<div class="page">
+  <p class="eyebrow">Operación</p>
+  <h2>El ciclo de cada período</h2>
+
+  <div class="two">
+    <div class="card avoid">
+      <div class="ch"><h4>Lo que hace Odoo solo</h4><span>automático</span></div>
+      <div class="cb">
+        <ol class="steps">
+          <li><b>Subscriptions → Configuration → Recurring Plans</b>: definir periodicidad (semanas, meses, años), cierre automático y alineación de período.</li>
+          <li>Crear el <b>producto</b> con ese plan recurrente.</li>
+          <li>Hacer el presupuesto y <b>confirmarlo</b>: la orden se convierte en <b>suscripción</b>.</li>
+          <li>En cada ciclo, Odoo <b>genera la factura de renovación</b> sin que nadie intervenga.</li>
+        </ol>
+      </div>
+    </div>
+    <div class="card avoid">
+      <div class="ch"><h4>Lo que hace el equipo</h4><span>manual</span></div>
+      <div class="cb">
+        <ol class="steps">
+          <li>Revisar la factura generada.</li>
+          <li>Pulsar <b>Send</b> para enviarla por correo al cliente.</li>
+          <li>Esperar el pago.</li>
+        </ol>
+        <p style="font-size:8.4pt;color:var(--ink-2);margin:.5rem 0 0">La factura <b>se crea sola</b> cada período. Lo único manual es enviarla y que el cliente pague.</p>
+      </div>
+    </div>
+  </div>
+
+  <h3><span class="n">02</span>Lo que ve y hace el cliente</h3>
+  <div class="tw avoid">
+  <table>
+    <thead><tr><th style="width:26px">#</th><th>Paso</th></tr></thead>
+    <tbody>
+      <tr><td class="k">1</td><td>Recibe un correo con el enlace a la factura.</td></tr>
+      <tr><td class="k">2</td><td>Abre la factura en <b>su portal</b> — puede verla y descargarla.</td></tr>
+      <tr><td class="k">3</td><td>Pulsa <b>Pay Now</b>.</td></tr>
+      <tr><td class="k">4</td><td>Elige <b>PayPal</b> como proveedor de pago.</td></tr>
+      <tr><td class="k">5</td><td>Paga. Odoo registra el pago y marca la factura <b>In payment</b>.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="two">
+    <div class="call info avoid" style="margin:0">
+      <div class="ct"><span class="ico">i</span> Pagos parciales</div>
+      <p>El portal admite <b>pagos parciales y anticipos</b>. Si el cliente abona una parte, la factura queda parcialmente pagada y conserva el saldo pendiente.</p>
+    </div>
+    <div class="call ok avoid" style="margin:0">
+      <div class="ct"><span class="ico">&#10003;</span> El cliente no puede romper nada</div>
+      <p>El usuario del portal tiene acceso <b>de solo lectura</b>: puede seguir, descargar y pagar documentos, pero <b>no editar</b> nada en la base de datos.</p>
+    </div>
+  </div>
+
+  <h3><span class="n">03</span>Si el cliente paga por fuera</h3>
+  <div class="call info avoid">
+    <div class="ct"><span class="ico">i</span> Register Payment</div>
+    <p>Cuando el cobro llega por transferencia o cualquier vía ajena al portal, se abre la factura y se usa <b>Register Payment</b>. Odoo crea un pago vinculado a esa factura igual que si hubiera venido del portal.</p>
+  </div>
+
+  <footer>Cobro de suscripciones · Odoo 19 Online Custom + PayPal · página 2 de 6</footer>
+</div>
+
+<!-- ==================== PAGINA 3 ==================== -->
+<div class="page">
+  <p class="eyebrow">Trazabilidad</p>
+  <h2>Qué queda registrado, y dónde</h2>
+
+  <div class="call ok avoid">
+    <div class="ct"><span class="ico">&#10003;</span> Queda rastro en los dos sistemas, y enlazado <span class="pill">verificado</span></div>
+    <p>El pago se registra en <b>PayPal</b> y en <b>Odoo</b>. Odoo guarda una <b>referencia única</b> por transacción frente al sistema del proveedor, y esa referencia es la que permite casar un cobro de PayPal con su factura.</p>
+  </div>
+
+  <h3><span class="n">04</span>Qué guarda cada lado</h3>
+  <div class="two">
+    <div class="card avoid">
+      <div class="ch"><h4>En PayPal</h4><span>cuenta business</span></div>
+      <div class="cb">
+        <ul class="tight">
+          <li>El pago en el <b>historial de la cuenta</b></li>
+          <li>Su <b>ID de transacción</b> de PayPal</li>
+          <li>Importe, moneda y fecha</li>
+          <li>Datos del pagador</li>
+        </ul>
+      </div>
+    </div>
+    <div class="card avoid">
+      <div class="ch"><h4>En Odoo</h4><span>account.move</span></div>
+      <div class="cb">
+        <ul class="tight">
+          <li>Una <b>transacción de pago</b> con su <b>referencia única</b></li>
+          <li>Un <b>pago</b> vinculado a la factura</li>
+          <li>La factura pasa a <b>In payment</b></li>
+          <li>El movimiento en el <b>Chatter</b> de la factura</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <h3><span class="n">05</span>Dónde se consulta</h3>
+  <div class="tw avoid">
+  <table>
+    <thead><tr><th style="width:190px">Qué se quiere ver</th><th>Ruta</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Transacciones de pago</td><td>Activar <b>modo desarrollador</b> → <span class="v">Accounting → Configuration → Payment Transactions</span></td></tr>
+      <tr><td class="k">Estado de una transacción</td><td><span class="v">Draft · Pending · Authorized · Confirmed · Cancelled · Error</span></td></tr>
+      <tr><td class="k">Pagos de una factura</td><td>Botón <b>Payments</b> dentro de la propia factura</td></tr>
+      <tr><td class="k">Configuración del proveedor</td><td><span class="v">Accounting / Website / Sales → Configuration → Payment Providers</span></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3><span class="n">06</span>Cómo se cruzan los dos sistemas</h3>
+  <div class="tw avoid">
+  <table>
+    <thead><tr><th style="width:150px">Para auditar…</th><th>Se hace así</th></tr></thead>
+    <tbody>
+      <tr><td class="k">De Odoo a PayPal</td><td>Abrir la transacción en <b>Payment Transactions</b>, tomar la <b>referencia</b> y buscarla en el historial de PayPal.</td></tr>
+      <tr><td class="k">De PayPal a Odoo</td><td>Con el importe y la fecha del movimiento de PayPal, localizar la transacción en Odoo y desde ella la factura vinculada.</td></tr>
+      <tr><td class="k">Qué pasó con una factura</td><td>El <b>Chatter</b> de la factura recoge el envío al cliente y el registro del pago.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="call warn avoid">
+    <div class="ct"><span class="ico">!</span> Un punto no documentado</div>
+    <p>Odoo genera el <b>webhook</b> de PayPal automáticamente, pero la documentación no detalla qué eventos concretos suscribe. Lo que sí consta es el resultado: la transacción queda registrada y la factura pasa a <b>In payment</b> en cuanto el cliente paga.</p>
+  </div>
+
+  <footer>Cobro de suscripciones · Odoo 19 Online Custom + PayPal · página 3 de 6</footer>
+</div>
+
+<!-- ==================== PAGINA 4 ==================== -->
+<div class="page">
+  <p class="eyebrow">Cierre contable</p>
+  <h2>De In payment a Paid</h2>
+
+  <div class="call warn avoid">
+    <div class="ct"><span class="ico">!</span> Que el cliente pague no cierra la factura</div>
+    <p>Cuando el cliente paga, la factura queda en <b>In payment</b>. Solo pasa a <b>Paid</b> cuando el pago se <b>concilia con la transacción bancaria</b>. Sin ese último paso las facturas se acumulan a medias.</p>
+  </div>
+
+  <h3><span class="n">07</span>Los dos estados</h3>
+  <div class="tw avoid">
+  <table>
+    <thead><tr><th style="width:110px">Estado</th><th style="width:210px">Qué significa</th><th>Qué falta</th></tr></thead>
+    <tbody>
+      <tr><td class="k">In payment</td><td>El cliente pagó y Odoo registró el pago.</td><td>Conciliar con el extracto bancario.</td></tr>
+      <tr><td class="k">Paid</td><td>El pago está conciliado con el movimiento real del banco.</td><td>Nada: la factura está cerrada.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3><span class="n">08</span>La cuenta de cobros pendientes decide el comportamiento</h3>
+  <div class="tw avoid">
+  <table>
+    <thead><tr><th style="width:215px">Si en <span class="v">Incoming Payments</span>…</th><th>Entonces…</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Se deja <b>vacía</b></td><td><b>Registrar un pago no crea ningún asiento contable.</b> No hay rastro en la contabilidad hasta conciliar.</td></tr>
+      <tr><td class="k">Hay una <b>cuenta transitoria</b> de cobros pendientes</td><td>Al registrar el pago se crea el asiento, el contraasiento va a esa cuenta y el importe adeudado baja. La factura queda en <b>In payment</b> hasta conciliar. <span class="pill b">recomendado</span></td></tr>
+      <tr><td class="k">Se pone la <b>cuenta bancaria principal</b></td><td>La factura pasa <b>directamente a Paid</b> al registrar el pago, sin esperar la conciliación. Más simple, pero la contabilidad da por cobrado antes de ver el extracto.</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p style="font-size:8.6pt;margin:.2rem 0 0">El saldo de la cuenta de cobros pendientes en el libro mayor muestra, en cualquier momento, <b>los pagos registrados que aún no se han conciliado</b>.</p>
+
+  <div class="call info avoid">
+    <div class="ct"><span class="ico">i</span> Si hay que corregir: deshacer sin perder el pago</div>
+    <p>La conciliación se puede <b>deshacer sin borrar el pago</b>. Eso permite corregir un cruce equivocado sin rehacer el registro del cobro.</p>
+  </div>
+
+  <h3><span class="n">09</span>Antes de pasar a producción</h3>
+  <div class="tw avoid" style="padding:.5rem .7rem">
+    <ul class="check">
+      <li>Apps <b>Invoicing/Accounting</b> y <b>Subscriptions</b> instaladas.</li>
+      <li><b>Moneda de facturación</b> activa y admitida por PayPal — comprobado, no supuesto.</li>
+      <li><b>Invoice Online Payment</b> activado en los ajustes de contabilidad.</li>
+      <li>Cobro de prueba hecho en <b>Test Mode</b> con cuentas sandbox, y el proveedor pasado luego a <b>Enabled</b>.</li>
+      <li><b>UTF-8</b> configurado en PayPal si hay tildes o «ñ» en los datos de clientes.</li>
+      <li>Cuenta <b>Outstanding Receipts</b> definida en el diario bancario (o decidido conscientemente dejarla vacía).</li>
+      <li><b>Grant portal access</b> concedido a cada cliente que deba pagar.</li>
+      <li>Plan recurrente y producto de suscripción creados y revisados.</li>
+    </ul>
+  </div>
+
+  <h3><span class="n">10</span>Fuentes</h3>
+  <div class="srcs avoid">
+    <div><b>Odoo 19</b> — Pagos online de facturas: <a>odoo.com/documentation/19.0/applications/finance/accounting/payments/online.html</a> · Pagos y conciliación: <a>/applications/finance/accounting/payments.html</a> · Proveedores de pago: <a>/applications/finance/payment_providers.html</a> · PayPal: <a>/applications/finance/payment_providers/paypal.html</a> · Suscripciones: <a>/applications/sales/subscriptions.html</a> · Portal de usuarios: <a>/applications/general/users/user_portals.html</a></div>
+    <div><b>PayPal</b> — Developer Dashboard (Apps &amp; Credentials, Testing Tools → Sandbox Accounts): <a>developer.paypal.com/dashboard/</a></div>
+    <div style="margin-top:.5rem;color:var(--ink-2)"><b>Nota:</b> los menús, campos y estados citados están tomados de la documentación oficial de Odoo 19. La configuración concreta de vuestra base y de la cuenta PayPal manda sobre esta guía. <b>Dos cosas quedan por confirmar en vuestra instalación:</b> que el plan contratado incluye la app <b>Subscriptions</b>, y que <b>PayPal admite la moneda</b> con la que facturáis — la documentación advierte que solo soporta una selección de divisas, pero no publica la lista.</div>
+    <div style="color:var(--ink-3)">Verificado el 10-09-2026</div>
+  </div>
+
+  <footer>Cobro de suscripciones · Odoo 19 Online Custom + PayPal · página 4 de 6</footer>
+</div>
+
+<!-- ==================== PAGINA 5 ==================== -->
+<div class="page">
+  <p class="eyebrow">El otro sentido</p>
+  <h2>Pagar nuestras propias suscripciones</h2>
+
+  <div class="call warn avoid">
+    <div class="ct"><span class="ico">!</span> Odoo no paga con PayPal — y no es algo que se pueda configurar</div>
+    <p>Los <b>Payment Providers</b> de las páginas 1 a 4 son <b>solo para cobrar</b>: viven en el portal del cliente y están atados a la factura de venta. <b>No existe un «Pay Now» que saque dinero de nuestra cuenta PayPal</b> hacia Anthropic u Odoo SA. El cargo lo ejecuta el proveedor contra el medio de pago guardado en <i>su</i> portal; Odoo solo lo <b>registra después</b>.</p>
+  </div>
+
+  <div class="avoid" style="border:1px solid var(--hair);border-radius:11px;background:var(--surface);box-shadow:var(--shadow-sm);padding:.45rem .5rem;margin:.45rem 0;max-width:92%">
+  <svg viewBox="0 0 700 112" style="width:100%;height:auto" role="img" aria-label="Circuito de compra: el proveedor cobra a PayPal fuera de Odoo, llega su factura por correo, se crea la factura de proveedor en Odoo, se confirma y se paga contra el diario PayPal, y al conciliar queda Paid">
+    <defs>
+      <marker id="a2" markerWidth="9" markerHeight="9" refX="8" refY="3.2" orient="auto">
+        <path d="M0,0 L8,3.2 L0,6.4 z" fill="#0F6E7C"/>
+      </marker>
+    </defs>
+
+    <rect x="6" y="18" width="150" height="40" rx="8" fill="#E6EEFB" stroke="#2563C9" stroke-width="1.3"/>
+    <text x="81" y="35" font-family="Archivo,sans-serif" font-size="10" font-weight="800" fill="#1B4A9E" text-anchor="middle">Anthropic · Odoo SA</text>
+    <text x="81" y="49" font-family="IBM Plex Mono,monospace" font-size="7.4" fill="#3A485C" text-anchor="middle">cobran a PayPal</text>
+
+    <rect x="186" y="18" width="140" height="40" rx="8" fill="#EEF2F7" stroke="#5A6B82" stroke-width="1.3"/>
+    <text x="256" y="35" font-family="Archivo,sans-serif" font-size="10.5" font-weight="800" fill="#0E1626" text-anchor="middle">Su factura</text>
+    <text x="256" y="49" font-family="IBM Plex Mono,monospace" font-size="7.4" fill="#3A485C" text-anchor="middle">llega por correo</text>
+
+    <rect x="356" y="18" width="150" height="40" rx="8" fill="#F2F8F9" stroke="#0F6E7C" stroke-width="1.3"/>
+    <text x="431" y="35" font-family="Archivo,sans-serif" font-size="10" font-weight="800" fill="#0A4C56" text-anchor="middle">Vendors → Bills</text>
+    <text x="431" y="49" font-family="IBM Plex Mono,monospace" font-size="7.4" fill="#3A485C" text-anchor="middle">la creamos nosotros</text>
+
+    <rect x="536" y="18" width="158" height="40" rx="8" fill="#F2F8F9" stroke="#0F6E7C" stroke-width="1.3"/>
+    <text x="615" y="35" font-family="Archivo,sans-serif" font-size="10" font-weight="800" fill="#0A4C56" text-anchor="middle">Confirm → Pay</text>
+    <text x="615" y="49" font-family="IBM Plex Mono,monospace" font-size="7.4" fill="#3A485C" text-anchor="middle">diario PayPal</text>
+
+    <line x1="160" y1="38" x2="182" y2="38" stroke="#0F6E7C" stroke-width="1.5" marker-end="url(#a2)"/>
+    <line x1="330" y1="38" x2="352" y2="38" stroke="#0F6E7C" stroke-width="1.5" marker-end="url(#a2)"/>
+    <line x1="510" y1="38" x2="532" y2="38" stroke="#0F6E7C" stroke-width="1.5" marker-end="url(#a2)"/>
+
+    <text x="81" y="12" font-family="IBM Plex Mono,monospace" font-size="7" fill="#B4740A" text-anchor="middle">fuera de Odoo</text>
+
+    <path d="M615,62 L615,76 L300,76 L300,88" fill="none" stroke="#0F6E7C" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#a2)"/>
+    <rect x="216" y="90" width="168" height="20" rx="6" fill="#FBF0DC" stroke="#B4740A" stroke-width="1.2"/>
+    <text x="300" y="104" font-family="Archivo,sans-serif" font-size="9" font-weight="800" fill="#B4740A" text-anchor="middle">In payment</text>
+    <line x1="388" y1="100" x2="418" y2="100" stroke="#0F6E7C" stroke-width="1.5" marker-end="url(#a2)"/>
+    <text x="470" y="96" font-family="IBM Plex Mono,monospace" font-size="7.2" fill="#0A4C56" text-anchor="middle">conciliar</text>
+    <rect x="522" y="90" width="120" height="20" rx="6" fill="#E5F5EC" stroke="#1F9D57" stroke-width="1.2"/>
+    <text x="582" y="104" font-family="Archivo,sans-serif" font-size="9" font-weight="800" fill="#1F9D57" text-anchor="middle">Paid</text>
+    <line x1="512" y1="100" x2="518" y2="100" stroke="#0F6E7C" stroke-width="1.5" marker-end="url(#a2)"/>
+  </svg>
+  </div>
+
+  <h3><span class="n">11</span>Preparación — se hace una sola vez</h3>
+  <div class="tw avoid">
+  <table>
+    <thead><tr><th style="width:22px">#</th><th style="width:98px">Bloque</th><th style="width:205px">Dónde</th><th>Qué se hace</th></tr></thead>
+    <tbody>
+      <tr><td class="k">1</td><td>Moneda</td><td><span class="v">Accounting → Configuration<br>→ Settings</span></td><td>Sección <b>Currencies</b>: activar <b>Multi-Currencies</b>. Exige fijar tres cosas: el <b>diario</b> de diferencias de cambio, la <b>Gain Account</b> y la <b>Loss Account</b>.</td></tr>
+      <tr><td class="k">2</td><td>Moneda</td><td><span class="v">Accounting → Configuration<br>→ Currencies</span></td><td>Activar <b>USD</b> y encender la <b>actualización automática de tasas</b>, con su frecuencia y origen (por defecto, el Banco Central Europeo).</td></tr>
+      <tr><td class="k">3</td><td>Diario</td><td><span class="v">Accounting → Configuration<br>→ Journals →</span> New</td><td>Crear un diario <b>Type: Bank</b> llamado <b>PayPal</b>. En la pestaña <b>Journal Entries</b>, un código corto y <b>Currency: USD</b>. En <b>Bank Account</b>, crear la cuenta con tipo <b>Bank and Cash</b>.</td></tr>
+      <tr><td class="k">4</td><td>Contable</td><td>en ese mismo diario</td><td>Pestaña <b>Outgoing Payments</b>: fijar la cuenta <b>Outstanding Payments</b>. Es el espejo exacto de <b>Outstanding Receipts</b> (pág. 1, §08) y tiene el mismo efecto.</td></tr>
+      <tr><td class="k">5</td><td>Proveedor</td><td><span class="v">Contactos →</span> New</td><td>Crear <b>Anthropic</b>, <b>Odoo S.A.</b> y los demás. <b>No</b> se les da acceso al portal: no entran a nuestra base.</td></tr>
+      <tr><td class="k">6</td><td>Entrada</td><td><span class="v">Accounting → Configuration<br>→ Journals →</span> Purchases</td><td><span class="pill b">opcional</span> Fijar un <b>alias de correo</b> en el diario de compras. Todo PDF enviado allí crea un borrador de factura de proveedor.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3><span class="n">12</span>El paso a paso de cada factura que nos llega</h3>
+  <div class="tw avoid">
+  <table>
+    <thead><tr><th style="width:22px">#</th><th style="width:142px">Dónde</th><th>Qué se hace</th></tr></thead>
+    <tbody>
+      <tr><td class="k">1</td><td><span class="v">Accounting → Vendors<br>→ Bills</span></td><td>Pulsar <b>New</b>. También se llega desde el tablero: <b>New</b> en el diario <b>Purchases</b>.</td></tr>
+      <tr><td class="k">2</td><td>en la factura</td><td><b>Vendor</b>, <b>Bill Reference</b> — el número que trae <i>su</i> factura, que es lo que evita registrarla dos veces —, <b>Bill Date</b> y <b>Accounting Date</b>.</td></tr>
+      <tr><td class="k">3</td><td>en la factura</td><td><b>Adjuntar el PDF</b> que llegó por correo. Queda pegado al asiento: es el soporte del gasto.</td></tr>
+      <tr><td class="k">4</td><td>pestaña de líneas</td><td>Producto o cuenta de gasto, cantidad, precio e impuestos. Junto al campo <b>Journal</b>, elegir <b>USD</b> si así viene facturado.</td></tr>
+      <tr><td class="k">5</td><td>en la factura</td><td><b>Confirm</b>. El estado pasa a <b>Posted</b> y se genera el asiento contable.</td></tr>
+      <tr><td class="k">6</td><td>en la factura</td><td><b>Pay</b>. En el diálogo: <b>Journal = PayPal</b> (o el de la tarjeta, según de dónde salió el dinero), método, importe y moneda. Luego <b>Create Payment</b>.</td></tr>
+      <tr><td class="k">7</td><td>al llegar el extracto</td><td>Conciliar el movimiento de PayPal con ese pago. La factura pasa de <b>In payment</b> a <b>Paid</b>.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <footer>Cobro de suscripciones · Odoo 19 Online Custom + PayPal · página 5 de 6</footer>
+</div>
+
+<!-- ==================== PAGINA 6 ==================== -->
+<div class="page">
+  <p class="eyebrow">El otro sentido</p>
+  <h2>Control, automatización y límites</h2>
+
+  <div class="two">
+    <div class="call ok avoid" style="margin:0">
+      <div class="ct"><span class="ico">&#10003;</span> El diario PayPal es el control</div>
+      <p>Los cobros de clientes <b>entran</b> a ese diario y los pagos de Claude y Odoo <b>salen</b> de él. Su saldo en Odoo <b>debe cuadrar con el saldo real</b> de la cuenta PayPal. Si retiramos de PayPal al banco local, eso es un <b>Internal Transfer</b> entre diarios, no un ingreso nuevo.</p>
+    </div>
+    <div class="call info avoid" style="margin:0">
+      <div class="ct"><span class="ico">i</span> Los mismos dos estados, por el mismo motivo</div>
+      <p><b>In payment</b> y <b>Paid</b> funcionan igual que en la venta (§07), y <b>Outstanding Payments</b> decide el comportamiento igual que <b>Outstanding Receipts</b> (§08): vacía no genera asiento, transitoria es lo recomendado, y la cuenta bancaria salta directo a <b>Paid</b>.</p>
+    </div>
+  </div>
+
+  <h3><span class="n">13</span>Qué se puede automatizar, y qué no</h3>
+  <div class="tw avoid">
+  <table>
+    <thead><tr><th style="width:186px">Qué</th><th style="width:62px">¿Se puede?</th><th>Cómo, o por qué no</th></tr></thead>
+    <tbody>
+      <tr><td class="k">Que Odoo pague solo con PayPal</td><td><span class="pill r">No</span></td><td>Los payment providers son solo de cobro. Quien ejecuta el cargo es el proveedor, contra el medio de pago guardado en su portal.</td></tr>
+      <tr><td class="k">Suscripciones de compra</td><td><span class="pill r">No</span></td><td>La app <b>Subscriptions</b> es <b>solo de venta</b>. No hay equivalente para gastos recurrentes propios.</td></tr>
+      <tr><td class="k">Asientos recurrentes genéricos</td><td><span class="pill r">No</span></td><td>No están en el core de Odoo 19. Solo existen los <b>diferidos</b> y módulos de terceros del Apps Store.</td></tr>
+      <tr><td class="k">Crear el borrador desde el PDF</td><td><span class="pill">Sí</span></td><td>Alias de correo en el diario de compras, o subir el PDF a mano. Odoo crea el borrador y la <b>digitalización OCR</b> rellena los campos.</td></tr>
+      <tr><td class="k">Repartir un anual en 12 meses</td><td><span class="pill">Sí</span></td><td><b>Deferred Expenses</b>: la factura entra una vez y el gasto se reparte por período. Es lo correcto para una licencia anual.</td></tr>
+      <tr><td class="k">Tasa de cambio del día</td><td><span class="pill">Sí</span></td><td>Actualización automática de divisas (§11.2). Odoo calcula y contabiliza la diferencia de cambio al pagar.</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="call warn avoid">
+    <div class="ct"><span class="ico">!</span> Lo realista: dos minutos al mes, no cero</div>
+    <p>El único tramo automatizable es <b>de PDF a borrador</b>. Confirmar, pagar y conciliar siguen siendo manuales — y conviene que lo sean: ese es el punto donde se detecta un cargo que no reconocemos. Con el alias configurado, cada factura son <b>dos minutos</b>: revisar el borrador, <b>Confirm</b>, <b>Pay</b>.</p>
+  </div>
+
+  <h3><span class="n">14</span>Fuentes del lado compra</h3>
+  <div class="srcs avoid">
+    <div><b>Odoo 19</b> — Facturas de proveedor: <a>odoo.com/documentation/19.0/applications/finance/accounting/vendor_bills.html</a> · Pagos: <a>/applications/finance/accounting/payments.html</a> · Cuenta bancaria en moneda extranjera: <a>/applications/finance/accounting/bank/foreign_currency.html</a> · Gastos diferidos: <a>/applications/finance/accounting/customer_invoices/deferred_expenses.html</a> · Diarios: <a>/applications/finance/accounting/get_started/journals.html</a></div>
+    <div style="margin-top:.5rem;color:var(--ink-2)"><b>Nota:</b> los menús y botones de esta página están tomados de la documentación oficial de Odoo 19 y verificados contra ella el día indicado. <b>Queda por confirmar en nuestra instalación</b> si el plan contratado incluye <b>Deferred Expenses</b> y la <b>digitalización OCR</b>: ambos requieren <b>Accounting</b> completo, no bastan con <b>Invoicing</b>, y el OCR consume créditos IAP.</div>
+    <div style="color:var(--ink-3)">Verificado el 10-09-2026</div>
+  </div>
+
+  <footer>Cobro de suscripciones · Odoo 19 Online Custom + PayPal · página 6 de 6</footer>
+</div>
+
+</body>
+</html>

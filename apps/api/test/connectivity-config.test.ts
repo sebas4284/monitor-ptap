@@ -89,3 +89,21 @@ test('config: heartbeatMaxFailures default = 2', () => {
     assert.equal(cfg.opcua.heartbeatMaxFailures, 2);
   });
 });
+
+test('config: deadLetterCapacity sale de OPC_DEAD_LETTER_CAPACITY (regla 8/12: el tope por env, no quemado)', () => {
+  withEnv({ CONNECTIVITY_PROVIDER: 'simulator', OPC_DEAD_LETTER_CAPACITY: '25' }, () => {
+    assert.equal(loadConnectivityConfig().deadLetterCapacity, 25);
+  });
+});
+
+test('config: sin OPC_DEAD_LETTER_CAPACITY → default 500', () => {
+  withEnv({ CONNECTIVITY_PROVIDER: 'simulator', OPC_DEAD_LETTER_CAPACITY: undefined }, () => {
+    assert.equal(loadConnectivityConfig().deadLetterCapacity, 500);
+  });
+});
+
+test('config: OPC_DEAD_LETTER_CAPACITY=0 → lanza (un ring de tope 0 se tragaría el detalle sin rastro)', () => {
+  withEnv({ CONNECTIVITY_PROVIDER: 'simulator', OPC_DEAD_LETTER_CAPACITY: '0' }, () => {
+    assert.throws(() => loadConnectivityConfig(), /OPC_DEAD_LETTER_CAPACITY/);
+  });
+});

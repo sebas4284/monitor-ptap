@@ -1,0 +1,23 @@
+{
+  "utc": "2026-10-31T13:29:50.4067985Z",
+  "sourceFiles": {
+    "apps/mobile/app.config.js": "dd75f34eea39289a19eea6f0b0bfc902dd76d18c9a2903ece676c483727b23ce",
+    "apps/mobile/services/api.ts": "79f4a10433bfdfcfa6925a6a461d4a04685838ad699b75c9b478cf5ed47e0b67",
+    "apps/mobile/services/push-registration.ts": "e92ec57a617d7b41396d33e4533f6f3eb01b56cd0ed74d6ff41bcbb47c69992d",
+    "apps/mobile/services/device-notifications.ts": "7807d5cc38fd5cc9b4f3e50c32c284144497f3ef37a2936e0617d87c57c50b81",
+    "apps/mobile/services/push-rules.ts": "c081319718e8d41477b17a05defda0ae8c0fd3e4f7066b791387406f8aba0457",
+    "apps/mobile/hooks/useDeviceNotifications.ts": "0bb0acf2eefe98b02e7bb25ba3544b3bae2b478ae00ab3e44d44ed78b0a0e290",
+    "apps/mobile/package.json": "21852115846008a729a7d154dc26f45ece55c40dd13728fc713d7dc154b7674e",
+    "apps/mobile/services/push-registration.test.ts": "d2a97c048e7dc1b5fa060ef614f8804a07b63861f01e0b1e1343892ece119ed1",
+    "apps/mobile/services/push-build-config.test.ts": "85e1a696b93a686f336b145532e637a08b89c6a4a44b89c77021f071fce88b06",
+    "docs/ANDROID_PUSH_PRODUCCION.md": "416d900ea0f4932e7ef45ee5998cfee5b67b75b551e7e9503cfe159079378067"
+  },
+  "focusedNotificationTests": 15,
+  "focusedNotificationTestFailures": 0,
+  "mobileTypecheck": "passed",
+  "targetedEslint": "passed",
+  "diffCheck": "passed",
+  "nativeBuildPerformed": false,
+  "physicalDeviceDeliveryVerified": false,
+  "productionModifiedByClientAgent": false
+}

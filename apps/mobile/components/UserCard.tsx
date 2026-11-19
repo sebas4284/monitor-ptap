@@ -1,6 +1,6 @@
 import { memo } from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import Ionicons from './AppIcon';
 import { ROLES, ROLE_LABELS, ROLE_COLORS, ROLE_DESCRIPTIONS, type Role, type UserSummary } from '@ptap/shared';
 import Colors from '../constants/colors';
 
